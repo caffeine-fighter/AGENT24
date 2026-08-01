@@ -338,7 +338,14 @@ async function startLiveRun(target) {
     const response = await fetch(apiUrl("/api/runs"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ input: formatRunInput(target) }),
+      body: JSON.stringify({
+        input: formatRunInput(target),
+        target: {
+          repository_url: target.repositoryUrl,
+          requested_ref: target.requestedRef || null,
+          mission: target.mission,
+        },
+      }),
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`Run API returned ${response.status}`);
