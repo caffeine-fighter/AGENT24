@@ -6,8 +6,10 @@ import {
   createCakeLabReport,
   createCakeSourceDescriptor,
   createInitialState,
+  createUnsupportedFixture,
   DEFAULT_MISSION,
   formatRunInput,
+  isDocumentedUnsupportedMission,
   normalizeEvent,
   projectBehaviorProfile,
   projectCompatibilitySelection,
@@ -117,6 +119,22 @@ assert.equal(completed.experimentPlanView.maxTurns, 20);
 assert.equal(completed.experimentPlanView.singleVariable, true);
 assert.equal(completed.reportView.observed.items.length, 2);
 assert.deepEqual(completed.reportView.verification, { accepted: true, passedGates: 3, totalGates: 3 });
+
+const unsupportedMission = "같은 캘린더 검색을 무한 반복하지만 상태가 바뀌지 않는 Agent를 진단해줘.";
+assert.equal(isDocumentedUnsupportedMission(unsupportedMission), true);
+assert.equal(isDocumentedUnsupportedMission(DEFAULT_MISSION), false);
+const unsupportedFixture = createUnsupportedFixture(unsupportedMission, {
+  ...target,
+  mission: unsupportedMission,
+});
+assert.equal(unsupportedFixture.filter((item) => item.type === "run.completed").length, 1);
+assert.equal(unsupportedFixture.at(-1).data.status, "unsupported");
+assert.equal(unsupportedFixture.some((item) => item.type === "experiment_plan"), false);
+assert.doesNotMatch(JSON.stringify(unsupportedFixture), /payment\.charge|life\.payment|cake-001|protected_replay/);
+const unsupportedFixtureState = replayDeterministically(unsupportedFixture);
+assert.equal(unsupportedFixtureState.status, "complete");
+assert.equal(unsupportedFixtureState.terminalNotice.kind, "unsupported");
+assert.equal(unsupportedFixtureState.analysisScope, "fixture_fallback");
 
 const unknown = {
   run_id: "unknown-test",

@@ -171,7 +171,6 @@ def classify_matrix(*, tools: Collection[str]) -> tuple[MissionSupport, ...]:
 
     return tuple(classify_support(mission, tools=tools) for mission in SURPRISE_MISSIONS)
 
-
 # --------------------------------------------------------------------------
 # Payment-substitution evidence
 # --------------------------------------------------------------------------

@@ -1,6 +1,8 @@
 import {
   createCakeCrashFixture,
   createInitialState,
+  createUnsupportedFixture,
+  isDocumentedUnsupportedMission,
   reduceRunState,
   validateTargetInput,
 } from "./core.mjs";
@@ -428,7 +430,16 @@ function render() {
   notice.textContent = state.terminalNotice?.message || "";
   setText("#runId", state.runId ? `실행 ID ${state.runId}` : "실행 ID —");
   const liveMode = state.mode === "offline_demo" ? "준비된 설명으로 진행 중" : "실시간 분석 중";
-  setText("#modeBadge", state.status === "idle" ? "시작할 준비가 됐어요" : state.source === "live" ? liveMode : "내장 예시 확인 중");
+  setText(
+    "#modeBadge",
+    state.status === "idle"
+      ? "시작할 준비가 됐어요"
+      : state.source === "live"
+        ? liveMode
+        : state.status === "complete"
+          ? "내장 예시 확인 완료"
+          : "내장 예시 확인 중",
+  );
   setText("#connectionStatus", state.status === "idle" ? "실험을 시작해 주세요" : state.source === "live" ? "실시간 기록을 받고 있어요" : "가상 환경에서 진행 중");
   $("#runButton").disabled = state.status === "running";
   $("#replayButton").disabled = state.status !== "complete";
@@ -441,11 +452,15 @@ function dispatch(event) {
     || event.type === "run.completed"
     || ((event.type === "run_failed" || event.type === "run.failed")
       && (event.data?.status ?? event.payload?.status) !== "offline_demo");
-  if (state.source === "live" && terminalEvent) {
-    eventSource?.close();
-    eventSource = null;
+  if (terminalEvent) {
+    if (state.source === "live") {
+      eventSource?.close();
+      eventSource = null;
+    }
     clearInterval(clockTimer);
-    const terminalMode = state.mode === "offline_demo" ? "준비된 설명" : "실시간 분석";
+    const terminalMode = state.source === "live"
+      ? state.mode === "offline_demo" ? "준비된 설명" : "실시간 분석"
+      : "내장 예시";
     setText("#connectionStatus", state.status === "complete" ? `${terminalMode} · 완료` : `${terminalMode} · 진행하지 못함`);
   }
 }
@@ -477,7 +492,9 @@ function playFixture(target, { speed = 360 } = {}) {
   lastTarget = { ...target };
   render();
   startClock();
-  const events = createCakeCrashFixture(target.mission, target);
+  const events = isDocumentedUnsupportedMission(target.mission)
+    ? createUnsupportedFixture(target.mission, target)
+    : createCakeCrashFixture(target.mission, target);
   events.forEach((fixtureEvent, index) => {
     timers.push(setTimeout(() => {
       dispatch(fixtureEvent);

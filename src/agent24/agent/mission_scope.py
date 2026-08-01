@@ -284,9 +284,9 @@ def domain_support(domain: FailureDomain, *, tools: Collection[str]) -> DomainSu
             domain=domain,
             supported=True,
             detail=(
-                f"{spec.pack_id}가 fault family {families[0]}로 이 도메인을 재현할 수 있고, "
-                f"제출 agent가 {', '.join(anchors)}를 노출한다. "
-                f"기대 신호: {requirement.failure_signal}."
+                f"{spec.pack_id}의 {families[0]} 오류로 이 영역을 재현할 수 있고, "
+                f"제출한 에이전트가 {', '.join(anchors)} 도구를 제공해요. "
+                f"확인할 신호: {requirement.failure_signal}."
             ),
             pack_id=spec.pack_id,
             fault_family=families[0],
@@ -306,15 +306,16 @@ def _unsupported_detail(requirement: DomainRequirement, observed: set[str]) -> s
     )
     if not stageable:
         return (
-            f"D1에서 실행 가능한 pack 중 fault family {wanted}를 등록한 pack이 없어 "
-            f"'{requirement.failure_signal}'를 재현할 수 없다. "
-            "payment 실험으로 대체하지 않고 종료한다."
+            f"현재 실행 가능한 실험 중 {wanted} 오류를 재현하는 실험이 없어요. "
+            f"그래서 '{requirement.failure_signal}'를 확인할 수 없어요. "
+            "다른 영역의 실험으로 바꾸지 않고 여기서 마칠게요."
         )
     missing = ", ".join(sorted(requirement.anchor_tools))
     surface = ", ".join(sorted(observed)) or "없음"
     return (
-        f"fault family {wanted}는 재현 가능하지만 제출 agent가 {missing} 중 어느 것도 "
-        f"노출하지 않는다. 관찰된 도구: {surface}. 다른 도메인 실험으로 대체하지 않고 종료한다."
+        f"{wanted} 오류는 재현할 수 있지만, 제출한 에이전트에 {missing} 중 어느 도구도 "
+        f"없어요. 확인된 도구: {surface}. "
+        "다른 영역의 실험으로 바꾸지 않고 여기서 마칠게요."
     )
 
 
@@ -354,9 +355,9 @@ def mission_scope_stop(mission: Mission, selection: PackSelection) -> StopDecisi
         stop=True,
         reason=UNSUPPORTED_REASON,
         detail=(
-            f"제출된 mission은 '{DOMAIN_REQUIREMENTS[domain].failure_signal}'를 묻는 "
-            f"{domain.value} 도메인 질문이다. {support.detail} "
-            f"선택된 pack은 {candidate.pack_id}이며, 이 실행에서는 아무 실패도 측정하지 않았다."
+            f"입력한 작업은 '{DOMAIN_REQUIREMENTS[domain].failure_signal}'를 확인하려는 "
+            f"{domain.value} 영역의 요청이에요. {support.detail} "
+            f"선택한 실험 묶음은 {candidate.pack_id}이며, 이번에는 어떤 실패도 측정하지 않았어요."
         ),
     )
 
