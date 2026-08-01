@@ -2,23 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-function legacyInput(repositoryUrl, requestedRef, mission) {
-  return [
-    "NIGHTMARE LAB에서 다음 GitHub 저장소의 에이전트를 가상 환경에서 안전하게 시험해 주세요.",
-    `저장소: ${repositoryUrl}`,
-    `브랜치 또는 커밋: ${requestedRef}`,
-    `맡길 일: ${mission}`,
-    "실제 외부 서비스를 호출하거나 상태를 바꾸지 말고, 관찰한 사실·추정 원인·제안한 해결책·재검증 결과를 구분해 주세요.",
-  ].join("\n");
-}
-
 const DEFAULT_REPOSITORY = "https://github.com/caffeine-fighter/AGENT24";
 const EXTERNAL_REPOSITORY = "https://github.com/example/public-agent";
 const MISSION = "5만원 이하로 케이크 하나를 주문해줘";
 const TIME_MISSION = "같은 캘린더 검색을 무한 반복하지만 상태가 바뀌지 않는 Agent를 진단해줘.";
 
 const RUN_BODY = JSON.stringify({
-  input: legacyInput(DEFAULT_REPOSITORY, "main", MISSION),
+  schema_version: "external_target.v1",
   target: {
     repository_url: DEFAULT_REPOSITORY,
     requested_ref: "main",
@@ -27,7 +17,7 @@ const RUN_BODY = JSON.stringify({
 });
 
 const EXTERNAL_RUN_BODY = JSON.stringify({
-  input: legacyInput(EXTERNAL_REPOSITORY, "main", MISSION),
+  schema_version: "external_target.v1",
   target: {
     repository_url: EXTERNAL_REPOSITORY,
     requested_ref: "main",
@@ -57,6 +47,15 @@ async function request(path = "/", init = undefined) {
   );
 }
 
+function parseSse(stream) {
+  return stream
+    .trim()
+    .split("\n\n")
+    .map((block) => block.split("\n").find((line) => line.startsWith("data: ")))
+    .filter(Boolean)
+    .map((line) => JSON.parse(line.slice("data: ".length)));
+}
+
 test("server-renders the NIGHTMARE LAB shell", async () => {
   const response = await request();
   assert.equal(response.status, 200);
@@ -80,7 +79,7 @@ test("static demo renders the D1 submission and three-axis truth boundary", asyn
   assert.match(html, /id="operationOutcome"/);
   assert.match(html, /가상 환경에서만 진행해요/);
   assert.match(html, /문제를 찾지 못해도 안전이 보장되는 것은 아니에요/);
-  assert.match(html, /실험 시작하기/);
+  assert.match(html, /충돌 시험 시작/);
   assert.match(html, /id="resultSurface" class="result-surface" hidden/);
   assert.match(html, /id="runNotice"[^>]+role="status"[^>]+aria-atomic="true"/);
   assert.match(html, /id="rawStream"[^>]+tabindex="0"/);
@@ -109,14 +108,20 @@ test("static demo uses natural Korean product copy", async () => {
     "구조화 진단 보고서",
     "호환 후보",
     "진행하지 못함",
+    "논리 주문",
+    "남은 가상 지갑",
+    "결과 투영",
+    "이벤트 계약",
     "PACK SELECTION AMBIGUOUS",
     "NO PACK SELECTED",
   ]) {
     assert.doesNotMatch(productCopy, new RegExp(translatedPhrase), `remove translated UI phrase: ${translatedPhrase}`);
   }
   assert.doesNotMatch(html, /[가-힣](?:합니다|됩니다|있습니다|없습니다|않습니다)[.!<]/);
-  assert.match(productCopy, /실험 시작하기/);
-  assert.match(productCopy, /같은 내용으로 다시 실행/);
+  assert.match(productCopy, /충돌 시험 시작/);
+  assert.match(productCopy, /같은 입력으로 다시 시험/);
+  assert.match(productCopy, /가상 지갑 잔액/);
+  assert.match(productCopy, /주문 건수/);
   assert.match(productCopy, /다시 시도/);
 });
 
@@ -131,7 +136,8 @@ test("hosted D1 request rejects invalid shape before upstream calls", async () =
       [],
       { target: { repository_url: "https://github.com/example/agent", mission: "test" } },
       {
-        input: "canonical fields와 충돌하는 legacy prompt",
+        schema_version: "external_target.v1",
+        input: "중복 입력은 받지 않아요",
         target: {
           repository_url: "https://github.com/example/agent",
           requested_ref: "main",
@@ -139,6 +145,7 @@ test("hosted D1 request rejects invalid shape before upstream calls", async () =
         },
       },
       {
+        schema_version: "external_target.v1",
         target: {
           repository_url: "https://gitlab.com/example/agent",
           requested_ref: "main",
@@ -146,6 +153,7 @@ test("hosted D1 request rejects invalid shape before upstream calls", async () =
         },
       },
       {
+        schema_version: "external_target.v1",
         target: {
           repository_url: "https://github.com/example/agent",
           requested_ref: "main",
@@ -218,10 +226,23 @@ test("hosted run context rejects tampering, cross-run reuse, unknown and expired
     });
     assert.equal(valid.status, 200);
     const validStream = await valid.text();
-    const validEvents = validStream.trim().split("\n\n").map((block) => JSON.parse(block.slice("data: ".length)));
-    assert.equal(validEvents.filter((event) => event.type === "run.completed").length, 1);
-    assert.equal(validEvents.filter((event) => ["run.completed", "run.failed"].includes(event.type)).length, 1);
+    const validEvents = parseSse(validStream);
+    assert.equal(validEvents.filter((event) => event.type === "run_completed").length, 1);
+    assert.ok(validEvents.every((event) => event.schema_version === "event.envelope.v1"));
+    assert.deepEqual(validEvents.map((event) => event.seq), validEvents.map((_, index) => index));
+    assert.deepEqual(
+      [...validStream.matchAll(/^id: (\d+)$/gm)].map((match) => Number(match[1])),
+      validEvents.map((event) => event.seq),
+    );
     assert.doesNotMatch(validStream, /test-only-run-context-secret/);
+
+    const resumed = await request(`${firstUrl.pathname}${firstUrl.search}`, {
+      headers: { accept: "text/event-stream", "Last-Event-ID": "3", "x-agent24-test": "1" },
+    });
+    assert.equal(resumed.status, 200);
+    const resumedEvents = parseSse(await resumed.text());
+    assert.equal(resumedEvents[0].seq, 4);
+    assert.equal(resumedEvents.at(-1).type, "run_completed");
 
     for (const [name, value] of [
       ["resolved_sha", "b".repeat(40)],
@@ -302,6 +323,8 @@ test("hosted fallback preserves the autonomous SSE demo", async () => {
     });
     assert.equal(accepted.status, 202);
     const run = await accepted.json();
+    assert.equal(run.schema_version, "run.accepted.v1");
+    assert.deepEqual(run.deprecations, []);
     assert.equal(run.mode, "offline_demo");
     assert.match(run.run_id, /^[a-f0-9-]+$/);
     assert.match(run.events_url, /^\/api\/runs\/.+\/events\?/);
@@ -312,9 +335,9 @@ test("hosted fallback preserves the autonomous SSE demo", async () => {
     assert.equal(events.status, 200);
     assert.match(events.headers.get("content-type") ?? "", /^text\/event-stream\b/i);
     const stream = await events.text();
-    assert.match(stream, /"type":"run.started"/);
+    assert.match(stream, /"type":"run_started"/);
     assert.match(stream, /"type":"experiment_plan"/);
-    assert.match(stream, /"type":"run.completed"/);
+    assert.match(stream, /"type":"run_completed"/);
     assert.match(stream, /"resolver":"github-http-404"/);
     assert.match(stream, /"resolved_sha":null/);
     assert.match(stream, /"agent_name":"synthetic-fixture-fallback"/);
@@ -347,6 +370,7 @@ test("hosted Surprise input stops once instead of becoming a payment demo", asyn
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
+        schema_version: "external_target.v1",
         target: {
           repository_url: EXTERNAL_REPOSITORY,
           requested_ref: "main",
@@ -362,17 +386,14 @@ test("hosted Surprise input stops once instead of becoming a payment demo", asyn
       headers: { accept: "text/event-stream", "x-agent24-test": "1" },
     });
     assert.equal(streamed.status, 200);
-    const events = (await streamed.text())
-      .trim()
-      .split("\n\n")
-      .map((block) => JSON.parse(block.slice("data: ".length)));
-    const terminal = events.filter((event) => ["run.completed", "run.failed"].includes(event.type));
+    const events = parseSse(await streamed.text());
+    const terminal = events.filter((event) => event.type === "run_completed");
 
-    assert.deepEqual(events.map((event) => event.seq), Array.from({ length: events.length }, (_, index) => index + 1));
+    assert.deepEqual(events.map((event) => event.seq), Array.from({ length: events.length }, (_, index) => index));
     assert.equal(terminal.length, 1);
-    assert.equal(terminal[0].data.status, "unsupported");
-    assert.equal(events.find((event) => event.type === "finding_report")?.data.status, "unsupported");
-    assert.equal(events.find((event) => event.type === "lab_report")?.data.termination.reason, "unsupported_input");
+    assert.equal(terminal[0].payload.investigation.status, "unsupported");
+    assert.equal(events.find((event) => event.type === "finding_report")?.payload.status, "unsupported");
+    assert.equal(events.find((event) => event.type === "lab_report")?.payload.termination.reason, "unsupported_input");
     assert.equal(events.some((event) => event.type === "experiment_plan"), false);
     assert.doesNotMatch(JSON.stringify(events), /payment\.charge|life\.payment|cake-001|protected_replay/);
   } finally {

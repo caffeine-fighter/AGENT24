@@ -3,6 +3,7 @@ import {
   createInitialState,
   createUnsupportedFixture,
   isDocumentedUnsupportedMission,
+  RUN_REQUEST_SCHEMA,
   reduceRunState,
   validateTargetInput,
 } from "./core.mjs";
@@ -16,9 +17,12 @@ const OUTCOME_STATUS_LABELS = Object.freeze({
   budget_exhausted: "실험 한도 도달",
   compatible_candidate: "지원 가능성 있음",
   complete: "완료",
+  completed: "완료",
+  degraded: "일부 기능만 완료",
   failed: "실험 중단",
   fallback: "내장 예시 사용",
   fallback_complete: "내장 예시 완료",
+  fallback_demo: "내장 예시 완료",
   fixture_only: "내장 예시",
   measured: "위험 발견",
   no_failure_observed: "위험 미발견",
@@ -27,9 +31,18 @@ const OUTCOME_STATUS_LABELS = Object.freeze({
   pending: "확인 전",
   pinned: "커밋 확인",
   profiling: "에이전트 파악 중",
+  protocol_error: "기록 확인 중단",
   ready: "실험 전",
+  reconnecting: "기록 다시 받는 중",
   running: "실험 중",
-  unsupported: "현재 지원 안 함",
+  unsupported: "아직 지원하지 않음",
+  verified_mitigation: "안전장치 검증 완료",
+});
+const ORIGIN_LABELS = Object.freeze({
+  openai_sdk: "RAW API",
+  controller: "CONTROLLER",
+  fixture: "FIXTURE",
+  system: "SYSTEM",
 });
 const ASSESSMENT_LABELS = Object.freeze({
   retry_behavior: "재시도 처리",
@@ -103,7 +116,7 @@ function apiUrl(path) {
 
 let state = createInitialState();
 let timers = [];
-let eventSource = null;
+let streamController = null;
 let runStartedAt = null;
 let clockTimer = null;
 let lastTarget = { ...state.target };
@@ -158,10 +171,10 @@ function formatProfileLabel(value) {
 
 function renderWorld(prefix, world) {
   setText(`#${prefix}Wallet`, won.format(world.wallet_krw));
-  setText(`#${prefix}Orders`, String(world.orders));
-  setText(`#${prefix}Emails`, String(world.outbound_emails));
-  setText(`#${prefix}Calendar`, String(world.calendar_events));
-  setText(`#${prefix}Files`, String(world.files_touched));
+  setText(`#${prefix}LogicalOrders`, String(world.logical_orders ?? world.orders ?? 0));
+  setText(`#${prefix}Charges`, String(world.charges ?? 0));
+  setText(`#${prefix}Fulfillments`, String(world.fulfillments ?? 0));
+  setText(`#${prefix}TotalSpend`, won.format(world.total_spend_krw ?? Math.max(0, 500000 - Number(world.wallet_krw || 0))));
 }
 
 function renderVerdict(selector, verdict, labels) {
@@ -173,7 +186,7 @@ function renderVerdict(selector, verdict, labels) {
 function renderPhases() {
   $$("#phaseRail li").forEach((item) => {
     const phase = item.dataset.phase;
-    item.classList.toggle("active", phase === state.phase && state.status !== "complete");
+    item.classList.toggle("active", phase === state.phase && state.status === "running");
     item.classList.toggle("done", state.completedPhases.includes(phase));
   });
 }
@@ -183,7 +196,7 @@ function renderAssets() {
   renderWorld("after", state.after);
   const beforeCard = $('[data-world="before"]');
   beforeCard.querySelector(".wallet").classList.toggle("damaged", state.beforeVerdict === "fail");
-  beforeCard.querySelector(".orders").classList.toggle("damaged", state.beforeVerdict === "fail");
+  beforeCard.querySelectorAll(".charges, .fulfillments, .total-spend").forEach((card) => card.classList.toggle("damaged", state.beforeVerdict === "fail"));
   const afterCard = $('[data-world="after"]');
   afterCard.querySelectorAll(".asset-card").forEach((card) => card.classList.toggle("safe", state.afterVerdict === "pass"));
   renderVerdict("#beforeVerdict", state.beforeVerdict, { neutral: "실험 전", fail: "실패 재현", pass: "문제 미발견" });
@@ -193,8 +206,9 @@ function renderAssets() {
   setText("#impactHeadline", state.impact.headline);
   setText("#impactDetail", state.impact.detail);
   const cakeStack = $("#cakeStack");
-  const cakeCount = Math.min(state.before.orders, 12);
-  cakeStack.setAttribute("aria-label", `처리된 케이크 ${state.before.orders}개`);
+  const logicalOrders = state.before.logical_orders ?? state.before.orders ?? 0;
+  const cakeCount = Math.min(logicalOrders, 12);
+  cakeStack.setAttribute("aria-label", `주문 ${logicalOrders}건`);
   cakeStack.innerHTML = Array.from({ length: cakeCount }, (_, index) => `<span style="animation-delay:${index * 45}ms">🎂</span>`).join("");
 }
 
@@ -465,11 +479,14 @@ function renderStream() {
   state.events.forEach((event) => {
     const node = $("#streamLineTemplate").content.firstElementChild.cloneNode(true);
     node.dataset.kind = event.type;
+    node.dataset.origin = event.origin || "unknown";
+    node.dataset.rawApi = String(event.raw_api_item === true);
     node.querySelector(".stream-seq").textContent = `#${String(event.seq).padStart(2, "0")}`;
     node.querySelector(".stream-type").textContent = event.wire_type || event.type;
+    node.querySelector(".stream-origin").textContent = ORIGIN_LABELS[event.origin] || "UNKNOWN";
     node.querySelector("time").textContent = new Date(event.timestamp).toLocaleTimeString("ko-KR", { hour12: false });
     const rawPayload = node.querySelector("pre");
-    rawPayload.textContent = JSON.stringify(event.raw, null, 2);
+    rawPayload.textContent = JSON.stringify(event.wire_envelope || event.raw, null, 2);
     if (["source.descriptor", "behavior.profile", "experiment.plan", "lab.report"].includes(event.type)) {
       rawPayload.tabIndex = 0;
       rawPayload.setAttribute("aria-label", `${event.wire_type || event.type} 원본 JSON`);
@@ -509,10 +526,12 @@ function render() {
       ? "내장 예시 · 저장소는 확인하지 않았어요"
       : "—"),
   );
+  setText("#targetManifest", state.target.manifestPath || "—");
+  setText("#targetAdapter", state.target.adapter || "—");
   const notice = $("#runNotice");
   const noticeMessage = state.terminalNotice?.message
     || (state.status === "running" ? state.outcomes.operation.message : "")
-    || (["complete", "failed"].includes(state.status) ? state.outcomes.operation.message : "");
+    || (["complete", "failed", "protocol_error"].includes(state.status) ? state.outcomes.operation.message : "");
   notice.hidden = !noticeMessage;
   notice.dataset.kind = state.terminalNotice?.kind || state.status;
   setText("#runNotice", noticeMessage);
@@ -525,20 +544,30 @@ function render() {
       : state.source === "live"
         ? liveMode
         : state.status === "complete"
-          ? "내장 예시 완료"
+          ? "내장 예시 확인 완료"
           : "내장 예시 실행 중",
   );
-  setText("#connectionStatus", state.status === "idle" ? "실험 전" : state.source === "live" ? "실행 기록을 받고 있어요" : "가상 환경에서 실행 중");
+  setText(
+    "#connectionStatus",
+    state.status === "idle"
+      ? "실험 전"
+      : state.status === "protocol_error"
+        ? "실행 기록 확인 중단"
+        : state.source === "live"
+          ? "실행 기록을 받고 있어요"
+          : "가상 환경에서 실행 중",
+  );
   const runButton = $("#runButton");
   runButton.disabled = state.status === "running";
   runButton.setAttribute("aria-busy", String(state.status === "running"));
-  runButton.querySelector("span").textContent = state.status === "running" ? "실험 중" : "실험 시작하기";
-  $("#resetButton").hidden = !["complete", "failed"].includes(state.status);
+  runButton.querySelector("span").textContent = state.status === "running" ? "충돌 시험 중" : "충돌 시험 시작";
+  $("#resetButton").hidden = !["complete", "failed", "protocol_error"].includes(state.status);
   $("#replayButton").hidden = state.status !== "complete";
   $("#replayButton").disabled = state.status !== "complete";
 }
 
 function dispatch(event) {
+  const previousProtocolStatus = state.protocol.status;
   state = reduceRunState(state, event);
   render();
   const terminalEvent = event.type === "run_completed"
@@ -547,8 +576,8 @@ function dispatch(event) {
       && (event.data?.status ?? event.payload?.status) !== "offline_demo");
   if (terminalEvent) {
     if (state.source === "live") {
-      eventSource?.close();
-      eventSource = null;
+      streamController?.abort();
+      streamController = null;
     }
     clearInterval(clockTimer);
     const terminalMode = state.source === "live"
@@ -556,13 +585,14 @@ function dispatch(event) {
       : "내장 예시";
     setText("#connectionStatus", state.status === "complete" ? `${terminalMode} 완료` : `${terminalMode} 중단`);
   }
+  return previousProtocolStatus !== "gap" && state.protocol.status === "gap" ? "gap" : "projected";
 }
 
 function clearRun() {
   timers.forEach(clearTimeout);
   timers = [];
-  eventSource?.close();
-  eventSource = null;
+  streamController?.abort();
+  streamController = null;
   clearInterval(clockTimer);
   clockTimer = null;
   runStartedAt = null;
@@ -591,9 +621,103 @@ function playFixture(target, { speed = 360 } = {}) {
   events.forEach((fixtureEvent, index) => {
     timers.push(setTimeout(() => {
       dispatch(fixtureEvent);
-      if (fixtureEvent.type === "run.completed") clearInterval(clockTimer);
+      if (["run_completed", "run.completed"].includes(fixtureEvent.type)) clearInterval(clockTimer);
     }, index * speed));
   });
+}
+
+function failProtocol(code, message) {
+  state = {
+    ...state,
+    status: "protocol_error",
+    protocol: { ...state.protocol, status: "error", issue: { code } },
+    outcomes: {
+      ...state.outcomes,
+      operation: { status: "failed", message },
+    },
+    terminalNotice: { kind: code, message },
+  };
+  clearInterval(clockTimer);
+  render();
+  setText("#connectionStatus", "실행 기록 확인 중단");
+}
+
+function readSseBlocks(buffer) {
+  const normalized = buffer.replaceAll("\r\n", "\n");
+  const blocks = normalized.split("\n\n");
+  return { complete: blocks.slice(0, -1), rest: blocks.at(-1) || "" };
+}
+
+function parseSseBlock(block) {
+  let id = null;
+  const data = [];
+  for (const line of block.split("\n")) {
+    if (line.startsWith("id:")) id = line.slice(3).trim();
+    if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+  }
+  return { id, data: data.join("\n") };
+}
+
+async function consumeRunStream(eventsPath, runId, target, lastEventId = null, reconnectAttempt = 0) {
+  const controller = new AbortController();
+  streamController = controller;
+  const headers = { Accept: "text/event-stream" };
+  if (lastEventId !== null) headers["Last-Event-ID"] = String(lastEventId);
+  try {
+    const response = await fetch(apiUrl(eventsPath), { headers, signal: controller.signal });
+    if (!response.ok || !response.body) throw new Error("event stream unavailable");
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.includes("text/event-stream")) throw new Error("event stream content type invalid");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const parsedBlocks = readSseBlocks(buffer);
+      buffer = parsedBlocks.rest;
+      for (const block of parsedBlocks.complete) {
+        const parsed = parseSseBlock(block);
+        if (!parsed.data) continue;
+        const envelope = JSON.parse(parsed.data);
+        if (
+          envelope.schema_version === "event.envelope.v1"
+          && parsed.id !== null
+          && Number(parsed.id) !== envelope.seq
+        ) {
+          failProtocol("sse_id_mismatch", "서버가 보낸 기록 번호와 실제 순서가 달라 화면 반영을 멈췄어요.");
+          controller.abort();
+          return;
+        }
+        receivedLiveEvent = true;
+        const result = dispatch({ ...envelope, _wire_text: parsed.data, source: envelope.source || "live" });
+        if (result === "gap") {
+          controller.abort();
+          if (reconnectAttempt >= 2) {
+            failProtocol("sequence_gap", "빠진 실행 기록을 복구하지 못해 화면 반영을 멈췄어요.");
+            return;
+          }
+          await consumeRunStream(
+            eventsPath,
+            runId,
+            target,
+            state.protocol.lastContiguousSeq,
+            reconnectAttempt + 1,
+          );
+          return;
+        }
+        if (["complete", "failed", "protocol_error"].includes(state.status)) return;
+      }
+      if (done) break;
+    }
+    if (!["complete", "failed", "protocol_error"].includes(state.status)) {
+      failProtocol("terminal_missing", "종료 이벤트 없이 연결이 끝나 결과를 확정하지 않았어요.");
+    }
+  } catch {
+    if (controller.signal.aborted) return;
+    if (!receivedLiveEvent) playFixture(target);
+    else failProtocol("stream_interrupted", "실행 기록 연결이 끊겨 결과를 확정하지 않았어요.");
+  }
 }
 
 async function startLiveRun(target) {
@@ -615,6 +739,7 @@ async function startLiveRun(target) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        schema_version: RUN_REQUEST_SCHEMA,
         target: {
           repository_url: target.repositoryUrl,
           requested_ref: target.requestedRef || null,
@@ -633,6 +758,11 @@ async function startLiveRun(target) {
     }
     if (!response.ok) throw new Error(`Run API returned ${response.status}`);
     const payload = await response.json();
+    if (payload.schema_version && payload.schema_version !== "run.accepted.v1") {
+      clearTimeout(timeout);
+      failProtocol("accepted_schema_invalid", "실행 접수 응답 형식을 확인할 수 없어 시작하지 않았어요.");
+      return "protocol_error";
+    }
     const runId = payload.run_id;
     if (!runId) throw new Error("Run API response has no run_id");
     clearTimeout(timeout);
@@ -640,17 +770,7 @@ async function startLiveRun(target) {
     state.runId = runId;
     render();
     const eventsPath = payload.events_url || `/api/runs/${encodeURIComponent(runId)}/events`;
-    eventSource = new EventSource(apiUrl(eventsPath));
-    eventSource.onmessage = ({ data }) => {
-      receivedLiveEvent = true;
-      try { dispatch({ ...JSON.parse(data), source: "live" }); }
-      catch (error) { dispatch({ run_id: runId, type: "client.parse_error", source: "live", data: { message: error.message }, raw: data }); }
-    };
-    eventSource.onerror = () => {
-      eventSource?.close();
-      if (!receivedLiveEvent) playFixture(target);
-      else setText("#connectionStatus", "연결이 끊겼어요. 지금까지 받은 기록은 그대로 남겨뒀어요.");
-    };
+    void consumeRunStream(eventsPath, runId, target);
     return "started";
   } catch {
     clearTimeout(timeout);
@@ -724,11 +844,11 @@ $("#resetButton").addEventListener("click", () => {
 $("#replayButton").addEventListener("click", () => runMission(lastTarget));
 
 $("#copyStreamButton").addEventListener("click", async () => {
-  const raw = state.events.map((event) => JSON.stringify(event.raw)).join("\n");
+  const raw = state.events.map((event) => JSON.stringify(event.wire_envelope || event.raw)).join("\n");
   try {
     await navigator.clipboard.writeText(raw);
     setText("#copyStreamButton", "복사했어요");
-    setTimeout(() => setText("#copyStreamButton", "복사"), 1200);
+    setTimeout(() => setText("#copyStreamButton", "기록 복사"), 1200);
   } catch {
     setText("#copyStreamButton", "다시 시도");
   }

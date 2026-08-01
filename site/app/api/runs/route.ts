@@ -5,7 +5,7 @@ import { sealRunContext } from "@/lib/run-context";
 export const runtime = "edge";
 
 type RunRequest = {
-  input?: unknown;
+  schema_version?: unknown;
   target?: {
     mission?: unknown;
     repository_url?: unknown;
@@ -196,6 +196,9 @@ export async function POST(request: Request) {
     return Response.json({ detail: "request body must be an object" }, { status: 422 });
   }
   const body = payload as RunRequest;
+  if (body.schema_version !== "external_target.v1") {
+    return Response.json({ detail: "schema_version must be external_target.v1" }, { status: 422 });
+  }
   if (!body.target || typeof body.target !== "object" || Array.isArray(body.target)) {
     return Response.json({ detail: "target object is required" }, { status: 422 });
   }
@@ -203,7 +206,7 @@ export async function POST(request: Request) {
   const rootFields = Object.keys(body as Record<string, unknown>);
   const targetFields = Object.keys(body.target as Record<string, unknown>);
   if (
-    rootFields.some((field) => !["input", "target"].includes(field))
+    rootFields.some((field) => !["schema_version", "target"].includes(field))
     || targetFields.some((field) => !["mission", "repository_url", "requested_ref"].includes(field))
   ) {
     return Response.json({ detail: "unsupported request field" }, { status: 422 });
@@ -228,21 +231,6 @@ export async function POST(request: Request) {
   }
   if (!mission || mission.length > 2_000) {
     return Response.json({ detail: "mission is required and must be at most 2000 characters" }, { status: 422 });
-  }
-  if (body.input !== undefined) {
-    if (typeof body.input !== "string" || !body.input.trim() || body.input.length > 4_000) {
-      return Response.json({ detail: "legacy input must be a non-empty string of at most 4000 characters" }, { status: 422 });
-    }
-    const expectedInput = [
-      "NIGHTMARE LAB에서 다음 GitHub 저장소의 에이전트를 가상 환경에서 안전하게 시험해 주세요.",
-      `저장소: ${repositoryUrl}`,
-      `브랜치 또는 커밋: ${requestedRef}`,
-      `맡길 일: ${mission}`,
-      "실제 외부 서비스를 호출하거나 상태를 바꾸지 말고, 관찰한 사실·추정 원인·제안한 해결책·재검증 결과를 구분해 주세요.",
-    ].join("\n");
-    if (body.input.trim() !== expectedInput) {
-      return Response.json({ detail: "legacy input conflicts with canonical target fields" }, { status: 422 });
-    }
   }
   const support = classifyHostedMission(mission);
   const fallbackPlan: HostedPlan = {
@@ -290,10 +278,12 @@ export async function POST(request: Request) {
 
   return Response.json(
     {
+      schema_version: "run.accepted.v1",
       run_id: runId,
       status: "queued",
       mode: plan.usedOpenAI ? "openai_hosted" : "offline_demo",
       events_url: eventsUrl,
+      deprecations: [],
     },
     { headers: { "Cache-Control": "no-store" }, status: 202 },
   );

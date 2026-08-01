@@ -8,6 +8,7 @@ import {
   createInitialState,
   createUnsupportedFixture,
   DEFAULT_MISSION,
+  EVENT_ENVELOPE_SCHEMA,
   formatRunInput,
   isDocumentedUnsupportedMission,
   normalizeEvent,
@@ -59,6 +60,8 @@ const target = {
   repositoryUrl: "https://github.com/example/agent",
   requestedRef: "release-v1",
   resolvedSha: null,
+  manifestPath: null,
+  adapter: null,
   mission: "케이크 하나를 주문해줘.",
 };
 const runInput = formatRunInput(target);
@@ -72,27 +75,29 @@ const first = createCakeCrashFixture(mission);
 const second = createCakeCrashFixture(mission);
 
 assert.deepEqual(first, second, "fixture event ordering and payloads must be deterministic");
-assert.equal(first[0].type, "run.started");
-assert.equal(first.at(-1).type, "run.completed");
+assert.equal(first[0].schema_version, EVENT_ENVELOPE_SCHEMA);
+assert.equal(first[0].type, "run_started");
+assert.equal(first.at(-1).type, "run_completed");
+assert.deepEqual(first.map((event) => event.seq), first.map((_, index) => index));
 assert.ok(first.some((event) => event.type === "tool_call"));
 assert.ok(first.some((event) => event.type === "tool_result"));
 assert.deepEqual(
-  first.find((event) => event.type === "source_descriptor").raw,
+  first.find((event) => event.type === "source_descriptor").payload,
   createCakeSourceDescriptor(),
   "fixture SourceDescriptor payload must remain unedited",
 );
 assert.deepEqual(
-  first.find((event) => event.type === "behavior_profile").raw,
+  first.find((event) => event.type === "behavior_profile").payload,
   createCakeBehaviorProfile(),
   "fixture BehaviorProfile payload must remain unedited",
 );
 assert.deepEqual(
-  first.find((event) => event.type === "experiment_plan").raw,
+  first.find((event) => event.type === "experiment_plan").payload,
   createCakeExperimentPlan(mission),
   "fixture ExperimentPlan payload must remain unedited",
 );
 assert.deepEqual(
-  first.find((event) => event.type === "lab_report").raw,
+  first.find((event) => event.type === "lab_report").payload,
   createCakeLabReport(mission),
   "fixture LabReport payload must remain unedited",
 );
@@ -127,13 +132,14 @@ const unsupportedFixture = createUnsupportedFixture(unsupportedMission, {
   ...target,
   mission: unsupportedMission,
 });
-assert.equal(unsupportedFixture.filter((item) => item.type === "run.completed").length, 1);
-assert.equal(unsupportedFixture.at(-1).data.status, "unsupported");
+assert.equal(unsupportedFixture.filter((item) => item.type === "run_completed").length, 1);
+assert.equal(unsupportedFixture.at(-1).payload.investigation.status, "not_run");
+assert.equal(unsupportedFixture.at(-1).payload.operation.status, "fallback_demo");
 assert.equal(unsupportedFixture.some((item) => item.type === "experiment_plan"), false);
 assert.doesNotMatch(JSON.stringify(unsupportedFixture), /payment\.charge|life\.payment|cake-001|protected_replay/);
 const unsupportedFixtureState = replayDeterministically(unsupportedFixture);
 assert.equal(unsupportedFixtureState.status, "complete");
-assert.equal(unsupportedFixtureState.terminalNotice.kind, "unsupported");
+assert.equal(unsupportedFixtureState.terminalNotice.kind, "fallback_demo");
 assert.equal(unsupportedFixtureState.analysisScope, "fixture_fallback");
 
 const unknown = {
@@ -586,7 +592,7 @@ let runtimeState = reduceRunState(createInitialState(), {
   payload: { mode: "live", input_received: true },
 });
 assert.equal(runtimeState.status, "running");
-assert.equal(runtimeState.phase, "CLONE");
+assert.equal(runtimeState.phase, "PIN");
 assert.equal(runtimeState.mode, "live");
 runtimeState = reduceRunState(runtimeState, normalizedRuntimeEvent);
 runtimeState = reduceRunState(runtimeState, {

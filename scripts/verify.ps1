@@ -100,6 +100,8 @@ try {
     Invoke-Gate "canonical_web" {
         node web/tests/core.test.mjs
         Assert-LastExitCode "canonical_web" "fix the canonical reducer contract reported by Node."
+        node web/tests/event-protocol.test.mjs
+        Assert-LastExitCode "canonical_web" "fix the frontend event ordering, reconnect, or terminal contract reported by Node."
         node --test scripts/tests/verification.test.mjs
         Assert-LastExitCode "canonical_web" "fix the verification contract test reported by Node."
     }

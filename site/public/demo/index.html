@@ -40,13 +40,13 @@
             <p class="eyebrow">AI 에이전트 배포 전 안전 점검</p>
             <h1>배포하기 전에 <em>먼저 실패시켜 보세요.</em></h1>
             <p class="hero-copy">
-              GitHub 저장소와 맡길 일을 입력하세요. NIGHTMARE LAB이 가상 환경에서
-              실패를 재현하고, 원인을 찾고, 안전장치 적용 뒤 같은 조건으로 다시 실행해요.
+              GitHub 저장소와 맡길 일을 입력해 주세요. NIGHTMARE LAB이 가상 환경에서
+              실패를 재현하고 원인을 찾은 뒤, 안전장치가 제대로 작동하는지 다시 확인해요.
             </p>
             <ul class="hero-points" aria-label="실험에서 확인하는 내용">
               <li><strong>최초 실패 지점</strong><span>어떤 도구 호출부터 어긋났는지 찾아요</span></li>
               <li><strong>원인과 안전장치</strong><span>확인한 사실과 추정한 원인을 나눠 보여줘요</span></li>
-              <li><strong>같은 조건 재실행</strong><span>문제를 막으면서 원래 기능도 지키는지 확인해요</span></li>
+              <li><strong>같은 조건으로 재실행</strong><span>문제를 막으면서 원래 기능도 지키는지 확인해요</span></li>
             </ul>
           </div>
 
@@ -86,20 +86,20 @@
             <textarea id="missionInput" name="mission" rows="3" maxlength="2000" aria-describedby="missionHint" required>엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문해줘.</textarea>
             <div class="mission-actions">
               <button id="runButton" class="primary-button" type="submit">
-                <span>실험 시작하기</span>
+                <span>충돌 시험 시작</span>
                 <span aria-hidden="true">↗</span>
               </button>
-              <button id="resetButton" class="ghost-button run-secondary" type="button" hidden>결과 지우기</button>
-              <button id="replayButton" class="ghost-button run-secondary" type="button" hidden disabled>같은 내용으로 다시 실행</button>
             </div>
             <p id="missionHint" class="form-hint">
-              공개된 GitHub 저장소만 확인해요. 코드는 실행하지 않고 실제 서비스와 계정은 건드리지 않아요.
+              공개 GitHub 저장소의 <code>agent24.manifest.v1</code> 설정만 읽어요. 현재는 결제 응답이 끊기는 가상 상황만 시험하고, 저장소 코드는 실행하지 않아요.
             </p>
             <p id="inputError" class="input-error" role="alert" hidden></p>
             <dl class="target-status" aria-label="분석 대상">
               <div><dt>입력한 저장소</dt><dd id="targetRepo">—</dd></div>
               <div><dt>확인할 버전</dt><dd id="targetRef">—</dd></div>
               <div><dt>확인한 커밋</dt><dd id="targetSha">—</dd></div>
+              <div><dt>설정 파일</dt><dd id="targetManifest">—</dd></div>
+              <div><dt>연결 방식</dt><dd id="targetAdapter">—</dd></div>
             </dl>
             <p id="runNotice" class="run-notice" role="status" aria-live="polite" aria-atomic="true" hidden></p>
           </form>
@@ -112,24 +112,29 @@
           </p>
           <div class="outcome-grid">
             <article data-outcome="submission" data-status="pending">
-              <small>01 · 저장소 확인</small><strong id="submissionOutcome">확인 전</strong><p id="submissionDetail">아직 저장소를 확인하지 않았어요</p>
+              <small>01 · 저장소</small><strong id="submissionOutcome">확인 전</strong><p id="submissionDetail">아직 저장소를 확인하지 않았어요</p>
             </article>
             <article data-outcome="investigation" data-status="pending">
-              <small>02 · 안전 실험</small><strong id="investigationOutcome">확인 전</strong><p id="investigationDetail">아직 실험을 시작하지 않았어요</p>
+              <small>02 · 안전성</small><strong id="investigationOutcome">확인 전</strong><p id="investigationDetail">아직 실험을 시작하지 않았어요</p>
             </article>
             <article data-outcome="operation" data-status="ready">
               <small>03 · 진행 상황</small><strong id="operationOutcome">실험 전</strong><p id="operationDetail">위의 내용을 입력하고 시작해 주세요</p>
             </article>
           </div>
+          <div class="result-actions" aria-label="실험 다시 시작">
+            <button id="resetButton" class="ghost-button run-secondary" type="button" hidden>새 시험 준비</button>
+            <button id="replayButton" class="ghost-button run-secondary" type="button" hidden disabled>같은 입력으로 다시 시험</button>
+          </div>
         </section>
 
         <nav class="phase-rail panel" aria-label="실행 단계" tabindex="0">
           <ol id="phaseRail">
-            <li data-phase="CLONE"><span>01</span><strong>환경 준비</strong><small>저장소 확인</small></li>
-            <li data-phase="CRASH"><span>02</span><strong>실패 재현</strong><small>오류 하나만 주입</small></li>
-            <li data-phase="AUTOPSY"><span>03</span><strong>원인 분석</strong><small>최초 이탈 지점 찾기</small></li>
-            <li data-phase="VACCINE"><span>04</span><strong>안전장치 적용</strong><small>규칙 추가</small></li>
-            <li data-phase="REPLAY"><span>05</span><strong>다시 확인</strong><small>같은 조건으로 재실행</small></li>
+            <li data-phase="PIN"><span>01</span><strong>커밋 확인</strong><small>버전·설정 파일 고정</small></li>
+            <li data-phase="PROFILE"><span>02</span><strong>행동 파악</strong><small>근거·미확인 구분</small></li>
+            <li data-phase="CRASH"><span>03</span><strong>실패 재현</strong><small>오류 하나만 주입</small></li>
+            <li data-phase="AUTOPSY"><span>04</span><strong>원인 분석</strong><small>최초 이탈 지점 찾기</small></li>
+            <li data-phase="VACCINE"><span>05</span><strong>안전장치 제안</strong><small>근거에 맞춰 규칙 설계</small></li>
+            <li data-phase="REPLAY"><span>06</span><strong>재실행 검증</strong><small>같은 조건·정상 입력</small></li>
           </ol>
         </nav>
 
@@ -181,8 +186,12 @@
               <strong>다시 확인한 결과</strong>
               <p id="reportVerified">—</p>
             </article>
+            <article data-claim="residual">
+              <small>05 · 확인 범위</small>
+              <strong>아직 확인하지 못한 것</strong>
+              <p id="reportResidualRisk">—</p>
+            </article>
           </div>
-          <p id="reportResidualRisk" class="residual-risk">—</p>
         </section>
 
         <section id="worldGrid" class="world-grid" hidden>
@@ -196,21 +205,25 @@
             </header>
 
             <div class="asset-grid">
-              <article class="asset-card wallet">
+              <article class="asset-card logical-orders">
+                <span class="asset-icon" aria-hidden="true">①</span>
+                <div><small>주문 건수</small><strong id="beforeLogicalOrders">0</strong></div>
+              </article>
+              <article class="asset-card charges">
                 <span class="asset-icon" aria-hidden="true">₩</span>
-                <div><small>가상 지갑</small><strong id="beforeWallet">₩500,000</strong></div>
+                <div><small>결제 건수</small><strong id="beforeCharges">0</strong></div>
               </article>
-              <article class="asset-card orders">
+              <article class="asset-card fulfillments">
                 <span class="asset-icon" aria-hidden="true">▣</span>
-                <div><small>처리 건수</small><strong id="beforeOrders">0</strong></div>
+                <div><small>배송 건수</small><strong id="beforeFulfillments">0</strong></div>
               </article>
-              <article class="asset-card inbox">
-                <span class="asset-icon" aria-hidden="true">✉</span>
-                <div><small>보낸 메일</small><strong id="beforeEmails">0</strong></div>
+              <article class="asset-card total-spend">
+                <span class="asset-icon" aria-hidden="true">Σ</span>
+                <div><small>가상 결제 합계</small><strong id="beforeTotalSpend">₩0</strong></div>
               </article>
-              <article class="asset-card files">
-                <span class="asset-icon" aria-hidden="true">⌁</span>
-                <div><small>변경한 파일</small><strong id="beforeFiles">0</strong></div>
+              <article class="asset-card wallet">
+                <span class="asset-icon" aria-hidden="true">◫</span>
+                <div><small>가상 지갑 잔액</small><strong id="beforeWallet">₩500,000</strong></div>
               </article>
             </div>
 
@@ -234,21 +247,25 @@
             </header>
 
             <div class="asset-grid">
-              <article class="asset-card wallet">
+              <article class="asset-card logical-orders">
+                <span class="asset-icon" aria-hidden="true">①</span>
+                <div><small>주문 건수</small><strong id="afterLogicalOrders">0</strong></div>
+              </article>
+              <article class="asset-card charges">
                 <span class="asset-icon" aria-hidden="true">₩</span>
-                <div><small>가상 지갑</small><strong id="afterWallet">₩500,000</strong></div>
+                <div><small>결제 건수</small><strong id="afterCharges">0</strong></div>
               </article>
-              <article class="asset-card orders">
+              <article class="asset-card fulfillments">
                 <span class="asset-icon" aria-hidden="true">▣</span>
-                <div><small>처리 건수</small><strong id="afterOrders">0</strong></div>
+                <div><small>배송 건수</small><strong id="afterFulfillments">0</strong></div>
               </article>
-              <article class="asset-card inbox">
-                <span class="asset-icon" aria-hidden="true">✉</span>
-                <div><small>보낸 메일</small><strong id="afterEmails">0</strong></div>
+              <article class="asset-card total-spend">
+                <span class="asset-icon" aria-hidden="true">Σ</span>
+                <div><small>가상 결제 합계</small><strong id="afterTotalSpend">₩0</strong></div>
               </article>
-              <article class="asset-card files">
-                <span class="asset-icon" aria-hidden="true">⌁</span>
-                <div><small>변경한 파일</small><strong id="afterFiles">0</strong></div>
+              <article class="asset-card wallet">
+                <span class="asset-icon" aria-hidden="true">◫</span>
+                <div><small>가상 지갑 잔액</small><strong id="afterWallet">₩500,000</strong></div>
               </article>
             </div>
 
@@ -298,11 +315,11 @@
           </div>
           <div class="stream-actions">
             <span id="eventCount">기록 0개</span>
-            <button id="copyStreamButton" type="button" title="원본 실행 기록 복사">복사</button>
+            <button id="copyStreamButton" type="button" title="원본 실행 기록 복사">기록 복사</button>
           </div>
         </header>
         <p class="stream-note">
-          서버에서 받은 이벤트를 그대로, 시간순으로 보여드려요. 새 이벤트 유형도 생략하지 않아요.
+          서버에서 받은 이벤트를 시간순으로 보여드려요. 모르는 이벤트도 숨기지 않고 원문 그대로 남겨요.
         </p>
         <div id="rawStream" class="raw-stream" role="log" aria-label="원본 실행 기록 목록" tabindex="0">
           <div class="stream-empty">실험을 시작하면 실시간 기록이 여기에 쌓여요.</div>
@@ -316,7 +333,7 @@
 
     <template id="streamLineTemplate">
       <article class="stream-line">
-        <div><span class="stream-seq"></span><span class="stream-type"></span><time></time></div>
+        <div><span class="stream-seq"></span><span class="stream-type"></span><span class="stream-origin"></span><time></time></div>
         <pre></pre>
       </article>
     </template>

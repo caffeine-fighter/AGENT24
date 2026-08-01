@@ -23,12 +23,25 @@ async function guarded(caseId, code, action) {
 }
 
 function observeRunRequests(page) {
-  const observation = { submitCount: 0 };
+  const observation = { bodies: [], submitCount: 0 };
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (request.method() === "POST" && url.pathname === "/api/runs") observation.submitCount += 1;
+    if (request.method() === "POST" && url.pathname === "/api/runs") {
+      observation.submitCount += 1;
+      observation.bodies.push(request.postDataJSON());
+    }
   });
   return observation;
+}
+
+function assertCanonicalRequests(observation, expectedCount) {
+  expect(observation.bodies).toHaveLength(expectedCount);
+  for (const body of observation.bodies) {
+    expect(Object.keys(body).sort()).toEqual(["schema_version", "target"]);
+    expect(body.schema_version).toBe("external_target.v1");
+    expect(Object.keys(body.target).sort()).toEqual(["mission", "repository_url", "requested_ref"]);
+    expect(body).not.toHaveProperty("input");
+  }
 }
 
 function buildObservedCase({
@@ -79,7 +92,7 @@ async function streamMetrics(page) {
   return {
     rawVisible: await page.locator("#rawStream").isVisible(),
     runCount: await page.locator('#rawStream .stream-line[data-kind="run.started"]').count(),
-    sequenceContiguous: sequence.length > 0 && sequence.every((value, index) => value === index + 1),
+    sequenceContiguous: sequence.length > 0 && sequence.every((value, index) => value === index),
     terminalCount: await page.locator(
       '#rawStream .stream-line[data-kind="run.completed"], #rawStream .stream-line[data-kind="run.failed"]',
     ).count(),
@@ -133,6 +146,7 @@ test("canonical normal hosted path", async ({ page }) => {
   const requests = observeRunRequests(page);
   await guarded(id, "normal_route_failed", () => submit(page, "엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문해줘."));
   const metrics = await streamMetrics(page);
+  assertCanonicalRequests(requests, 1);
   await guarded(id, "sequence_gap", () => expect(metrics.sequenceContiguous).toBe(true));
   await guarded(id, "terminal_count_invalid", () => expect(metrics.terminalCount).toBe(1));
 
@@ -171,6 +185,7 @@ test("canonical typed unsupported path is stable across isolated runs", async ({
       const requests = observeRunRequests(page);
       await guarded(id, "unsupported_boundary_failed", () => submit(page, TIME_MISSION));
       const metrics = await streamMetrics(page);
+      assertCanonicalRequests(requests, 1);
       rawVisible &&= metrics.rawVisible;
       runCount += metrics.runCount;
       sequenceContiguous &&= metrics.sequenceContiguous;
@@ -182,7 +197,7 @@ test("canonical typed unsupported path is stable across isolated runs", async ({
       const investigationText = await page.locator("#investigationOutcome").textContent();
       const noticeText = await page.locator("#runNotice").textContent();
       boundaryVisible &&= investigationText === "아직 지원하지 않음"
-        && (noticeText ?? "").includes("지금은 이 작업에서 생길 수 있는 문제를 재현할 실험이 없어요");
+        && (noticeText ?? "").includes("지금은 이 작업에 맞는 안전 실험을 지원하지 않아요");
       unexpectedEvidenceCount += await page.locator("#rawStream .stream-line").filter({
         hasText: /payment\.charge|experiment_plan|protected_replay/,
       }).count();
@@ -224,6 +239,7 @@ test("canonical explicit fixture fallback path", async ({ page }) => {
     await expect(page.locator("#connectionStatus")).toContainText("완료", { timeout: 15_000 });
   });
   const metrics = await streamMetrics(page);
+  assertCanonicalRequests(requests, 1);
   await guarded(id, "sequence_gap", () => expect(metrics.sequenceContiguous).toBe(true));
   await guarded(id, "terminal_count_invalid", () => expect(metrics.terminalCount).toBe(1));
 
@@ -236,7 +252,8 @@ test("canonical explicit fixture fallback path", async ({ page }) => {
   const targetShaText = await page.locator("#targetSha").textContent();
   const pinnedSubmittedShaCount = /^[a-f0-9]{40}$/i.test((targetShaText ?? "").trim()) ? 1 : 0;
   const result = await guarded(id, "fallback_boundary_failed", () => buildObservedCase({
-    boundaryVisible: (noticeText ?? "").includes("API에 연결하지 못해 내장 예시를 보여드려요")
+    boundaryVisible: (noticeText ?? "").includes("내장 예시의 결과예요")
+      && (noticeText ?? "").includes("제출한 저장소를 분석한 결과가 아니에요")
       && modeText === "내장 예시 확인 완료"
       && fallbackScopeCount === 1,
     expectedRuns: 1,

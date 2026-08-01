@@ -9,6 +9,6 @@
   <text x="100" y="392" fill="#c8c9cc" font-family="Arial, sans-serif" font-size="34">배포하기 전에 먼저 실패시켜 보세요.</text>
   <g transform="translate(96 482)">
     <rect width="290" height="52" fill="#f04f44"/>
-    <text x="24" y="35" fill="#07090d" font-family="Arial, sans-serif" font-size="22" font-weight="700">CLONE · CRASH · FIX · REPLAY</text>
+    <text x="24" y="35" fill="#07090d" font-family="Arial, sans-serif" font-size="19" font-weight="700">PIN · PROFILE · CRASH · AUTOPSY · VACCINE · REPLAY</text>
   </g>
 </svg>

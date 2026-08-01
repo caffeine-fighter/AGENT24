@@ -31,7 +31,7 @@ test("idle surface shows one truthful action before any result evidence", async 
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/demo/index.html");
 
-  await expect(page.getByRole("button", { name: "실험 시작하기" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "충돌 시험 시작" })).toBeVisible();
   await expect(page.locator("#resultSurface")).toBeHidden();
   await expect(page.locator("#resetButton")).toBeHidden();
   await expect(page.locator("#replayButton")).toBeHidden();
@@ -74,7 +74,7 @@ test("normal mission uses the hosted form, SSE stream, and one terminal event", 
   });
   await submit(page, "엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문해줘.");
 
-  await expect(page.locator("#rawStream .stream-type", { hasText: "run.completed" })).toHaveCount(1);
+  await expect(page.locator('#rawStream .stream-line[data-kind="run.completed"]')).toHaveCount(1);
   await expect(page.locator("#rawStream")).toContainText("payment.charge");
   await expect(page.locator("#runNotice")).not.toContainText("이 작업에 맞는 안전 실험을 지원하지 않아요");
   await expect(page.locator("#resultSurface")).toBeVisible();
@@ -89,7 +89,7 @@ test("normal mission uses the hosted form, SSE stream, and one terminal event", 
   await expect(page.locator("#runId")).not.toHaveText(firstRunId ?? "");
   await expect(page.locator("#runButton")).toBeDisabled();
   await expect(page.locator("#connectionStatus")).toContainText("완료", { timeout: 15_000 });
-  await expect(page.locator("#rawStream .stream-type", { hasText: "run.completed" })).toHaveCount(1);
+  await expect(page.locator('#rawStream .stream-line[data-kind="run.completed"]')).toHaveCount(1);
   await expect(page.locator("#runId")).not.toContainText("fixture-life-payment-intent-timeout-v1");
   await expectNoSeriousA11yViolations(page);
 });
@@ -97,9 +97,9 @@ test("normal mission uses the hosted form, SSE stream, and one terminal event", 
 test("unsupported Surprise mission stops once without payment substitution", async ({ page }) => {
   await submit(page, TIME_MISSION);
 
-  await expect(page.locator("#investigationOutcome")).toHaveText("현재 지원 안 함");
+  await expect(page.locator("#investigationOutcome")).toHaveText("아직 지원하지 않음");
   await expect(page.locator("#runNotice")).toContainText("지금은 이 작업에 맞는 안전 실험을 지원하지 않아요");
-  await expect(page.locator("#rawStream .stream-type", { hasText: "run.completed" })).toHaveCount(1);
+  await expect(page.locator('#rawStream .stream-line[data-kind="run.completed"]')).toHaveCount(1);
   await expect(page.locator("#rawStream")).not.toContainText("payment.charge");
   await expect(page.locator("#rawStream")).not.toContainText("experiment_plan");
   await expect(page.locator("#rawStream")).not.toContainText("protected_replay");
@@ -118,9 +118,9 @@ test("API failure is labeled as a built-in example and still ends once", async (
     { timeout: 5_000 },
   );
   await expect(page.locator("#connectionStatus")).toContainText("완료", { timeout: 15_000 });
-  await expect(page.locator("#rawStream .stream-type", { hasText: "run.completed" })).toHaveCount(1);
-  await expect(page.locator("#modeBadge")).toHaveText("내장 예시 완료");
-  await expect(page.locator("#runNotice")).toContainText("제출한 저장소를 분석한 결과는 아니에요");
+  await expect(page.locator('#rawStream .stream-line[data-kind="run.completed"]')).toHaveCount(1);
+  await expect(page.locator("#modeBadge")).toHaveText("내장 예시 확인 완료");
+  await expect(page.locator("#runNotice")).toContainText("제출한 저장소를 분석한 결과가 아니에요");
   await expectNoSeriousA11yViolations(page);
 });
 
@@ -136,7 +136,7 @@ test("320px mobile intake keeps the form path and Korean copy inside the viewpor
   expect(formBox).not.toBeNull();
   expect(formBox.y).toBeLessThan(568);
 
-  const primary = page.getByRole("button", { name: "실험 시작하기" });
+  const primary = page.getByRole("button", { name: "충돌 시험 시작" });
   await primary.scrollIntoViewIfNeeded();
   await expect(primary).toBeVisible();
   const primaryBox = await primary.boundingBox();
