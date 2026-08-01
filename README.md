@@ -52,6 +52,14 @@ uv sync --extra dev
 .\scripts\demo.ps1 -OpenBrowser
 ```
 
+결선 Surprise Task와 같은 API 경로를 다섯 입력 family로 리허설합니다.
+
+```powershell
+uv run python scripts/surprise-smoke.py
+```
+
+판정 기준과 artifact 저장법은 [Surprise Task 리허설 문서](docs/surprise-smoke.md)에 있습니다.
+
 ## 14:00 이후 첫 시작
 
 ```powershell
