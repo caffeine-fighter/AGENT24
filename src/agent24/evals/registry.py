@@ -197,14 +197,13 @@ class RuntimeEventsCase(_Case):
     proves: tuple[str, ...] = ()
 
     @model_validator(mode="after")
-    def _live_runs_are_bound_to_a_test(self) -> Self:
+    def _proves_are_node_ids(self) -> Self:
+        # Until #120, a live case *had* to name a bound test, because the only
+        # mocked OpenAI client lived in the test suite and the harness could not
+        # run one. The stub now lives in agent24.evals.live_stub and the harness
+        # executes live cases directly, so `proves` is optional extra binding
+        # rather than the only thing that ran.
         _validate_node_ids(self.proves, "proves")
-        if self.mode == "live" and not self.proves:
-            raise ValueError(
-                "a live run needs a mocked OpenAI client, which lives in the test "
-                "suite; bind the case to the pytest node that drives it via "
-                "'proves' rather than duplicating the stub in the harness"
-            )
         return self
 
 
