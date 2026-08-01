@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import base64
 import json
 
 from agent24.agent.models import ExperimentPlan, StopDecision
-from agent24.agent.source import MappingRevisionResolver
+from agent24.agent.source import MappingRevisionResolver, SourceDescriptor
 from agent24.api.preflight import (
     ExternalAgentPreflight,
     ExternalTarget,
+    GitHubContentsManifestFetcher,
     ManifestUnavailableError,
     MappingManifestFetcher,
 )
@@ -100,3 +102,51 @@ def test_mapping_fetcher_rejects_absent_allowlisted_manifest() -> None:
         assert "allowlisted manifest" in str(error)
     else:
         raise AssertionError("missing allowlisted manifest must fail")
+
+
+def test_github_fetcher_accepts_line_wrapped_base64_and_keeps_token_in_header(
+    monkeypatch,
+) -> None:
+    manifest_bytes = manifest_json().encode("utf-8")
+    response_body = json.dumps(
+        {
+            "encoding": "base64",
+            "content": base64.encodebytes(manifest_bytes).decode("ascii"),
+        }
+    ).encode("utf-8")
+    captured: dict[str, str | float] = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit: int) -> bytes:
+            return response_body
+
+    def fake_urlopen(request, *, timeout: float):
+        captured["authorization"] = request.get_header("Authorization")
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr("agent24.api.preflight.urlopen", fake_urlopen)
+    source = SourceDescriptor(
+        repository="example/cake-agent",
+        repository_url="https://github.com/example/cake-agent",
+        source_url="https://github.com/example/cake-agent/tree/main",
+        requested_ref="main",
+        resolved_sha=SHA,
+        retrieved_at="2026-08-01T17:45:00+09:00",
+        resolver="fixture",
+    )
+
+    manifest_path, fetched = GitHubContentsManifestFetcher(
+        token="test-token",
+        timeout_seconds=3.0,
+    ).fetch(source)
+
+    assert manifest_path == ".agent24/manifest.json"
+    assert fetched == manifest_bytes
+    assert captured == {"authorization": "Bearer test-token", "timeout": 3.0}
