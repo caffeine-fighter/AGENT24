@@ -22,11 +22,11 @@ try {
         Join-Path $RepoRoot "src"
     }
 
-    python -m compileall -q src tests
+    python -m compileall -q src tests scripts
     Assert-CommandSucceeded "Python compilation"
 
     if (Get-Command ruff -ErrorAction SilentlyContinue) {
-        ruff check src tests
+        ruff check src tests scripts
         Assert-CommandSucceeded "Ruff"
     }
 
