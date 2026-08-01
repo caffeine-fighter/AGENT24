@@ -150,8 +150,14 @@ def load_fixture(
     *,
     seed: int | None = None,
     run_id: str = "run-001",
+    fault_enabled: bool = True,
 ):
-    """Construct a ready-to-run :class:`SandboxGym` from a fixture ID."""
+    """Construct a ready-to-run :class:`SandboxGym` from a fixture ID.
+
+    ``fault_enabled=False`` keeps the same fixture and seed while removing its
+    perturbation operator.  That is the paired baseline/benign-control path for
+    protected replay; it does not change the initial synthetic world.
+    """
 
     # Import lazily to keep the fixture definitions usable by world-only tests.
     from .sandbox import SandboxGym
@@ -159,7 +165,7 @@ def load_fixture(
     spec = get_fixture(fixture_id)
     return SandboxGym(
         world=build_world(fixture_id, seed=spec.default_seed if seed is None else seed),
-        fault=spec.fault,
+        fault=spec.fault if fault_enabled else None,
         run_id=run_id,
     )
 

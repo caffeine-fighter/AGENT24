@@ -13,6 +13,15 @@ from .fixtures import (
 from .gym import SCENARIOS, GymScenario, SyntheticGym
 from .ledger import LedgerEntry, SideEffectLedger
 from .payments import StripeLikePaymentProvider
+from .replay import (
+    CAKE_AMOUNT_KRW,
+    CAKE_PRODUCT_ID,
+    PAYMENT_FIXTURE,
+    PaymentReplayPolicy,
+    ProtectedReplayReport,
+    ReplayRun,
+    protected_replay,
+)
 from .sandbox import TOOL_MANIFEST, SandboxGym
 from .world import (
     CalendarEvent,
@@ -34,6 +43,8 @@ __all__ = [
     "SCENARIOS",
     "TOOL_MANIFEST",
     "CalendarEvent",
+    "CAKE_AMOUNT_KRW",
+    "CAKE_PRODUCT_ID",
     "Charge",
     "DEFAULT_SEED",
     "FaultApplication",
@@ -49,7 +60,11 @@ __all__ = [
     "LedgerEntry",
     "Order",
     "PaymentIntent",
+    "PaymentReplayPolicy",
     "Product",
+    "ProtectedReplayReport",
+    "ReplayRun",
+    "PAYMENT_FIXTURE",
     "SandboxGym",
     "SideEffectLedger",
     "StripeLikePaymentProvider",
@@ -62,4 +77,5 @@ __all__ = [
     "fixture_ids",
     "get_fixture",
     "load_fixture",
+    "protected_replay",
 ]
