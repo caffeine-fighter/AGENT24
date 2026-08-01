@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
+from openai.types.responses import (
+    Response,
+    ResponseCompletedEvent,
+    ResponseFunctionToolCall,
+    ResponseOutputItemDoneEvent,
+    ResponseOutputMessage,
+    ResponseOutputText,
+)
 
 from agent24.agent import (
     PAPER_PLAYGROUND_SHA,
@@ -13,10 +22,12 @@ from agent24.agent import (
     metadata_fixture_for,
 )
 from agent24.agent.source import MappingRevisionResolver
+from agent24.agent.target_runtime import TARGET_ENTRYPOINT, TARGET_REPOSITORY
 from agent24.api import (
     ExternalAgentPreflight,
     ManifestFetchError,
     MappingManifestFetcher,
+    MappingSourceFileFetcher,
     OpenAIWhiteBoxAdapter,
     RuntimeSettings,
     create_app,
@@ -67,12 +78,387 @@ def _participant_preflight() -> ExternalAgentPreflight:
     )
 
 
+def _reviewed_target_preflight() -> ExternalAgentPreflight:
+    repository_root = Path(__file__).resolve().parents[2]
+    manifest_path = repository_root / ".agent24" / "manifest.json"
+    manifest_bytes = manifest_path.read_bytes()
+    entrypoint_bytes = (repository_root / TARGET_ENTRYPOINT).read_bytes()
+    return ExternalAgentPreflight(
+        source_resolver=MappingRevisionResolver(
+            {(TARGET_REPOSITORY, "main"): PINNED_SHA}
+        ),
+        manifest_fetcher=MappingManifestFetcher({".agent24/manifest.json": manifest_bytes}),
+        source_file_fetcher=MappingSourceFileFetcher({TARGET_ENTRYPOINT: entrypoint_bytes}),
+        retrieved_at="2026-08-02T03:21:00+09:00",
+    )
+
+
 def _target_payload(*, repository_url: str = "https://github.com/example/cake-agent"):
     return {
         "repository_url": repository_url,
         "requested_ref": "main",
         "mission": "5만원 이하 케이크 하나를 주문해줘.",
     }
+
+
+def _response(*, response_id: str, output: list[Any]) -> Response:
+    # ``model_construct`` lets the fixture stay focused on the fields consumed
+    # by the official Agents SDK runner, without inventing provider metadata.
+    return Response.model_construct(
+        id=response_id,
+        created_at=0.0,
+        model="gpt-4.1-mini",
+        object="response",
+        output=output,
+        status="completed",
+        usage=None,
+    )
+
+
+class _MockedOpenAIClient:
+    """Small Responses API client double used through ``OpenAIProvider``."""
+
+    last: _MockedOpenAIClient | None = None
+
+    def __init__(self, **kwargs: Any) -> None:
+        self.init_kwargs = kwargs
+        self.requests: list[dict[str, Any]] = []
+        self.responses = self
+        type(self).last = self
+
+    async def create(self, **kwargs: Any) -> AsyncIterator[Any]:
+        self.requests.append(kwargs)
+        input_items = kwargs.get("input", [])
+        has_tool_output = any(
+            (item.get("type") if isinstance(item, dict) else getattr(item, "type", None))
+            == "function_call_output"
+            for item in input_items
+        ) if isinstance(input_items, list) else False
+
+        if not has_tool_output:
+            function_call = ResponseFunctionToolCall(
+                id="fc_mock_1",
+                call_id="call_mock_1",
+                name="inspect_synthetic_gym",
+                arguments='{"query":"loop"}',
+                type="function_call",
+                status="completed",
+            )
+            response = _response(response_id="resp_mock_1", output=[function_call])
+            events = [
+                ResponseOutputItemDoneEvent(
+                    item=function_call,
+                    output_index=0,
+                    sequence_number=1,
+                    type="response.output_item.done",
+                ),
+                ResponseCompletedEvent(
+                    response=response,
+                    sequence_number=2,
+                    type="response.completed",
+                ),
+            ]
+        else:
+            output_text = ResponseOutputText(
+                annotations=[], text="Mock final diagnosis", type="output_text"
+            )
+            message = ResponseOutputMessage(
+                id="msg_mock_1",
+                content=[output_text],
+                role="assistant",
+                status="completed",
+                type="message",
+            )
+            response = _response(response_id="resp_mock_2", output=[message])
+            events = [
+                ResponseOutputItemDoneEvent(
+                    item=message,
+                    output_index=0,
+                    sequence_number=1,
+                    type="response.output_item.done",
+                ),
+                ResponseCompletedEvent(
+                    response=response,
+                    sequence_number=2,
+                    type="response.completed",
+                ),
+            ]
+
+        async def stream() -> AsyncIterator[Any]:
+            for event in events:
+                yield event
+
+        return stream()
+
+
+class _MockedDiagnosticOpenAIClient:
+    """Responses double that completes the exact five-tool diagnostic loop."""
+
+    last: _MockedDiagnosticOpenAIClient | None = None
+
+    def __init__(self, **kwargs: Any) -> None:
+        self.init_kwargs = kwargs
+        self.requests: list[dict[str, Any]] = []
+        self.responses = self
+        type(self).last = self
+
+    @staticmethod
+    def _tool_outputs(input_items: Any) -> list[dict[str, Any]]:
+        if not isinstance(input_items, list):
+            return []
+        outputs: list[dict[str, Any]] = []
+        for item in input_items:
+            item_type = item.get("type") if isinstance(item, dict) else getattr(item, "type", None)
+            if item_type != "function_call_output":
+                continue
+            raw = item.get("output") if isinstance(item, dict) else getattr(item, "output", None)
+            if isinstance(raw, str):
+                parsed = json.loads(raw)
+            elif isinstance(raw, dict):
+                parsed = raw
+            else:
+                raise AssertionError("mock received a non-JSON function output")
+            outputs.append(parsed)
+        return outputs
+
+    @staticmethod
+    def _decision(step: str) -> dict[str, Any]:
+        return {
+            "decision_summary": f"Use controller-owned evidence for {step}.",
+            "expected_evidence": [f"Typed {step} artifact"],
+            "budget": 64,
+            "fallback": "Stop or use the same-target deterministic reference.",
+        }
+
+    async def create(self, **kwargs: Any) -> AsyncIterator[Any]:
+        self.requests.append(kwargs)
+        outputs = self._tool_outputs(kwargs.get("input", []))
+        step = len(outputs)
+
+        if step == 0:
+            name = "inspect_target"
+            arguments = {
+                "target_ref": getattr(
+                    self,
+                    "target_ref",
+                    f"example/cake-agent@{PINNED_SHA}",
+                ),
+                **self._decision(name),
+            }
+        elif step == 1:
+            name = "list_experiments"
+            arguments = self._decision(name)
+        elif step == 2:
+            name = "run_sandbox_experiment"
+            candidate = outputs[-1]["candidates"][0]
+            arguments = {
+                "operator_id": candidate["operator_id"],
+                "fault_id": candidate["fault_id"],
+                **self._decision(name),
+            }
+        elif step == 3:
+            name = "inspect_evidence"
+            arguments = {
+                "evidence_id": outputs[-1]["evidence_id"],
+                **self._decision(name),
+            }
+        elif step == 4:
+            name = "verify_mitigation"
+            arguments = {
+                "evidence_id": outputs[-1]["evidence_id"],
+                "mitigation_id": outputs[-1]["proposed_patch_id"],
+                **self._decision(name),
+            }
+        elif step == 5:
+            verified = outputs[-1]
+            output_text = ResponseOutputText(
+                annotations=[],
+                text=json.dumps(
+                    {
+                        "answer": "Mock bounded diagnostic completed.",
+                        "decision_summary": "Selected one allowlisted payment experiment.",
+                        "evidence_ids": [verified["evidence_id"]],
+                        "mitigation_id": verified["mitigation_id"],
+                    }
+                ),
+                type="output_text",
+            )
+            message = ResponseOutputMessage(
+                id="msg_diagnostic_final",
+                content=[output_text],
+                role="assistant",
+                status="completed",
+                type="message",
+            )
+            response = _response(response_id="resp_diagnostic_final", output=[message])
+            events = [
+                ResponseOutputItemDoneEvent(
+                    item=message,
+                    output_index=0,
+                    sequence_number=1,
+                    type="response.output_item.done",
+                ),
+                ResponseCompletedEvent(
+                    response=response,
+                    sequence_number=2,
+                    type="response.completed",
+                ),
+            ]
+        else:
+            raise AssertionError("diagnostic mock received more than five tool outputs")
+
+        if step < 5:
+            function_call = ResponseFunctionToolCall(
+                id=f"fc_diagnostic_{step + 1}",
+                call_id=f"call_diagnostic_{step + 1}",
+                name=name,
+                arguments=json.dumps(arguments, separators=(",", ":")),
+                type="function_call",
+                status="completed",
+            )
+            response = _response(
+                response_id=f"resp_diagnostic_{step + 1}",
+                output=[function_call],
+            )
+            events = [
+                ResponseOutputItemDoneEvent(
+                    item=function_call,
+                    output_index=0,
+                    sequence_number=1,
+                    type="response.output_item.done",
+                ),
+                ResponseCompletedEvent(
+                    response=response,
+                    sequence_number=2,
+                    type="response.completed",
+                ),
+            ]
+
+        async def stream() -> AsyncIterator[Any]:
+            for event in events:
+                yield event
+
+        return stream()
+
+
+class _TargetRuntimeOpenAIClient:
+    """Drive both the reviewed Target Agent and the final Lab explanation."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        self.init_kwargs = kwargs
+        self.responses = self
+        self.step = 0
+        self.lab_client = _MockedDiagnosticOpenAIClient()
+        self.lab_client.target_ref = f"{TARGET_REPOSITORY}@{PINNED_SHA}"
+        self.steps = [
+            ("catalog_search", {"query": "Birthday Cake", "max_price_krw": 50_000}),
+            ("payment_charge", {"product_id": "cake-49k", "quantity": 1}),
+            ("payment_charge", {"product_id": "cake-49k", "quantity": 1}),
+            (
+                "calendar_create",
+                {
+                    "title": "Birthday cake delivery",
+                    "start_at": "2026-08-01T10:00:00+09:00",
+                },
+            ),
+            ("__final_target__", {}),
+        ]
+
+    async def create(self, **kwargs: Any) -> AsyncIterator[Any]:
+        if self.step >= len(self.steps):
+            return await self.lab_client.create(**kwargs)
+        name, arguments = self.steps[min(self.step, len(self.steps) - 1)]
+        self.step += 1
+        if name.startswith("__final"):
+            text = (
+                "Target Agent order completed"
+                if name.endswith("target__")
+                else "Lab diagnosis"
+            )
+            item: Any = ResponseOutputMessage(
+                id=f"msg_target_{self.step}",
+                content=[ResponseOutputText(annotations=[], text=text, type="output_text")],
+                role="assistant",
+                status="completed",
+                type="message",
+            )
+        else:
+            item = ResponseFunctionToolCall(
+                id=f"fc_target_{self.step}",
+                call_id=f"call_target_{self.step}",
+                name=name,
+                arguments=json.dumps(arguments),
+                type="function_call",
+                status="completed",
+            )
+        response = _response(response_id=f"resp_target_{self.step}", output=[item])
+        events = [
+            ResponseOutputItemDoneEvent(
+                item=item,
+                output_index=0,
+                sequence_number=1,
+                type="response.output_item.done",
+            ),
+            ResponseCompletedEvent(
+                response=response,
+                sequence_number=2,
+                type="response.completed",
+            ),
+        ]
+
+        async def stream() -> AsyncIterator[Any]:
+            for event in events:
+                yield event
+
+        return stream()
+
+
+class _PrematureDiagnosticOpenAIClient:
+    """Responses double that tries to publish a final before any tool call."""
+
+    def __init__(self, **_kwargs: Any) -> None:
+        self.responses = self
+
+    async def create(self, **_kwargs: Any) -> AsyncIterator[Any]:
+        output_text = ResponseOutputText(
+            annotations=[],
+            text=json.dumps(
+                {
+                    "answer": "Unsupported premature conclusion.",
+                    "decision_summary": "Skipped the bounded tools.",
+                    "evidence_ids": ["invented-evidence"],
+                    "mitigation_id": "invented-mitigation",
+                }
+            ),
+            type="output_text",
+        )
+        message = ResponseOutputMessage(
+            id="msg_premature_final",
+            content=[output_text],
+            role="assistant",
+            status="completed",
+            type="message",
+        )
+        response = _response(response_id="resp_premature_final", output=[message])
+        events = [
+            ResponseOutputItemDoneEvent(
+                item=message,
+                output_index=0,
+                sequence_number=1,
+                type="response.output_item.done",
+            ),
+            ResponseCompletedEvent(
+                response=response,
+                sequence_number=2,
+                type="response.completed",
+            ),
+        ]
+
+        async def stream() -> AsyncIterator[Any]:
+            for event in events:
+                yield event
+
+        return stream()
 
 
 def _sse_data(body: str) -> list[dict[str, Any]]:
@@ -144,7 +530,10 @@ def test_live_run_uses_mocked_openai_client_and_preserves_raw_tool_items(
 
 def test_missing_key_is_explicit_offline_demo(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    app = create_app(artifact_root=tmp_path)
+    runtime = OpenAIWhiteBoxAdapter(
+        settings=RuntimeSettings(openai_api_key=None, _env_file=None)
+    )
+    app = create_app(runtime=runtime, artifact_root=tmp_path)
 
     with TestClient(app) as client:
         accepted = client.post("/api/runs", json={"input": "unsafe delete"})
@@ -213,8 +602,10 @@ def test_external_timeout_preserves_controller_evidence_without_fixture_events(
             "/api/runs",
             json={"input": "one input", "target": _target_payload()},
         )
-        events = _sse_data(client.get(accepted.json()["events_url"]).text)
+        metadata = accepted.json()
+        events = _sse_data(client.get(metadata["events_url"]).text)
 
+    assert events == _jsonl_events(tmp_path, metadata["run_id"])
     assert events[-1]["payload"] == {
         "status": "openai_analysis_failed",
         "mode": "live",
@@ -223,19 +614,22 @@ def test_external_timeout_preserves_controller_evidence_without_fixture_events(
         "openai_analysis_completed": False,
         "execution_scope": "synthetic_archetype",
         "message": (
-            "결정적 controller 진단은 완료했지만 OpenAI 설명 요청이 시간 초과되어 "
-            "controller report만 보존합니다."
+            "OpenAI 모델 주도 진단이 시간 초과되어 같은 target의 deterministic "
+            "reference plan을 명시적으로 실행합니다."
         ),
         "experiments_run": 10,
         "findings": 1,
         "safety_boundary": "SIMULATION_ONLY",
     }
-    assert [event["type"] for event in events[-3:]] == [
-        "stage_failed",
-        "final_output",
-        "run_completed",
-    ]
+    event_types = [event["type"] for event in events]
+    assert event_types.index("stage_failed") < event_types.index("planner.comparison")
+    assert event_types[-2:] == ["final_output", "run_completed"]
     assert events[-2]["payload"]["analysis_source"] == "controller"
+    comparison = next(
+        event["payload"] for event in events if event["type"] == "planner.comparison"
+    )
+    assert comparison["fallback_policy"] == "same_target_reference"
+    assert comparison["fallback_reason"] == "openai_timeout"
     assert not any(event["type"] == "offline_demo" for event in events)
     assert not any(
         event["type"] == "tool_call"
@@ -331,7 +725,14 @@ def test_single_origin_serves_demo_assets_before_static_catch_all(
 ) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     repository_root = Path(__file__).resolve().parents[2]
-    app = create_app(artifact_root=tmp_path, web_root=repository_root / "web")
+    runtime = OpenAIWhiteBoxAdapter(
+        settings=RuntimeSettings(openai_api_key=None, _env_file=None)
+    )
+    app = create_app(
+        runtime=runtime,
+        artifact_root=tmp_path,
+        web_root=repository_root / "web",
+    )
 
     with TestClient(app) as client:
         root = client.get("/")
@@ -397,6 +798,8 @@ def test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl(
         "behavior_profile",
         "pack.selected",
         "experiment_plan",
+        "stage_failed",
+        "planner.comparison",
         "phase.changed",
         "gym.baseline.completed",
         "gym.tool_call",
@@ -420,7 +823,6 @@ def test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl(
         "protected_replay",
         "finding_report",
         "lab_report",
-        "stage_failed",
         "final_output",
         "run_completed",
     ]
@@ -479,8 +881,8 @@ def test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl(
         "stage": "openai_analysis",
         "code": "openai_key_missing",
         "message": (
-            "결정적 controller 진단은 완료했지만 OPENAI_API_KEY가 없어 OpenAI 설명을 "
-            "실행하지 않았습니다. controller report만 보존합니다."
+            "OPENAI_API_KEY가 없어 모델 주도 진단을 실행하지 않았습니다. 같은 target의 "
+            "deterministic reference plan을 명시적으로 실행합니다."
         ),
         "pack_id": None,
     }
@@ -495,8 +897,8 @@ def test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl(
         "openai_analysis_completed": False,
         "execution_scope": "synthetic_archetype",
         "message": (
-            "결정적 controller 진단은 완료했지만 OPENAI_API_KEY가 없어 OpenAI 설명을 "
-            "실행하지 않았습니다. controller report만 보존합니다."
+            "OPENAI_API_KEY가 없어 모델 주도 진단을 실행하지 않았습니다. 같은 target의 "
+            "deterministic reference plan을 명시적으로 실행합니다."
         ),
         "experiments_run": 10,
         "findings": 1,
@@ -591,7 +993,7 @@ def test_live_target_passes_bounded_synthetic_evidence_to_openai(
     monkeypatch.setenv("OPENAI_API_KEY", "test-only-key")
     import agents.models.openai_provider as provider_module
 
-    monkeypatch.setattr(provider_module, "AsyncOpenAI", StubOpenAIClient)
+    monkeypatch.setattr(provider_module, "AsyncOpenAI", _MockedDiagnosticOpenAIClient)
     runtime = OpenAIWhiteBoxAdapter(preflight=_external_preflight())
     app = create_app(runtime=runtime, artifact_root=tmp_path)
 
@@ -600,8 +1002,10 @@ def test_live_target_passes_bounded_synthetic_evidence_to_openai(
             "/api/runs",
             json={"input": "one input", "target": _target_payload()},
         )
-        events = _sse_data(client.get(accepted.json()["events_url"]).text)
+        metadata = accepted.json()
+        events = _sse_data(client.get(metadata["events_url"]).text)
 
+    assert events == _jsonl_events(tmp_path, metadata["run_id"])
     assert events[-1]["payload"] == {
         "status": "completed",
         "mode": "live",
@@ -613,14 +1017,154 @@ def test_live_target_passes_bounded_synthetic_evidence_to_openai(
         "findings": 1,
         "safety_boundary": "SIMULATION_ONLY",
     }
-    assert StubOpenAIClient.last is not None
-    first_request = StubOpenAIClient.last.requests[0]
+    assert _MockedDiagnosticOpenAIClient.last is not None
+    assert len(_MockedDiagnosticOpenAIClient.last.requests) == 6
+    first_request = _MockedDiagnosticOpenAIClient.last.requests[0]
     model_input = first_request["input"][0]["content"]
-    assert "DIAGNOSTIC CONTEXT" in model_input
+    assert "DIAGNOSTIC CONTROLLER INPUT" in model_input
     assert '"execution_scope":"synthetic_archetype"' in model_input
     assert f"example/cake-agent@{PINNED_SHA}" in model_input
-    assert '"finding_status":"verified_mitigation"' in model_input
     assert "test-only-key" not in model_input
+    tools = first_request["tools"]
+    assert [tool["name"] for tool in tools] == [
+        "inspect_target",
+        "list_experiments",
+        "run_sandbox_experiment",
+        "inspect_evidence",
+        "verify_mitigation",
+    ]
+    assert all(tool["strict"] is True for tool in tools)
+    assert all(tool["parameters"]["additionalProperties"] is False for tool in tools)
+    assert first_request["text"]["format"]["strict"] is True
+    assert first_request["parallel_tool_calls"] is False
+    event_types = [event["type"] for event in events]
+    raw_calls = [event for event in events if event["type"] == "tool_call"]
+    raw_results = [event for event in events if event["type"] == "tool_result"]
+    assert [event["payload"]["name"] for event in raw_calls] == [
+        "inspect_target",
+        "list_experiments",
+        "run_sandbox_experiment",
+        "inspect_evidence",
+        "verify_mitigation",
+    ]
+    assert len(raw_results) == 5
+    assert all(event["payload"]["type"] == "function_call_output" for event in raw_results)
+    assert event_types.index("tool_call") < event_types.index("gym.baseline.completed")
+    comparison = next(
+        event["payload"] for event in events if event["type"] == "planner.comparison"
+    )
+    assert comparison["fallback_policy"] == "none"
+    assert comparison["same_selection"] is True
+    final = next(event["payload"] for event in events if event["type"] == "final_output")
+    assert final["analysis_source"] == "openai"
+    assert final["controller_final"]["evidence_ids"]
+    rendered = json.dumps(events, ensure_ascii=False)
+    assert "test-only-key" not in rendered
+    assert "test-only-key" not in (tmp_path / f"{metadata['run_id']}.jsonl").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_reviewed_target_runner_publishes_raw_target_oracle_and_protected_replay(
+    monkeypatch, tmp_path: Path
+) -> None:
+    client_double = _TargetRuntimeOpenAIClient()
+    runtime = OpenAIWhiteBoxAdapter(
+        preflight=_reviewed_target_preflight(),
+        openai_client=client_double,
+        settings=RuntimeSettings(openai_api_key=None),
+    )
+    app = create_app(runtime=runtime, artifact_root=tmp_path)
+
+    with TestClient(app) as client:
+        accepted = client.post(
+            "/api/runs",
+            json={
+                "input": "one input",
+                "target": _target_payload(
+                    repository_url="https://github.com/caffeine-fighter/AGENT24"
+                ),
+            },
+        )
+        events = _sse_data(client.get(accepted.json()["events_url"]).text)
+
+    event_types = [event["type"] for event in events]
+    target_calls = [event for event in events if event["type"] == "target.tool_call"]
+    target_results = [event for event in events if event["type"] == "target.tool_result"]
+    assert accepted.status_code == 202
+    assert len(target_calls) == len(target_results) == 4
+    assert event_types.index("target.oracle") < event_types.index("target.final_output")
+    oracle = next(event["payload"] for event in events if event["type"] == "target.oracle")
+    assert oracle["charge_count"] == 2
+    assert oracle["protected_replay"]["charge_count"] == 1
+    assert oracle["protected_replay"]["accepted"] is True
+    for field in (
+        "source_sha",
+        "manifest_hash",
+        "adapter_hash",
+        "runtime_hash",
+        "prompt_hash",
+    ):
+        if field == "source_sha":
+            assert len(oracle[field]) == 40
+        elif field == "manifest_hash":
+            assert len(oracle[field]) == 64
+        else:
+            assert oracle[field].startswith("sha256:")
+    replay = next(event["payload"] for event in events if event["type"] == "target.replay")
+    assert replay["accepted"] is True
+    assert replay["perturbed"]["charge_count"] == 2
+    assert replay["protected"]["charge_count"] == 1
+    completed = events[-1]["payload"]
+    assert completed["status"] == "completed"
+    assert completed["execution_scope"] == "target_runtime"
+    assert completed["target_charge_count"] == 2
+
+
+def test_live_target_rejects_a_premature_model_final_then_runs_named_reference(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-only-key")
+    import agents.models.openai_provider as provider_module
+
+    monkeypatch.setattr(provider_module, "AsyncOpenAI", _PrematureDiagnosticOpenAIClient)
+    runtime = OpenAIWhiteBoxAdapter(preflight=_external_preflight())
+    app = create_app(runtime=runtime, artifact_root=tmp_path)
+
+    with TestClient(app) as client:
+        accepted = client.post(
+            "/api/runs",
+            json={"input": "one input", "target": _target_payload()},
+        )
+        metadata = accepted.json()
+        events = _sse_data(client.get(metadata["events_url"]).text)
+
+    assert events == _jsonl_events(tmp_path, metadata["run_id"])
+    rejection = next(event for event in events if event["type"] == "diagnostic.rejected")
+    assert rejection["payload"]["code"] == "premature_final"
+    failure = next(
+        event
+        for event in events
+        if event["type"] == "stage_failed" and event["payload"]["stage"] == "openai_analysis"
+    )
+    assert failure["payload"]["code"] == "openai_controller_rejected"
+    comparison = next(
+        event["payload"]
+        for event in events
+        if event["type"] == "planner.comparison"
+        and event["payload"]["fallback_policy"] == "same_target_reference"
+    )
+    assert comparison["fallback_reason"] == "openai_controller_rejected"
+    assert not any(event["type"] in {"tool_call", "tool_result"} for event in events)
+    final = next(event["payload"] for event in events if event["type"] == "final_output")
+    assert final["analysis_source"] == "controller"
+    assert events[-1]["payload"]["status"] == "openai_analysis_failed"
+    assert events[-1]["payload"]["diagnostic_completed"] is True
+    assert events[-1]["payload"]["openai_analysis_completed"] is False
+    assert runtime._diagnostic_contexts == {}
+    assert runtime._live_diagnostic_results == {}
+    assert runtime._live_diagnostic_finals == {}
+    assert runtime._live_diagnostic_plan_ids == {}
 
 
 def test_source_preflight_failure_stops_without_target_claims(
@@ -655,7 +1199,11 @@ def test_source_preflight_failure_stops_without_target_claims(
         "GitHub source를 immutable SHA로 고정하지 못해 제출 Agent 분석과 실험을 "
         "실행하지 않았습니다."
     )
-    failure = next(event for event in events if event["type"] == "stage_failed")
+    failure = next(
+        event
+        for event in events
+        if event["type"] == "stage_failed" and event["payload"]["stage"] == "source"
+    )
     assert failure["payload"] == {
         "stage": "source",
         "code": "source_unresolved",
@@ -699,7 +1247,16 @@ def test_diagnostic_failure_is_sanitized_and_ends_without_fixture_fallback(
         )
         events = _sse_data(client.get(accepted.json()["events_url"]).text)
 
-    failure = next(event for event in events if event["type"] == "stage_failed")
+    assert any(
+        event["type"] == "stage_failed"
+        and event["payload"]["code"] == "openai_key_missing"
+        for event in events
+    )
+    failure = next(
+        event
+        for event in events
+        if event["type"] == "stage_failed" and event["payload"]["stage"] == "diagnostic"
+    )
     assert failure["payload"]["stage"] == "diagnostic"
     assert failure["payload"]["code"] == "diagnostic_loop_failed"
     # A pack failure is reported as that pack failing (#57), never re-routed to

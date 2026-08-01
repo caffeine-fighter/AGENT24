@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from agent24.api import create_app
+from agent24.api import OpenAIWhiteBoxAdapter, RuntimeSettings, create_app
 from agent24.evals import SURPRISE_CASES, evaluate_event_stream, parse_sse
 
 
@@ -17,7 +17,10 @@ def _sse_events(body: str) -> list[dict]:
 @pytest.mark.parametrize("case", SURPRISE_CASES, ids=lambda case: case.case_id)
 def test_surprise_matrix_uses_one_input_raw_stream_path(monkeypatch, tmp_path: Path, case) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    app = create_app(artifact_root=tmp_path)
+    runtime = OpenAIWhiteBoxAdapter(
+        settings=RuntimeSettings(openai_api_key=None, _env_file=None)
+    )
+    app = create_app(runtime=runtime, artifact_root=tmp_path)
 
     with TestClient(app) as client:
         accepted = client.post("/api/runs", json={"input": case.mission})

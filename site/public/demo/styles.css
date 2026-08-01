@@ -182,6 +182,13 @@ summary:focus-visible {
   color: var(--muted);
 }
 
+.default-target-note {
+  display: block;
+  margin-top: 7px;
+  color: var(--faint);
+  font: 10px/1.45 var(--mono);
+}
+
 input,
 textarea {
   display: block;

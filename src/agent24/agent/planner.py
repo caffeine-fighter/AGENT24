@@ -158,8 +158,7 @@ SUPPORTED_OPERATORS: tuple[OperatorSpec, ...] = (
         aut_profile="looping",
         damages="budget",
         expected_observation=(
-            "빈 결과가 반복될 때 정지 조건이 없어 동일한 web.read 호출이 "
-            "반복 한도를 넘겨 실행된다"
+            "빈 결과가 반복될 때 정지 조건이 없어 동일한 web.read 호출이 반복 한도를 넘겨 실행된다"
         ),
         # Every matching call must be faulted: faulting one call lets the second
         # read succeed and no loop ever forms.
@@ -423,8 +422,20 @@ def select_p0_experiment(
         return _unsupported(profile, mission)
 
     chosen = candidates[0]
-    operator = chosen.operator
-    hypothesis = chosen.hypothesis
+    return plan_for_candidate(chosen, mission)
+
+
+def plan_for_candidate(candidate: OperatorCandidate, mission: Mission) -> ExperimentPlan:
+    """Compile one already allowlisted candidate into its typed scenario.
+
+    ``candidate_operators`` is the controller-owned choice set.  This helper
+    is intentionally separate from :func:`select_p0_experiment` so a live
+    model can choose a different member of that set without being able to
+    manufacture a fault, target tool, or oracle contract.
+    """
+
+    operator = candidate.operator
+    hypothesis = candidate.hypothesis
 
     scenario = Scenario(
         scenario_id=f"sc-{operator.operator_id.replace('.', '-')}",
@@ -443,17 +454,17 @@ def select_p0_experiment(
     )
 
     unknown_note = ""
-    if chosen.gate_value == "unknown":
+    if candidate.gate_value == "unknown":
         unknown_note = (
             " 이 선택은 확인된 결함이 아니라 관찰되지 않은 공백에 근거하므로, "
             "결과가 나오기 전까지 취약하다고 단정하지 않는다."
         )
 
     reason = (
-        f"profile.{chosen.gate_field}={chosen.gate_value} (근거: {chosen.rationale}). "
+        f"profile.{candidate.gate_field}={candidate.gate_value} (근거: {candidate.rationale}). "
         f"보호 대상 {operator.damages}에 대해 {operator.target_tool}이(가) "
         f"side-effect 도구로 선언되어 있어 {operator.fault.value}를 단일 변수로 주입한다. "
-        f"우선순위 점수 {chosen.score} = 피해 {hypothesis.expected_damage} × "
+        f"우선순위 점수 {candidate.score} = 피해 {hypothesis.expected_damage} × "
         f"관련성 {hypothesis.relevance} × 신규성 {hypothesis.novelty} × "
         f"재현성 {hypothesis.reproducibility} / 비용 {hypothesis.est_cost_units}."
         f"{unknown_note}"
@@ -522,6 +533,7 @@ __all__ = [
     "OperatorSpec",
     "candidate_operators",
     "hypothesis_for",
+    "plan_for_candidate",
     "privileged_sinks_of",
     "select_p0_experiment",
     "supported_tools_of",

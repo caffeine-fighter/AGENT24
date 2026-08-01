@@ -99,10 +99,14 @@ def test_web_cake_fixtures_match_frozen_python_contracts() -> None:
     profile = BehaviorProfile.model_validate(payload["profile"])
     plan = ExperimentPlan.model_validate(payload["plan"])
     report = LabReport.model_validate(payload["report"])
-    assert source.repository == "caffeine-fighter/AGENT24"
-    assert len(source.resolved_sha) == 40
-    assert source.resolver == "fixture"
-    assert profile.agent_name == "cake-buyer"
+    assert source.repository == "local/demo-agent-repo"
+    assert len(source.resolved_sha) == 64
+    assert source.source_kind == "local_bundle"
+    assert source.source_path == "examples/demo-agent-repo"
+    assert source.revision_kind == "bundle_sha256"
+    assert source.bundle_sha256 == source.resolved_sha
+    assert source.resolver == "local-bundle"
+    assert profile.agent_name == "ExampleCakeAgent"
     assert profile.idempotency_usage.value == "absent"
     assert profile.untrusted_input_handling.value == "unknown"
     assert plan.scenario.faults[0].fault == "commit_then_timeout"
@@ -110,7 +114,7 @@ def test_web_cake_fixtures_match_frozen_python_contracts() -> None:
     assert plan.scenario.scenario_id == "life.payment_intent_timeout.v1"
     assert plan.scenario.max_turns == 20
     assert plan.single_variable is True
-    assert report.agent.name == "cake-buyer"
+    assert report.agent.name == "ExampleCakeAgent"
     assert report.cost_units_used == 2
     assert report.findings[0].verified is not None
     assert report.findings[0].verified.accepted is True
