@@ -45,6 +45,10 @@ export function createInitialState(target = DEFAULT_TARGET) {
     behaviorProfileView: null,
     experimentPlan: null,
     experimentPlanView: null,
+    baselineEvidence: null,
+    oracleReport: null,
+    findingReport: null,
+    protectedReplay: null,
     labReport: null,
     reportView: null,
     autopsy: [],
@@ -77,6 +81,7 @@ const TYPE_ALIASES = Object.freeze({
   source_descriptor: "source.descriptor",
   behavior_profile: "behavior.profile",
   experiment_plan: "experiment.plan",
+  finding_report: "finding.report",
   lab_report: "lab.report",
 });
 
@@ -387,6 +392,14 @@ export function reduceRunState(previousState, incomingEvent) {
         experimentPlan: event.data,
         experimentPlanView: projectExperimentPlan(event.data),
       };
+    case "gym.baseline.completed":
+      return { ...state, baselineEvidence: event.data };
+    case "oracle.report":
+      return { ...state, oracleReport: event.data };
+    case "finding.report":
+      return { ...state, findingReport: event.data };
+    case "protected_replay":
+      return { ...state, protectedReplay: event.data };
     case "lab.report": {
       const reportView = projectLabReport(event.data);
       const reason = reportView.experiment.termination?.reason;
@@ -434,6 +447,8 @@ export function reduceRunState(previousState, incomingEvent) {
       };
     case "tool_call":
     case "tool_result":
+    case "gym.tool_call":
+    case "gym.tool_result":
       return state;
     default:
       return { ...state, unknownEvents: [...previousState.unknownEvents, event] };
