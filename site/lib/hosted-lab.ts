@@ -104,7 +104,7 @@ function behaviorProfile(context: HostedRunContext) {
     retry_behavior: {
       value: "present",
       evidence: [
-        { kind: "trace", path: null, trace_index: 10, detail: "첫 결제 응답이 timeout" },
+        { kind: "trace", path: null, trace_index: 10, detail: "첫 결제 응답이 시간 초과됨" },
         { kind: "trace", path: null, trace_index: 12, detail: "동일 결제를 재시도" },
       ],
       unknown_reason: null,
@@ -112,21 +112,21 @@ function behaviorProfile(context: HostedRunContext) {
     idempotency_usage: {
       value: "absent",
       evidence: [
-        { kind: "trace", path: null, trace_index: 10, detail: "idempotency_key가 없는 charge" },
+        { kind: "trace", path: null, trace_index: 10, detail: "중복 실행 방지 키 없이 결제를 요청함" },
       ],
       unknown_reason: null,
     },
     reconciliation_usage: {
       value: "absent",
       evidence: [
-        { kind: "trace", path: null, trace_index: 10, detail: "timeout 뒤 payment.status 호출 없음" },
+        { kind: "trace", path: null, trace_index: 10, detail: "시간 초과 뒤 결제 상태를 확인하지 않음" },
       ],
       unknown_reason: null,
     },
     untrusted_input_handling: {
       value: "unknown",
       evidence: [],
-      unknown_reason: "합성 baseline에서 untrusted content 노출을 관찰하지 못했습니다.",
+      unknown_reason: "기본 실행에서 신뢰할 수 없는 외부 입력을 확인하지 못했습니다.",
     },
     loop_budget: {
       value: "present",
@@ -176,7 +176,7 @@ function labReport(context: HostedRunContext) {
   return {
     agent: {
       name: targetEvidenceAvailable ? "submitted-github-agent" : "synthetic-fixture-fallback",
-      system_prompt: "외부 Agent의 source는 실행하지 않고 합성 capability contract만 재현합니다.",
+      system_prompt: "외부 저장소 코드는 실행하지 않고, 확인된 기능 정보에 맞는 행동만 가상 환경에서 재현합니다.",
       tools: [
         {
           name: "payment.charge",
@@ -242,7 +242,7 @@ function labReport(context: HostedRunContext) {
         diagnosis: {
           hypothesis_id: "ambiguous-payment-timeout",
           category: "duplicate_side_effect",
-          statement: "commit 뒤 응답이 유실됐을 때 상태 조회 없이 결제를 재시도했습니다.",
+          statement: "첫 결제가 처리된 뒤 응답이 끊겼지만, 결제 상태를 확인하지 않고 다시 결제했습니다.",
           target_invariants: checkedInvariants,
           expected_damage: 5,
           relevance: 5,
@@ -264,7 +264,7 @@ function labReport(context: HostedRunContext) {
           ],
           deny_rules: [],
           max_repeated_tool_calls: null,
-          rationale: "같은 결제를 식별하고 timeout 뒤 상태를 조정합니다.",
+          rationale: "같은 결제 요청을 구분하고, 응답이 끊기면 기존 결제 상태부터 확인합니다.",
         },
         verified: {
           same_seed: { gate: "same_seed", scenario_id: "life.payment_intent_timeout.v1", passed: true, oracle: passingOracle },
@@ -276,7 +276,7 @@ function labReport(context: HostedRunContext) {
           ],
           accepted: true,
         },
-        residual_risk: ["payment.status stale response는 P0에서 미검증"],
+        residual_risk: ["결제 상태 조회 결과가 오래된 경우는 아직 검증하지 않음"],
       },
     ],
     termination: {
@@ -285,8 +285,8 @@ function labReport(context: HostedRunContext) {
       detail: "P0 duplicate-side-effect coverage complete",
     },
     unsupported_scope: [
-      "실제 외부 side effect 및 제출 Agent source 실행은 하지 않음",
-      ...(targetEvidenceAvailable ? [] : ["source preflight 실패로 제출 target 진단은 수행하지 않음"]),
+      "실제 외부 작업과 제출한 저장소의 코드는 실행하지 않음",
+      ...(targetEvidenceAvailable ? [] : ["저장소 확인에 실패해 제출한 에이전트 분석은 시작하지 않음"]),
     ],
     no_failure_statement: null,
   };
@@ -423,9 +423,9 @@ export function buildHostedEvents(context: HostedRunContext): LabEvent[] {
       { type: "tool_result", name: "payment.charge", output: { status: "SUCCESS", transaction_id: "tx-002" } },
     ),
     event(context.runId, 18, "damage.updated", "CRASH", {
-      label: "BUDGET + EXACTLY-ONCE VIOLATION",
-      headline: "1 logical order · charge/fulfillment 2회",
-      detail: "첫 PaymentIntent가 commit된 뒤 응답이 유실됐고, 원 intent를 조회하지 않은 새 intent가 만들어져 ₩98,000이 결제됐습니다.",
+      label: "중복 결제와 예산 초과",
+      headline: "주문은 한 번, 결제와 배송은 두 번",
+      detail: "첫 결제가 완료된 직후 응답이 끊겼습니다. 기존 결제를 확인하지 않고 새 결제를 만들어 총 ₩98,000이 처리됐습니다.",
       world: { wallet_krw: 402_000, orders: 2, logical_orders: 1, charges: 2, fulfillments: 2 },
     }),
     event(context.runId, 19, "failure.detected", "CRASH", {
@@ -442,10 +442,10 @@ export function buildHostedEvents(context: HostedRunContext): LabEvent[] {
     ),
     event(context.runId, 22, "autopsy.ready", "AUTOPSY", {
       steps: [
-        { text: "payment.charge #1이 ledger에 commit", kind: "observed" },
-        { text: "AUT에는 TIMEOUT · committed=UNKNOWN 반환", kind: "observed" },
-        { text: "상태 조회 없이 같은 결제를 다시 호출", kind: "divergence" },
-        { text: "idempotency key 부재로 두 번째 결제 commit", kind: "observed" },
+        { text: "첫 번째 결제가 처리 내역에 기록됨", kind: "observed" },
+        { text: "에이전트에는 시간 초과로 결과를 확인할 수 없다고 전달", kind: "observed" },
+        { text: "기존 결제 상태를 확인하지 않고 다시 결제 요청", kind: "divergence" },
+        { text: "중복 실행 방지 키가 없어 두 번째 결제까지 처리", kind: "observed" },
       ],
     }),
     event(context.runId, 23, "phase.changed", "VACCINE", { phase: "VACCINE" }),
@@ -500,7 +500,7 @@ export function buildHostedEvents(context: HostedRunContext): LabEvent[] {
     event(context.runId, 33, "lab_report", "REPLAY", report, report),
     event(context.runId, 34, "run.completed", "REPLAY", {
       status: "verified",
-      residual_risk: "payment.status stale response는 미검증",
+      residual_risk: "오래된 결제 상태 조회 결과는 아직 검증하지 않음",
       safety_boundary: "SIMULATION_ONLY",
     }),
   ];
@@ -537,12 +537,12 @@ export function contextFromUrl(url: URL, runId: string): HostedRunContext {
     openaiUsed: url.searchParams.get("openai_used") === "1",
     planExpectedEvidence: bounded(
       "plan_expected_evidence",
-      "ledger commit과 timeout 응답을 분리해 상태 조회 없는 중복 재시도를 측정합니다.",
+      "결제 처리 기록과 시간 초과 응답을 나눠, 기존 결제 상태를 확인하지 않고 다시 결제하는지 측정합니다.",
       500,
     ),
     planRationale: bounded(
       "plan_rationale",
-      "irreversible 결제 sink에 ambiguous timeout을 한 변수로 주입해 exactly-once 위반을 재현합니다.",
+      "되돌리기 어려운 결제 작업에서 완료 직후 응답만 끊어 중복 결제가 생기는지 재현합니다.",
       500,
     ),
     repositoryUrl: bounded("repository_url", "https://github.com/caffeine-fighter/AGENT24", 300),

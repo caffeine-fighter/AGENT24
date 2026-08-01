@@ -31,7 +31,7 @@ assert.equal(
     requestedRef: "main",
     mission: "test",
   }).message,
-  "지원하지 않는 저장소입니다. P0은 HTTPS github.com 저장소만 받습니다. 외부 Agent 코드는 실행하지 않았습니다.",
+  "지원하지 않는 저장소 주소입니다. 현재는 공개된 GitHub 저장소만 사용할 수 있으며, 외부 코드는 실행하지 않습니다.",
 );
 assert.equal(validateTargetInput({
   repositoryUrl: "https://github.com/example/agent?token=secret",
@@ -56,10 +56,10 @@ const target = {
   mission: "케이크 하나를 주문해줘.",
 };
 const runInput = formatRunInput(target);
-assert.ok(runInput.includes("Repository: https://github.com/example/agent"));
-assert.ok(runInput.includes("Requested ref or commit: release-v1"));
-assert.ok(runInput.includes("Mission: 케이크 하나를 주문해줘."));
-assert.ok(runInput.includes("실제 외부 side effect를 실행하지 말고"));
+assert.ok(runInput.includes("저장소: https://github.com/example/agent"));
+assert.ok(runInput.includes("브랜치 또는 커밋: release-v1"));
+assert.ok(runInput.includes("맡길 일: 케이크 하나를 주문해줘."));
+assert.ok(runInput.includes("실제 외부 서비스를 호출하거나 상태를 바꾸지 말고"));
 
 const mission = "케이크 하나를 5만원 이하로 주문해줘.";
 const first = createCakeCrashFixture(mission);
@@ -211,9 +211,9 @@ const projectedProfile = projectBehaviorProfile(behaviorProfilePayload);
 assert.equal(projectedProfile.sourceRef, behaviorProfilePayload.source_ref);
 assert.equal(projectedProfile.assessments[1].name, "idempotency_usage");
 assert.equal(projectedProfile.assessments[1].value, "absent");
-assert.ok(projectedProfile.assessments[1].evidence[0].includes("trace[7]"));
+assert.ok(projectedProfile.assessments[1].evidence[0].includes("실행 기록[7]"));
 assert.equal(projectedProfile.assessments[3].value, "unknown");
-assert.ok(projectedProfile.assessments[3].unknownReason.includes("관찰하지 못했습니다"));
+assert.ok(projectedProfile.assessments[3].unknownReason.includes("확인하지 못했습니다"));
 
 const liveProfileState = reduceRunState(targetState, {
   run_id: "target-test",
@@ -261,8 +261,8 @@ assert.deepEqual(projectedExperiment.faults[0], {
   callIndex: 0,
   params: {},
 });
-assert.ok(projectedExperiment.toolChoiceReason.includes("idempotency/reconciliation"));
-assert.ok(projectedExperiment.expectedEvidence.includes("trace와 ledger"));
+assert.ok(projectedExperiment.toolChoiceReason.includes("중복 방지나 상태 확인"));
+assert.ok(projectedExperiment.expectedEvidence.includes("실행 기록"));
 
 const experimentState = reduceRunState(fixtureProfileState, {
   run_id: "target-test",
@@ -320,7 +320,7 @@ const labReportPayload = {
 };
 const projectedReport = projectLabReport(labReportPayload);
 assert.equal(projectedReport.profile.agentName, "cake-buyer");
-assert.equal(projectedReport.observed.items[0].evidence, "ledger[0] · ledger[2] · trace[7] · trace[9] · orders");
+assert.equal(projectedReport.observed.items[0].evidence, "처리 기록[0] · 처리 기록[2] · 실행 기록[7] · 실행 기록[9] · 처리 건수");
 assert.equal(projectedReport.hypothesis.category, "duplicate_side_effect");
 assert.equal(projectedReport.proposedPatch.patch_id, "payment-idempotency-v1");
 assert.deepEqual(projectedReport.verification, { accepted: true, passedGates: 3, totalGates: 4 });
