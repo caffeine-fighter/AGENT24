@@ -115,10 +115,17 @@ function renderLabReport() {
   const panel = $("#labReportPanel");
   const report = state.reportView;
   const behavior = state.behaviorProfileView;
-  panel.hidden = !report && !behavior;
-  if (!report && !behavior) return;
+  const experiment = state.experimentPlanView;
+  panel.hidden = !report && !behavior && !experiment;
+  if (!report && !behavior && !experiment) return;
 
-  const profile = behavior || report.profile;
+  const profile = behavior || report?.profile || {
+    agentName: "Agent 정보 없음",
+    capabilities: [],
+    tools: [],
+    sideEffectTools: [],
+    permissions: {},
+  };
   const capabilityText = profile.capabilities.length
     ? profile.capabilities
         .map((capability) => `${capability.tool} [${capability.categories.join(", ") || "unknown"}]`)
@@ -145,7 +152,26 @@ function renderLabReport() {
       : `${behavior.missionFamily} · PROFILE READY`,
   );
   setText("#reportPermissions", permissions);
-  setText("#reportTermination", termination?.reason || (behavior ? "behavior_profile" : "termination 정보 없음"));
+  setText(
+    "#reportTermination",
+    termination?.reason || (experiment ? "experiment_plan" : behavior ? "behavior_profile" : "termination 정보 없음"),
+  );
+
+  const experimentCard = $("#selectedExperimentCard");
+  experimentCard.hidden = !experiment;
+  if (experiment) {
+    const fault = experiment.faults[0];
+    setText(
+      "#reportExperiment",
+      fault ? `${fault.kind.toUpperCase()} → ${fault.targetTool}` : "지원 가능한 fault 없음",
+    );
+    setText(
+      "#reportExperimentMeta",
+      `${experiment.scenarioId} · seed ${experiment.seed ?? "?"} · ${experiment.maxTurns ?? "?"} turns · ${experiment.singleVariable ? "SINGLE VARIABLE" : "MULTI VARIABLE"}`,
+    );
+    setText("#reportExperimentReason", `WHY · ${experiment.toolChoiceReason}`);
+    setText("#reportExperimentEvidence", `EXPECT · ${experiment.expectedEvidence}`);
+  }
 
   const assessmentGrid = $("#behaviorAssessments");
   assessmentGrid.hidden = !behavior;
