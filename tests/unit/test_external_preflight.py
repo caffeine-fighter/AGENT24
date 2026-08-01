@@ -77,7 +77,12 @@ def test_preflight_stops_honestly_when_manifest_tools_are_unsupported() -> None:
     assert result.manifest.unsupported_tools == ("unsupported:vendor.transfer",)
     assert isinstance(result.decision, StopDecision)
     assert result.decision.reason == "unsupported_input"
-    assert "gym 어휘 밖" in result.decision.detail
+    # Since #57 the domain-pack router answers first, so the stop names the
+    # routing failure rather than the Life-v0 operator table.  A tool the
+    # manifest loader rejected is not handed to the Adhoc fallback either.
+    assert "지원 어휘 밖" in result.decision.detail
+    assert result.pack_selection.selected is None
+    assert result.pack_selection.candidates == ()
 
 
 def test_mapping_fetcher_uses_allowlist_order_and_is_deterministic() -> None:

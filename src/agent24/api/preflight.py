@@ -2,8 +2,9 @@
 
 The preflight is deliberately metadata-only.  It resolves a public GitHub
 repository to an immutable commit, fetches one allowlisted JSON manifest at
-that commit, derives an evidence-backed BehaviorProfile, and selects one typed
-P0 experiment.  Repository code is never cloned, imported, or executed.
+that commit, derives an evidence-backed BehaviorProfile, routes to one domain
+pack, and selects one typed P0 experiment.  Repository code is never cloned,
+imported, or executed.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from agent24.agent.manifest import ALLOWED_MANIFEST_PATHS, load_manifest
 from agent24.agent.models import ExperimentPlan, Mission, StopDecision
+from agent24.agent.packs import PackSelection, select_domain_pack
 from agent24.agent.planner import select_p0_experiment
 from agent24.agent.profile import AgentManifest, BehaviorProfile, build_behavior_profile
 from agent24.agent.source import (
@@ -150,6 +152,7 @@ class ExternalPreflightResult(BaseModel):
     manifest: AgentManifest
     mission: Mission
     profile: BehaviorProfile
+    pack_selection: PackSelection
     decision: ExperimentPlan | StopDecision
 
 
@@ -188,12 +191,27 @@ class ExternalAgentPreflight:
             constraints=dict(manifest.permissions),
         )
         profile = build_behavior_profile(manifest, baseline=None)
-        decision = select_p0_experiment(profile, mission)
+
+        # Which gym before which fault.  ``select_p0_experiment`` only knows the
+        # Life-v0 operator table, so asking it about a Research or Stock agent
+        # would produce an honest-looking "unsupported" for the wrong reason.
+        # The router names the domain first, and only the Life pack continues
+        # into the operator selection below.
+        pack_selection = select_domain_pack(
+            manifest=manifest, profile=profile, mission=mission
+        )
+        decision: ExperimentPlan | StopDecision
+        if pack_selection.stop is not None:
+            decision = pack_selection.stop
+        else:
+            decision = select_p0_experiment(profile, mission)
+
         return ExternalPreflightResult(
             source=source,
             manifest=manifest,
             mission=mission,
             profile=profile,
+            pack_selection=pack_selection,
             decision=decision,
         )
 

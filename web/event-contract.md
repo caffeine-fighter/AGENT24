@@ -99,6 +99,7 @@ Lab Agent가 내보내는 아래 의미 이벤트도 같은 envelope를 사용�
 | `replay.completed` | 보호 후 상태와 목표 성공 여부 표시 |
 | `source_descriptor` | immutable `SourceDescriptor` provenance와 live resolved SHA 표시 |
 | `behavior_profile` | `profile.BehaviorProfile`의 다섯 판정과 evidence/unknown reason 표시 |
+| `pack.selected` | 어떤 domain Gym을 고를지에 대한 결정적 routing 판단과 그 근거 표시 |
 | `experiment_plan` | typed `ExperimentPlan`의 선택 fault·근거·기대 evidence·budget 표시 |
 | `gym.baseline.completed` | healthy twin의 seed·run digest·trace/ledger 개수 기록 |
 | `gym.tool_call` / `gym.tool_result` | Life-v0 synthetic archetype의 원본 trace 보존 |
@@ -115,6 +116,24 @@ full hexadecimal SHA일 때만 상단 target에 반영합니다. fixture/short S
 `behavior_profile.payload`는 `src/agent24/agent/profile.py::BehaviorProfile`의
 `model_dump(mode="json")` 결과입니다. live 이벤트의 `source_ref` 끝에 immutable hex SHA가
 있을 때만 상단 resolved SHA에 반영합니다. fixture ref는 실제 resolve 결과로 승격하지 않습니다.
+
+`pack.selected.payload`는 `src/agent24/agent/packs.py::PackSelection`의
+`model_dump(mode="json")` 결과입니다. `behavior_profile` 직후, `experiment_plan`보다
+**먼저** 나옵니다. unsupported로 끝나는 실행은 `experiment_plan`에 도달하지 못하므로,
+이 이벤트가 "어떤 pack을 왜 골랐고 왜 아무것도 실행하지 않았는지"에 대한 유일한 기록입니다.
+
+읽는 쪽이 반드시 구분해야 하는 두 가지가 있습니다.
+
+- **선택된 pack ≠ 실행된 pack.** `stop`이 `null`일 때만 one-input controller가 그 pack을
+  실제로 실행합니다. 현재 그 조건을 만족하는 것은 Life pack뿐이고, Research·Stock·Ticket·
+  Adhoc은 선택은 되지만 `stop.detail`이 실행 경로를 담당하는 이슈 번호를 명시합니다.
+- **`selected`가 `null`이면 판단이 갈린 것**입니다. `stop.reason`이 `insufficient_evidence`면
+  두 domain pack이 동점이라 임의로 고르지 않고 종료한 경우이고, `unsupported_input`이면
+  등록된 어느 pack의 tool surface에도 해당하지 않는 경우입니다.
+
+`candidates`는 점수 순으로 정렬된 전체 후보이고, `selection_digest`는 같은 입력·registry
+version에서 동일합니다. `why` / `expect` / `budget` / `fallback`은 표시용 요약이 아니라
+감사 대상이므로 요약하지 않고 그대로 보존합니다.
 
 `experiment_plan.payload`는 `src/agent24/agent/models.py::ExperimentPlan`의
 `model_dump(mode="json")` 결과입니다. 웹은 첫 fault의 종류와 대상 도구뿐 아니라

@@ -16,5 +16,9 @@
 | 2026-08-01 | `site/`에 Sites용 Worker 실행 표면을 추가하고 기존 FastAPI·정적 UI를 원본 구현으로 유지 | Python 서버를 실행하지 못하는 호스팅에서도 공유 링크·OpenAI 계획 호출·SSE 데모를 제공하되, 24시간 해커톤의 검증된 로컬 경로를 재작성하지 않음 | A / deployment | Python runtime을 직접 호스팅하는 프로덕션 환경이 준비될 때 |
 | 2026-08-01 | hosted planner는 `commit_then_timeout` 한 변수만 허용하고 OpenAI에는 선택 이유·기대 증거만 맡김 | 모델의 적응성을 노출하면서 scenario·oracle·패치·판정의 결정성을 controller가 계속 소유하게 함 | A / deployment | hosted domain pack이 Research·Stock·Adhoc까지 확장될 때 |
 | 2026-08-01 | Sites build가 삽입한 Git commit은 배포 provenance로만 표시하고 submitted-source pin에 대체 사용하지 않음 | D1의 공개 GitHub preflight와 fixture fallback을 분리하고 private self-target 우회를 제거 | A / deployment | Sites가 D1 공개 source·manifest preflight를 직접 제공할 때 |
+| 2026-08-01 | DomainPack registry는 pack 클래스를 import하지 않고 tool·fixture·fault 어휘를 데이터로 재기술하고, 실제 pack과의 일치를 테스트로 강제 | 모든 pack gym이 `agents`를 import하는데 `agent/`는 그 의존을 금지하므로 직접 참조가 불가능. 검사되지 않는 중복은 드리프트지만 검사되는 중복은 seam | B / agent | pack gym에서 `agents` import를 걷어내 직접 참조가 가능해질 때 |
+| 2026-08-01 | domain은 `MissionFamily`가 아니라 별도 `DomainKind`로 분리하고, pack 판별의 1차 기준은 tool surface | Stock에는 대응하는 mission family가 없고, frozen `MissionFamily`에 값을 추가하면 "사용자가 요청한 것"과 "어떤 gym이 재현할 수 있는가"라는 두 의미가 한 enum에 겹침 | B / agent | Ticket·K-Skill이 mission family까지 필요로 할 때 |
+| 2026-08-01 | pack 점수 동점은 `insufficient_evidence`로 종료하고 보고서에서는 기존 `UNSUPPORTED`로 매핑 | 사전순으로 하나를 고르면 동전 던지기가 판단으로 보임. 다만 web #25가 소비하는 5개 terminal status 계약을 깨면서까지 6번째 상태를 만들 이유는 없음 | B / agent | ambiguous를 UI에서 unsupported와 다르게 보여줘야 할 때 |
+| 2026-08-01 | Ticket pack은 잠정 tool 어휘와 함께 등록하되 fixture·fault family는 비워 둠 | 라우팅 규칙을 지금 테스트할 수 있게 하면서, 없는 fixture를 선언해 "fixture가 존재한다"와 "실패를 측정했다"를 섞지 않기 위함 | B / agent | #60이 실제 Ticket Gym과 확정 어휘를 제공할 때 |
 
 Keep entries short. Record choices that affect architecture, model/tool selection, scope, cost, privacy, or the demo path.
