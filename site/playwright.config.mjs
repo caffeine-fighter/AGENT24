@@ -7,14 +7,29 @@ export default defineConfig({
   timeout: 30_000,
   use: {
     baseURL: "http://localhost:4173",
-    trace: "retain-on-failure",
+    screenshot: "off",
+    trace: "off",
+    video: "off",
   },
-  webServer: {
-    command: "npm run dev -- --host localhost --port 4173",
-    reuseExistingServer: !process.env.CI,
-    timeout: 30_000,
-    url: "http://localhost:4173/health",
-  },
+  webServer: [
+    {
+      command: "node tests/browser/github-upstream.mjs",
+      reuseExistingServer: !process.env.CI,
+      timeout: 10_000,
+      url: "http://127.0.0.1:4174/health",
+    },
+    {
+      command: "node tests/browser/production-server.mjs",
+      env: {
+        ...process.env,
+        AGENT24_GITHUB_API_BASE_URL: "http://127.0.0.1:4174",
+        RUN_CONTEXT_SECRET: "browser-only-context-secret-with-at-least-32-bytes",
+      },
+      reuseExistingServer: !process.env.CI,
+      timeout: 30_000,
+      url: "http://localhost:4173/health",
+    },
+  ],
   projects: [
     {
       name: "chromium",
