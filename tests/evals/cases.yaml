@@ -706,3 +706,15 @@ cases:
     targets:
       - tests/evals/test_registry.py::test_the_live_stub_never_reaches_the_network
       - tests/evals/test_registry.py::test_the_live_stub_restores_the_ambient_environment
+
+  # Reviewed Target Agent runtime (issue #122).
+  - id: target-agent-runner-sandbox-oracle
+    runner: pytest
+    issue: 122
+    expectation: the pinned owner manifest selects the host-owned Agents SDK Target Agent; raw tool items drive the same-seed SandboxGym ledger, the vulnerable run records two charges, and the controller-owned reconciliation replay records one charge with stable evidence hashes
+    targets:
+      - tests/unit/test_target_runtime.py::test_repository_manifest_selects_only_the_reviewed_target_runtime
+      - tests/unit/test_target_runtime.py::test_real_runner_drives_the_vulnerable_target_and_records_ledger
+      - tests/unit/test_target_runtime.py::test_protected_target_replay_reconciles_same_fixture_to_one_charge
+      - tests/unit/test_target_runtime.py::test_target_evidence_hashes_are_stable_sha256_values
+      - tests/integration/test_api.py::test_reviewed_target_runner_publishes_raw_target_oracle_and_protected_replay

@@ -68,7 +68,8 @@ class LocalExampleRevisionResolver(MappingRevisionResolver):
     def resolve(self, request: SourceRequest) -> str:
         if (
             request.source_kind != "local_bundle"
-            or request.source_path != str(EXAMPLE_FIXTURE_RELATIVE_ROOT)
+            or request.source_path.replace("\\", "/")
+            != EXAMPLE_FIXTURE_RELATIVE_ROOT.as_posix()
             or request.repository != EXAMPLE_REPOSITORY
         ):
             raise SourceAccessError(
