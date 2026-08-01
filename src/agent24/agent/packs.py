@@ -650,8 +650,8 @@ def _deferred(spec: DomainPackSpec) -> StopDecision:
         stop=True,
         reason="unsupported_input",
         detail=(
-            f"{spec.pack_id}를 선택했으나 one-input controller 실행 경로는 아직 "
-            f"연결되지 않았다({spec.deferred_to}). 다른 pack의 실험으로 대체하지 않는다."
+            f"{spec.pack_id} 선택. one-input 실행 경로는 {spec.deferred_to}가 제공하며, "
+            "다른 pack의 실험으로 대체하지 않는다."
         ),
     )
 
