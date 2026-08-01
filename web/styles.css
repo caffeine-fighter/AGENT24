@@ -307,7 +307,7 @@ body[data-running="true"] .status-dot { animation: blink 1s infinite; }
 }
 @media (max-width: 520px) {
   .brand small { display: none; }
-  .hero { padding: 21px 18px; }
+  .hero { gap: 24px; padding: 18px 16px; }
   .hero-points li { grid-template-columns: 1fr; gap: 2px; }
   .mission-form { padding: 16px; }
   .asset-grid { grid-template-columns: 1fr; }
