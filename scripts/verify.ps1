@@ -40,6 +40,17 @@ try {
         Assert-CommandSucceeded "Web reducer"
     }
 
+    # Eval registry gate (issue #107). Validation and target-existence are
+    # unconditional: a duplicate id, an unknown field, or a pytest node that no
+    # longer collects is drift and must fail here rather than stay green.
+    #
+    # --validate-only, not a full execution: every pytest target the registry
+    # names was already run by the `pytest -q` step above, so executing them a
+    # second time would double the gate's runtime to prove the same thing. Run
+    # `python -m agent24.evals` directly to execute the cases themselves.
+    python -m agent24.evals --validate-only
+    Assert-CommandSucceeded "Eval registry"
+
     $TrackedSecretFiles = git ls-files | Where-Object {
         (($_ -match '(^|/)\.env($|\.)') -and ($_ -notmatch '(^|/)\.env\.example$')) -or
         ($_ -match '\.pem$|\.key$')
