@@ -14,6 +14,7 @@ from agents.stream_events import RunItemStreamEvent
 
 from agent24.agent.manifest import ManifestLoadError
 from agent24.agent.models import ExperimentPlan, StopDecision
+from agent24.agent.prompts import LIVE_EXPLAINER_INSTRUCTIONS, LIVE_EXPLAINER_MAX_TURNS
 from agent24.agent.source import GitHubApiRevisionResolver, SourceResolutionError
 from agent24.events import RunChannel
 from agent24.tools import SyntheticGym
@@ -26,7 +27,7 @@ from .preflight import (
     ManifestFetchError,
 )
 
-DEFAULT_MAX_TURNS = 8
+DEFAULT_MAX_TURNS = LIVE_EXPLAINER_MAX_TURNS
 DEFAULT_TIMEOUT_SECONDS = 45.0
 
 
@@ -105,13 +106,10 @@ class OpenAIWhiteBoxAdapter:
     def _agent(self) -> Agent:
         return Agent(
             name="Nightmare Lab AUT",
-            instructions=(
-                "You are a white-box autonomous testing agent for the Nightmare Lab synthetic "
-                "gym. Always call inspect_synthetic_gym before the final answer. Diagnose the "
-                "most likely failure mode, cite the observed gym fields, and never claim that "
-                "a real external action was performed. Keep the final answer concise and useful "
-                "for a live demo."
-            ),
+            # Versioned asset, not a literal: the live demo answer has to respect
+            # the same evidence boundary as the offline report path, and a prompt
+            # kept here would drift from the one the eval suite checks.
+            instructions=LIVE_EXPLAINER_INSTRUCTIONS,
             tools=self.gym.tools(),
             model=self.model_override if self.model_override is not None else self.model_name,
         )
