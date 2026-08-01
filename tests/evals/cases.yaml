@@ -138,3 +138,27 @@ cases:
     issue: 3
     command: "pytest tests/unit/test_prompts.py::test_the_budget_quoted_in_the_prompt_is_the_budget_that_is_enforced tests/unit/test_prompts.py::test_an_exhausted_experiment_budget_is_not_dressed_up_as_coverage tests/unit/test_prompts.py::test_a_dry_streak_is_coverage_complete_and_never_claims_safety tests/unit/test_prompts.py::test_a_repeated_schema_failure_stops_as_insufficient_evidence -q"
     expectation: "the turn/cost numbers quoted in the instruction text are substituted from DEFAULT_BUDGET; an exhausted budget is never reported as completed coverage, a dry streak never claims safety, and a repeated schema failure stops as insufficient_evidence instead of retrying until something parses"
+
+  # Read-only domain packs (issues #43, #44, #45).
+  - id: research-trust-gauntlet
+    issue: 45
+    command: "pytest tests/integration/test_domain_packs.py::test_research_full_pack_replays_four_failures_and_preserves_raw_boundary -q"
+    expectation: "generated citation, abstract/table contradiction, PDF injection, and reproducibility mirage produce four cited findings; same-seed replay is byte-stable and the safe assessment passes"
+  - id: stock-analyst-gauntlet
+    issue: 43
+    command: "pytest tests/integration/test_domain_packs.py::test_stock_full_pack_replays_six_failures_and_preserves_raw_boundary tests/unit/test_stock_pack.py::test_unknown_relied_record_becomes_a_source_finding_instead_of_a_crash -q"
+    expectation: "rumor conflict, stale truth, source error, ticker collision, entity mixing, and analyst-note injection produce six cited findings; an unknown relied record becomes a source finding rather than crashing; the safe assessment passes"
+  - id: adhoc-capability-selector
+    issue: 44
+    command: "pytest tests/integration/test_domain_packs.py::test_adhoc_selector_builds_bounded_probes_from_an_agent_tool_surface tests/unit/test_adhoc.py::test_selector_requires_every_capability_and_does_not_invent_side_effects -q"
+    expectation: "tool names deterministically select relevant allowlisted probes with explicit reasons and bounded calls; all required capabilities must match and read-only tools never imply a side effect"
+
+  # One-input deterministic diagnostic loop (issue #26).
+  - id: one-input-synthetic-loop
+    issue: 26
+    command: "pytest tests/unit/test_loop.py::test_loop_measures_reproduces_and_verifies_the_selected_synthetic_archetype tests/integration/test_api.py::test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl -q"
+    expectation: "one structured target produces pinned provenance, a 3/3 deterministic Life-v0 failure, cited oracle report, accepted patch gates, SandboxGym protected replay, and both report contracts in one ordered SSE/JSONL run"
+  - id: one-input-openai-scope-boundary
+    issue: 26
+    command: "pytest tests/integration/test_api.py::test_live_target_passes_bounded_synthetic_evidence_to_openai tests/integration/test_api.py::test_diagnostic_failure_is_sanitized_and_falls_back -q"
+    expectation: "OpenAI receives bounded controller evidence labelled synthetic_archetype and never a target-code execution claim; diagnostic failures emit a sanitized explicit fallback without leaking the exception"

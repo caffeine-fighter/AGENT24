@@ -11,5 +11,7 @@
 | 2026-08-01 | Surprise 리허설은 별도 shortcut 없이 제품의 HTTP·SSE 경로와 raw trace gate를 사용 | Adaptability를 고정 답안이 아니라 동일 실행 경로의 순서·도구·종료·side-effect 증거로 검증하기 위함 | A / integration | live Lab pipeline의 event schema가 변경될 때 |
 | 2026-08-01 | 외부 source는 GitHub URL을 full commit SHA로 resolve한 뒤 allowlisted JSON manifest만 읽음 | branch drift와 임의 repository code 실행을 막고 모든 진단 provenance를 재현 가능하게 유지 | C / input | private host·실행 가능한 adapter를 P1에서 별도 승인할 때 |
 | 2026-08-01 | 결제 protected replay는 unknown confirm 뒤 새 intent를 만들지 않고 기존 intent를 retrieve함 | 같은 seed에서 duplicate charge를 제거하면서 정상 결제 control을 보존하는 최소 policy를 측정하기 위함 | C / replay | B의 generic oracle/report가 연결될 때 |
+| 2026-08-01 | Research·Stock은 Life world에 필드를 추가하지 않고 read-only domain pack과 assessment 기반 oracle로 분리 | 문서 신뢰성 의미가 검증된 결제 ledger에 침투하는 것을 막고, 위험 fixture의 존재와 AUT의 실제 실패를 구분 | C / gym | 공통 provenance graph가 두 pack에서 반복 구현될 때 |
+| 2026-08-01 | 외부 source는 metadata-only로 유지하고 manifest가 선택한 Life-v0 synthetic behavior archetype을 진단 | 임의 code 실행 없이 one-input E2E를 완주하면서 synthetic 측정을 실제 target 관찰로 과장하지 않기 위함 | A / integration | 승인된 실행 adapter와 sandbox contract가 추가될 때 |
 
 Keep entries short. Record choices that affect architecture, model/tool selection, scope, cost, privacy, or the demo path.

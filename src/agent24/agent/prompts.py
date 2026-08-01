@@ -76,6 +76,14 @@ LIVE_TOOL_NAME = "inspect_synthetic_gym"
 LIVE_EXPLAINER_MAX_TURNS = 8
 """Turn cap for the live demo agent, mirrored by ``api.runtime.DEFAULT_MAX_TURNS``."""
 
+DIAGNOSTIC_CONTEXT_LABEL = "DIAGNOSTIC CONTEXT"
+"""Header the runtime puts on controller-measured evidence in the live query.
+
+Shared with ``api.runtime`` so the instruction cannot end up describing a block
+the runtime never emits -- a rule about a header that does not exist reads as
+enforced and does nothing.
+"""
+
 UNTRUSTED_OPEN = "<untrusted_agent_data>"
 UNTRUSTED_CLOSE = "</untrusted_agent_data>"
 MISSION_OPEN = "<user_mission>"
@@ -423,6 +431,7 @@ def _substitutions(output_schema: str) -> dict[str, str]:
         "invariant_ids": ", ".join(INVARIANT_IDS),
         "banned_claims": ", ".join(CLAIM_TERMS),
         "not_a_safety_certificate": NOT_A_SAFETY_CERTIFICATE,
+        "diagnostic_label": DIAGNOSTIC_CONTEXT_LABEL,
         "max_experiments": str(DEFAULT_BUDGET.max_experiments),
         "max_cost_units": str(DEFAULT_BUDGET.max_cost_units),
         "untrusted_open": UNTRUSTED_OPEN,
@@ -475,6 +484,7 @@ LIVE_EXPLAINER_INSTRUCTIONS = instructions(PromptStage.LIVE_EXPLAINER)
 __all__ = [
     "CLAIM_TERMS",
     "DEFAULT_BUDGET",
+    "DIAGNOSTIC_CONTEXT_LABEL",
     "DEFAULT_SCHEMA_RECOVERY",
     "LIVE_EXPLAINER_INSTRUCTIONS",
     "LIVE_EXPLAINER_MAX_TURNS",

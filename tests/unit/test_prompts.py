@@ -40,6 +40,7 @@ from agent24.agent.prompts import (
     CLAIM_TERMS,
     DEFAULT_BUDGET,
     DEFAULT_SCHEMA_RECOVERY,
+    DIAGNOSTIC_CONTEXT_LABEL,
     LIVE_EXPLAINER_INSTRUCTIONS,
     LIVE_EXPLAINER_MAX_TURNS,
     LIVE_TOOL_NAME,
@@ -169,6 +170,25 @@ def test_runtime_v2_uses_the_versioned_live_prompt_and_its_turn_cap() -> None:
     adapter = runtime.OpenAIWhiteBoxAdapter()
     assert adapter._agent().instructions == LIVE_EXPLAINER_INSTRUCTIONS
     assert runtime.DEFAULT_MAX_TURNS == LIVE_EXPLAINER_MAX_TURNS
+
+
+def test_the_live_prompt_describes_the_header_the_runtime_actually_emits() -> None:
+    """A rule about a block that is never emitted reads as enforced and does nothing."""
+
+    from agent24.api import runtime
+
+    # Re-inlining the literal in runtime would drop this import and fail here.
+    assert runtime.DIAGNOSTIC_CONTEXT_LABEL is DIAGNOSTIC_CONTEXT_LABEL
+    assert DIAGNOSTIC_CONTEXT_LABEL in LIVE_EXPLAINER_INSTRUCTIONS
+
+
+def test_the_live_prompt_keeps_the_synthetic_scope_and_layer_separation() -> None:
+    """Carried over from the inline instruction this asset replaced (#26)."""
+
+    body = LIVE_EXPLAINER_INSTRUCTIONS
+    assert "저장소 코드가 실행된 결과처럼 말하지 않는다" in body
+    for layer in ("observed", "hypothesis", "proposed", "verified"):
+        assert layer in body
 
 
 def test_the_prompts_module_shadows_the_data_directory() -> None:

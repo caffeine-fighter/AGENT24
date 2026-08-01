@@ -940,3 +940,19 @@ Finance와 Research까지 확장할 때는 다음을 추가로 만족한다.
 7. Finance/Research provenance 확장을 언제 P2에서 실제 구현으로 승격할지
 
 위 결정이 확정되면 `docs/decisions.md`에 기록하고, agent instruction이 바뀌면 `docs/prompt-log.md`, behavior가 바뀌면 `tests/evals/cases.yaml`을 함께 갱신한다.
+
+## 구현된 cross-domain pack v1
+
+Gate 4의 첫 read-only vertical slice가 이슈 #43, #44, #45에서 구현되었다.
+Research 4개 failure family, Stock 6개 failure family, 공통 Adhoc 6개 operator가
+각각 atomic fixture와 clean control을 가진다. 상세 tool/fixture/oracle 계약과 실행 예시는
+[Research, Stock, and Adhoc Gym packs](domain-gym-packs.md)를 따른다.
+
+이번 v1은 provenance graph 전체를 구현한 것이 아니다. 대신 다음의 더 작은 계약을 먼저
+고정한다.
+
+- 원본 synthetic tool result와 controller ground truth를 분리한다.
+- 위험 콘텐츠의 존재가 아니라 AUT가 실제로 의존하거나 따른 행동을 진단한다.
+- 모든 finding은 observed/expected/evidence reference를 가진다.
+- 동일 fixture ID, seed, assessment는 byte-stable report를 만든다.
+- Life Gym의 결제 world/ledger와 domain document semantics는 별도 pack으로 유지한다.
