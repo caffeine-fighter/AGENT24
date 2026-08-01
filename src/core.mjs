@@ -18,6 +18,7 @@ export function createInitialState() {
     mission: DEFAULT_MISSION,
     runId: null,
     source: "fixture",
+    mode: "fixture",
     before: { ...INITIAL_WORLD },
     after: { ...INITIAL_WORLD },
     beforeVerdict: "neutral",
@@ -28,6 +29,7 @@ export function createInitialState() {
       detail: "아직 어떤 실제 계정에도 연결되지 않았습니다.",
     },
     patch: null,
+    finalOutput: null,
     autopsy: [],
     checks: { budget: null, count: null, task: null, benign: null },
     events: [],
@@ -40,16 +42,30 @@ function mergeWorld(current, incoming) {
   return { ...current, ...(incoming || {}) };
 }
 
-function normalizeEvent(event) {
+const TYPE_ALIASES = Object.freeze({
+  run_started: "run.started",
+  run_completed: "run.completed",
+  run_failed: "run.failed",
+});
+
+export function normalizeEvent(event) {
+  const envelope = event && typeof event === "object" ? event : {};
+  const hasRaw = Object.prototype.hasOwnProperty.call(envelope, "raw");
+  const hasPayload = Object.prototype.hasOwnProperty.call(envelope, "payload");
+  const payloadIsData = hasPayload && envelope.payload && typeof envelope.payload === "object" && !Array.isArray(envelope.payload);
+  const wireType = envelope.type ?? "unknown";
+
   return {
-    run_id: event?.run_id ?? "unknown-run",
-    seq: Number.isFinite(event?.seq) ? event.seq : -1,
-    timestamp: event?.timestamp ?? new Date().toISOString(),
-    type: event?.type ?? "unknown",
-    phase: event?.phase ?? null,
-    source: event?.source ?? "live",
-    data: event?.data ?? {},
-    raw: Object.prototype.hasOwnProperty.call(event || {}, "raw") ? event.raw : event,
+    run_id: envelope.run_id ?? "unknown-run",
+    seq: Number.isFinite(envelope.seq) ? envelope.seq : -1,
+    timestamp: envelope.timestamp ?? new Date().toISOString(),
+    type: TYPE_ALIASES[wireType] ?? wireType,
+    wire_type: wireType,
+    phase: envelope.phase ?? null,
+    source: envelope.source ?? "live",
+    summary: envelope.summary ?? null,
+    data: envelope.data ?? (payloadIsData ? envelope.payload : {}),
+    raw: hasRaw ? envelope.raw : hasPayload ? envelope.payload : envelope,
   };
 }
 
@@ -67,9 +83,11 @@ export function reduceRunState(previousState, incomingEvent) {
       return {
         ...createInitialState(),
         status: "running",
+        phase: event.phase || previousState.phase || "CLONE",
         mission: event.data.mission || previousState.mission,
         runId: event.run_id,
         source: event.source,
+        mode: event.data.mode || previousState.mode,
         events: [event],
       };
     case "phase.changed": {
@@ -112,10 +130,21 @@ export function reduceRunState(previousState, incomingEvent) {
         afterVerdict: event.data.success ? "pass" : "fail",
         checks: { ...previousState.checks, ...(event.data.checks || {}) },
       };
+    case "final_output":
+      return {
+        ...state,
+        finalOutput: event.data.text || null,
+        autopsy: previousState.autopsy.length || !event.data.text
+          ? previousState.autopsy
+          : [{ kind: "observed", text: event.data.text }],
+      };
+    case "offline_demo":
+      return { ...state, mode: "offline_demo" };
     case "run.completed":
       return {
         ...state,
         status: "complete",
+        mode: event.data.mode || previousState.mode,
         completedPhases: [...new Set([...previousState.completedPhases, ...(previousState.phase ? [previousState.phase] : [])])],
       };
     case "run.failed":

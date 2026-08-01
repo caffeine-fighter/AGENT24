@@ -8,6 +8,12 @@ import {
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const won = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
+const configuredApiBase = new URLSearchParams(window.location.search).get("api");
+const apiBase = configuredApiBase ? new URL(configuredApiBase, window.location.href) : new URL(window.location.origin);
+
+function apiUrl(path) {
+  return new URL(path, apiBase).href;
+}
 
 let state = createInitialState();
 let timers = [];
@@ -84,6 +90,7 @@ function renderPatch() {
 
 function renderChecks() {
   let hasValue = false;
+  let allPass = true;
   Object.entries(state.checks).forEach(([key, value]) => {
     const row = $(`[data-check="${key}"]`);
     if (!row) return;
@@ -91,8 +98,12 @@ function renderChecks() {
     row.classList.toggle("fail", value === false);
     row.querySelector("strong").textContent = value === null ? "—" : value ? "PASS" : "FAIL";
     if (value !== null) hasValue = true;
+    if (value !== true) allPass = false;
   });
-  setText("#verificationStatus", state.status === "complete" ? "검증 완료" : hasValue ? "검증 중" : "대기 중");
+  const label = state.status === "complete"
+    ? allPass ? "검증 완료" : hasValue ? "검증 종료" : "검증 데이터 없음"
+    : hasValue ? "검증 중" : "대기 중";
+  setText("#verificationStatus", label);
 }
 
 function renderStream() {
@@ -108,7 +119,7 @@ function renderStream() {
     const node = $("#streamLineTemplate").content.firstElementChild.cloneNode(true);
     node.dataset.kind = event.type;
     node.querySelector(".stream-seq").textContent = `#${String(event.seq).padStart(2, "0")}`;
-    node.querySelector(".stream-type").textContent = event.type;
+    node.querySelector(".stream-type").textContent = event.wire_type || event.type;
     node.querySelector("time").textContent = new Date(event.timestamp).toLocaleTimeString("ko-KR", { hour12: false });
     node.querySelector("pre").textContent = JSON.stringify(event.raw, null, 2);
     fragment.appendChild(node);
@@ -127,7 +138,8 @@ function render() {
   renderChecks();
   renderStream();
   setText("#runId", state.runId ? `RUN ${state.runId}` : "RUN —");
-  setText("#modeBadge", state.source === "live" ? "LIVE API" : "AUTO / FIXTURE");
+  const liveMode = state.mode === "offline_demo" ? "API / OFFLINE FALLBACK" : "LIVE API";
+  setText("#modeBadge", state.source === "live" ? liveMode : "AUTO / FIXTURE");
   setText("#connectionStatus", state.source === "live" ? "SSE CONNECTED" : "SYNTHETIC WORLD ONLY");
   $("#runButton").disabled = state.status === "running";
   $("#replayButton").disabled = state.status !== "complete";
@@ -136,6 +148,13 @@ function render() {
 function dispatch(event) {
   state = reduceRunState(state, event);
   render();
+  if (state.source === "live" && ["complete", "failed"].includes(state.status)) {
+    eventSource?.close();
+    eventSource = null;
+    clearInterval(clockTimer);
+    const terminalMode = state.mode === "offline_demo" ? "OFFLINE FALLBACK" : "LIVE API";
+    setText("#connectionStatus", state.status === "complete" ? `${terminalMode} · COMPLETE` : `${terminalMode} · FAILED`);
+  }
 }
 
 function clearRun() {
@@ -179,10 +198,10 @@ async function startLiveRun(mission) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1600);
   try {
-    const response = await fetch("/api/runs", {
+    const response = await fetch(apiUrl("/api/runs"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mission }),
+      body: JSON.stringify({ input: mission }),
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`Run API returned ${response.status}`);
@@ -193,12 +212,14 @@ async function startLiveRun(mission) {
     clearRun();
     state = createInitialState();
     state.source = "live";
+    state.mode = payload.mode || "live";
     state.mission = mission;
     lastMission = mission;
     receivedLiveEvent = false;
     render();
     startClock();
-    eventSource = new EventSource(`/api/runs/${encodeURIComponent(runId)}/events`);
+    const eventsPath = payload.events_url || `/api/runs/${encodeURIComponent(runId)}/events`;
+    eventSource = new EventSource(apiUrl(eventsPath));
     eventSource.onmessage = ({ data }) => {
       receivedLiveEvent = true;
       try { dispatch({ ...JSON.parse(data), source: "live" }); }
