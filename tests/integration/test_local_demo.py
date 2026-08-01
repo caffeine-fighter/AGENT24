@@ -50,7 +50,7 @@ def test_local_demo_runs_owner_manifest_through_real_gym() -> None:
     assert snapshot["execution_scope"] == "manifest_and_entrypoint"
     assert [item["path"] for item in snapshot["files"]] == [
         ".agent24/manifest.json",
-        "src/agent24/api/runtime.py",
+        "src/agent24/agent/target_runtime.py",
     ]
     assert any(event["type"] == "experiment_plan" for event in events)
     finding = next(event["payload"] for event in events if event["type"] == "finding_report")
