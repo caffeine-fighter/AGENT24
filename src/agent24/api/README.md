@@ -4,9 +4,14 @@
 
 - `POST /api/runs` — `input`과 선택적 structured `target`을 한 번에 받아 `202`와 `run_id`/`events_url`을 반환한다.
 - `GET /api/runs/{run_id}/events` — 같은 이벤트를 SSE로 replay하고 live fan-out한다.
-- `GET /health` — `mode: live | offline_demo`와 키 설정 여부만 보여준다. 키 값은 반환하지 않는다.
+- `GET /health` — `mode: live | offline_demo`와 키 설정 여부만 보여준다. 키 값은 반환하지 않는다. UI는 이 값을 바탕으로 실행 전 `OPENAI_API_KEY 없음` 또는 live 경로 사용 가능 상태를 표시한다.
 
-라이브 모드에서 `OpenAIProvider`가 `OPENAI_API_KEY`를 사용하고, Agents SDK가 모델 호출·함수 도구 실행·최종 답변을 소유한다. 키가 없거나 SDK 호출이 timeout/오류가 나면 `offline_demo` 이벤트를 명시한 뒤 deterministic synthetic gym 결과로 데모를 끝까지 이어간다.
+라이브 모드에서 `OpenAIProvider`가 `OPENAI_API_KEY`를 사용하고, Agents SDK가 모델 호출·함수 도구 실행·최종 답변을 소유한다. target이 없는 generic 실행만 키 부재나 SDK 실패 시 명시적 `offline_demo` synthetic fixture를 사용할 수 있다. External target은 controller 진단을 먼저 보존하고, OpenAI key/timeout/provider 실패를 `stage_failed`와 `openai_analysis_completed=false`로 기록하며 관련 없는 `inspect_synthetic_gym` fallback을 추가하지 않는다.
+
+`run_completed`는 유일한 terminal이다. 모든 terminal payload는 `source_resolved`,
+`diagnostic_completed`, `openai_analysis_completed`, `execution_scope`를 포함한다.
+`stage_failed`와 legacy `run_failed`는 non-terminal이며 credential이나 provider 예외 원문을
+포함하지 않는다.
 
 최종 결과와 원시 이벤트는 같은 `run_id`로 연결하며, 로컬 JSONL은 `RAW_EVENT_LOG_DIR` (기본 `artifacts/raw-streams`) 아래에 저장한다.
 
@@ -51,11 +56,11 @@ metadata-only compatibility candidate를 반환한다. 이 경로는 experiments
 
 그 뒤 OpenAI Agents SDK에는 controller가 만든 bounded diagnostic context를 전달한다.
 모델은 `inspect_synthetic_gym` 도구를 호출해 결과를 설명하되 synthetic archetype
-측정을 제출 저장소 자체의 실행 결과로 표현해서는 안 된다. source 또는 malformed
-manifest를 읽지 못하면
-외부 Agent를 진단했다고 주장하지 않고 `run_failed` 뒤 `run_completed(status=source_preflight_failed)`로
-종료한다. 이 terminal은 experiments 0, findings 0이며 일반 offline synthetic Gym으로
-전환하지 않는다.
+측정을 제출 저장소 자체의 실행 결과로 표현해서는 안 된다. source를 resolve하지 못하거나
+malformed manifest를 읽지 못하면 외부 Agent를 진단했다고 주장하지 않고
+`stage_failed(stage=source)` 뒤 정확히 하나의
+`run_completed(status=source_unresolved/source_preflight_failed)`로 종료한다. 이 terminal은
+experiments 0, findings 0이며 일반 offline synthetic Gym으로 전환하지 않는다.
 
 로컬 실행:
 

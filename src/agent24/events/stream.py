@@ -21,7 +21,10 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-TERMINAL_EVENT_TYPES = frozenset({"run_completed", "run_failed"})
+# ``run_completed`` is the only terminal.  Stage failures are deliberately
+# non-terminal so the stream can preserve an honest controller result before
+# closing with exactly one final event.
+TERMINAL_EVENT_TYPES = frozenset({"run_completed"})
 
 
 class EventEnvelope(BaseModel):
@@ -108,6 +111,9 @@ class RunChannel:
         self, event_type: str, payload: Any, *, summary: str | None = None
     ) -> dict[str, Any]:
         """Create, persist, and fan out one ordered event."""
+
+        if any(event["type"] in TERMINAL_EVENT_TYPES for event in self.events):
+            raise RuntimeError("cannot publish an event after run_completed")
 
         envelope = EventEnvelope(
             run_id=self.run_id,

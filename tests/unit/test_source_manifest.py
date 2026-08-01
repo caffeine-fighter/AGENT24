@@ -18,10 +18,12 @@ from agent24.agent.source import (
     SourceDescriptor,
     UnsupportedSourceHostError,
     parse_github_url,
+    parse_local_bundle_url,
     resolve_source,
 )
 
 SHA = "0123456789abcdef" * 2 + "0123456789abcdef"[:8]
+BUNDLE_SHA = "0123456789abcdef" * 4
 
 
 def descriptor() -> SourceDescriptor:
@@ -89,6 +91,44 @@ def test_resolve_source_records_immutable_sha_and_is_byte_stable() -> None:
     assert first.source_ref == f"caffeine-fighter/example-agent@{SHA}"
     assert first.model_dump_json() == second.model_dump_json()
     assert first.canonical_json() == second.canonical_json()
+
+
+def test_local_bundle_source_is_explicit_and_never_looks_like_public_github() -> None:
+    local = parse_local_bundle_url(
+        "local://agent24/examples/demo-agent-repo",
+        ref=BUNDLE_SHA,
+    )
+    assert local.source_kind == "local_bundle"
+    assert local.source_path == "examples/demo-agent-repo"
+    assert local.repository == "local/demo-agent-repo"
+
+    resolved = resolve_source(
+        "local://agent24/examples/demo-agent-repo",
+        ref=BUNDLE_SHA,
+        resolver=MappingRevisionResolver({("local/demo-agent-repo", BUNDLE_SHA): BUNDLE_SHA}),
+        retrieved_at="2026-08-01T09:00:00+09:00",
+    )
+
+    assert resolved.source_kind == "local_bundle"
+    assert resolved.revision_kind == "bundle_sha256"
+    assert resolved.bundle_sha256 == BUNDLE_SHA
+    assert resolved.resolver == "fixture"
+    assert resolved.source_ref == f"local://agent24/examples/demo-agent-repo@sha256:{BUNDLE_SHA}"
+    assert "github.com" not in resolved.repository_url
+
+
+def test_github_revision_cannot_be_mislabeled_with_a_bundle_digest() -> None:
+    resolver = MappingRevisionResolver(
+        {("caffeine-fighter/example-agent", "main"): BUNDLE_SHA}
+    )
+
+    with pytest.raises(SourceAccessError, match="40-character commit SHA"):
+        resolve_source(
+            "https://github.com/caffeine-fighter/example-agent",
+            ref="main",
+            resolver=resolver,
+            retrieved_at="2026-08-01T09:00:00+09:00",
+        )
 
 
 def test_missing_revision_is_typed_access_error() -> None:

@@ -5,10 +5,12 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from agent24.agent import AgentCard, ExperimentPlan, LabReport, Mission, StopDecision
 from agent24.agent.profile import BehaviorProfile
 from agent24.agent.source import SourceDescriptor
-from agent24.events import JsonlEventLog, RunChannel
+from agent24.events import TERMINAL_EVENT_TYPES, JsonlEventLog, RunChannel
 
 
 def test_lab_report_model_is_preserved_in_raw_event_payload(tmp_path: Path) -> None:
@@ -36,6 +38,39 @@ def test_lab_report_model_is_preserved_in_raw_event_payload(tmp_path: Path) -> N
     assert event["payload"] == report.model_dump(mode="json", exclude_none=False)
     assert channel.events == [event]
     assert "not proof of safety" in event["payload"]["no_failure_statement"]
+
+
+def test_run_completed_is_the_only_terminal_and_must_be_last(tmp_path: Path) -> None:
+    channel = RunChannel(run_id="terminal-run", event_log=JsonlEventLog(tmp_path))
+
+    channel.publish(
+        "stage_failed",
+        {
+            "stage": "openai_analysis",
+            "code": "openai_key_missing",
+            "message": "controller result preserved",
+        },
+    )
+    channel.publish(
+        "run_failed",
+        {"status": "legacy", "code": "deprecated_non_terminal_alias"},
+    )
+    channel.publish(
+        "run_completed",
+        {
+            "status": "openai_analysis_unavailable",
+            "mode": "offline_demo",
+            "source_resolved": True,
+            "diagnostic_completed": True,
+            "openai_analysis_completed": False,
+            "execution_scope": "synthetic_archetype",
+        },
+    )
+
+    assert TERMINAL_EVENT_TYPES == frozenset({"run_completed"})
+    assert [event["type"] for event in channel.events][-1] == "run_completed"
+    with pytest.raises(RuntimeError, match="after run_completed"):
+        channel.publish("stage_failed", {"stage": "runtime", "code": "late", "message": "late"})
 
 
 def test_web_cake_fixtures_match_frozen_python_contracts() -> None:

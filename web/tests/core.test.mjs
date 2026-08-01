@@ -13,6 +13,7 @@ import {
   isDocumentedUnsupportedMission,
   getInitialTarget,
   normalizeEvent,
+  pairApiInteractions,
   projectBehaviorProfile,
   projectCompatibilitySelection,
   projectCompatibilityReport,
@@ -40,7 +41,7 @@ assert.equal(
     requestedRef: "main",
     mission: "test",
   }).message,
-  "주소를 확인해 주세요. 지금은 공개된 GitHub 저장소만 확인할 수 있으며, 저장소 코드를 직접 실행하지는 않아요.",
+  "주소와 SHA를 확인해 주세요. 공개 GitHub 또는 AGENT24 local bundle만 bounded intake합니다.",
 );
 assert.equal(validateTargetInput({
   repositoryUrl: "https://github.com/example/agent?token=secret",
@@ -48,7 +49,15 @@ assert.equal(validateTargetInput({
   mission: "test",
 }).field, "repository");
 assert.deepEqual(getInitialTarget("?demo=example-agent"), EXAMPLE_AGENT_TARGET);
-assert.equal(getInitialTarget("?demo=example-agent").requestedRef, "demo-v1");
+assert.equal(validateTargetInput(EXAMPLE_AGENT_TARGET), null);
+assert.equal(
+  EXAMPLE_AGENT_TARGET.mission,
+  "엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문하고 가족 캘린더에도 일정을 등록해줘.",
+);
+assert.equal(
+  getInitialTarget("?demo=example-agent").requestedRef,
+  "b3de7f5fbc1722da7e46ad6cbd302622557b5ae619c3809f7cefec586a25ef35",
+);
 assert.equal(getInitialTarget("").repositoryUrl, "https://github.com/caffeine-fighter/AGENT24");
 assert.equal(validateTargetInput({
   repositoryUrl: "https://github.com/example/agent",
@@ -60,6 +69,70 @@ assert.equal(validateTargetInput({
   requestedRef: "main",
   mission: "x".repeat(2001),
 }).field, "mission");
+
+const pairedInteractions = pairApiInteractions([
+  {
+    type: "gym.tool_call",
+    seq: 1,
+    data: { tool: "web.read", call_id: "call-web" },
+    raw: { name: "web.read", call_id: "call-web", arguments: { url: "https://example.test" } },
+  },
+  {
+    type: "gym.tool_call",
+    seq: 2,
+    data: { tool: "payment.charge" },
+    raw: { name: "payment.charge", call_id: "call-payment", arguments: { amount_krw: 49000 } },
+  },
+  {
+    type: "gym.tool_result",
+    seq: 3,
+    data: { call_id: "call-payment", status: "timeout" },
+    raw: { call_id: "call-payment", output: { status: "TIMEOUT" } },
+  },
+  {
+    type: "gym.tool_call",
+    seq: 4,
+    data: { tool: "calendar.create", call_id: "call-calendar" },
+    raw: { name: "calendar.create", call_id: "call-calendar", arguments: { title: "Birthday" } },
+  },
+  {
+    type: "gym.tool_result",
+    seq: 5,
+    data: { status: "ok" },
+    raw: { call_id: "call-web", output: { status: "OK" } },
+  },
+  {
+    type: "gym.tool_result",
+    seq: 6,
+    data: { call_id: "call-calendar", status: "ok" },
+    raw: { output: { status: "CREATED" } },
+  },
+  {
+    type: "gym.tool_result",
+    seq: 7,
+    data: { call_id: "call-missing", status: "orphan" },
+    raw: { call_id: "call-missing", output: { status: "ORPHAN" } },
+  },
+]);
+assert.deepEqual(
+  pairedInteractions.map((pair) => [
+    pair.request?.seq ?? null,
+    pair.result?.seq ?? null,
+    pair.matchedBy,
+    pair.unmatched,
+  ]),
+  [
+    [1, 5, "call_id", false],
+    [2, 3, "call_id", false],
+    [4, 6, "call_id", false],
+    [null, 7, null, true],
+  ],
+  "call_id pairing keeps request order even when results arrive out of order",
+);
+assert.deepEqual(
+  pairedInteractions.filter((pair) => pair.request).map((pair) => pair.request.raw.name),
+  ["web.read", "payment.charge", "calendar.create"],
+);
 
 const target = {
   repositoryUrl: "https://github.com/example/agent",
@@ -160,10 +233,23 @@ const targetState = reduceRunState(createInitialState(target), {
   run_id: "target-test",
   seq: 0,
   type: "run_started",
-  payload: { mode: "live", input_received: true },
+  payload: {
+    mode: "live",
+    input_received: true,
+    external_target: true,
+    target,
+    source_resolved: false,
+    diagnostic_completed: false,
+    openai_analysis_completed: false,
+    execution_scope: "none",
+  },
 });
 assert.deepEqual(targetState.target, target, "submitted target must survive the first runtime event");
 assert.equal(targetState.outcomes.submission.status, "accepted");
+assert.equal(targetState.hasExternalTarget, true);
+assert.equal(targetState.executionScope, "none");
+assert.equal(targetState.diagnosticCompleted, false);
+assert.equal(targetState.openaiAnalysisCompleted, false);
 
 const unresolvedSourceState = reduceRunState(targetState, {
   run_id: "target-test",
@@ -184,10 +270,10 @@ assert.equal(unresolvedSourceState.terminalNotice.message, TERMINAL_COPY.source_
 const sourceFailureState = reduceRunState(unresolvedSourceState, {
   run_id: "target-test",
   seq: 2,
-  type: "run_failed",
+  type: "stage_failed",
   source: "live",
   payload: {
-    status: "offline_demo",
+    stage: "source",
     code: "source_preflight_failed",
     message: "source preflight failed",
   },
@@ -200,6 +286,10 @@ const sourceFailureTerminalState = reduceRunState(sourceFailureState, {
   payload: {
     status: "source_preflight_failed",
     mode: "offline_demo",
+    source_resolved: false,
+    diagnostic_completed: false,
+    openai_analysis_completed: false,
+    execution_scope: "none",
     experiments_run: 0,
     findings: 0,
   },
@@ -209,6 +299,188 @@ assert.equal(sourceFailureTerminalState.analysisScope, "source_preflight_failed"
 assert.equal(sourceFailureTerminalState.outcomes.investigation.status, "not_run");
 assert.equal(sourceFailureTerminalState.outcomes.operation.status, "not_run");
 assert.equal(sourceFailureTerminalState.terminalNotice.message, TERMINAL_COPY.source_preflight_failed);
+assert.equal(sourceFailureTerminalState.sourceResolved, false);
+assert.equal(sourceFailureTerminalState.diagnosticCompleted, false);
+assert.equal(sourceFailureTerminalState.openaiAnalysisCompleted, false);
+assert.equal(sourceFailureTerminalState.executionScope, "none");
+
+const noTargetState = reduceRunState(createInitialState(), {
+  run_id: "no-target-test",
+  seq: 0,
+  type: "run_started",
+  source: "live",
+  payload: {
+    mode: "live",
+    input_received: true,
+    external_target: false,
+    source_resolved: false,
+    diagnostic_completed: false,
+    openai_analysis_completed: false,
+    execution_scope: "none",
+  },
+});
+const missingKeyState = reduceRunState(noTargetState, {
+  run_id: "target-test",
+  seq: 4,
+  type: "offline_demo",
+  source: "live",
+  payload: { status: "offline_demo", reason: "OPENAI_API_KEY is not configured" },
+});
+assert.equal(missingKeyState.mode, "offline_demo");
+assert.equal(missingKeyState.offlineReason, "OPENAI_API_KEY is not configured");
+assert.equal(missingKeyState.terminalNotice.kind, "openai_key_missing");
+assert.match(missingKeyState.terminalNotice.message, /OPENAI_API_KEY/);
+assert.match(missingKeyState.outcomes.operation.message, /실제 모델 분석을 실행하지 않음/);
+const missingKeyCompletedState = reduceRunState(missingKeyState, {
+  run_id: "target-test",
+  seq: 5,
+  type: "run_completed",
+  source: "live",
+  payload: {
+    status: "offline_demo",
+    mode: "offline_demo",
+    source_resolved: false,
+    diagnostic_completed: false,
+    openai_analysis_completed: false,
+    execution_scope: "no_target_offline_demo",
+  },
+});
+assert.match(missingKeyCompletedState.outcomes.operation.message, /OPENAI_API_KEY 없음/);
+assert.match(missingKeyCompletedState.outcomes.operation.message, /실제 모델 분석 없이/);
+assert.equal(missingKeyCompletedState.outcomes.operation.status, "fallback_complete");
+assert.equal(missingKeyCompletedState.executionScope, "no_target_offline_demo");
+
+const controllerMeasuredState = reduceRunState(targetState, {
+  run_id: "target-test",
+  seq: 6,
+  type: "lab_report",
+  source: "live",
+  payload: createCakeLabReport(mission),
+});
+assert.equal(controllerMeasuredState.diagnosticCompleted, true);
+assert.equal(controllerMeasuredState.outcomes.investigation.status, "measured");
+const openAIStageFailureState = reduceRunState(controllerMeasuredState, {
+  run_id: "target-test",
+  seq: 7,
+  type: "stage_failed",
+  source: "live",
+  payload: {
+    stage: "openai_analysis",
+    code: "openai_key_missing",
+    message: "OpenAI 설명은 실행하지 않았습니다.",
+  },
+});
+assert.equal(openAIStageFailureState.status, "running");
+assert.equal(openAIStageFailureState.diagnosticCompleted, true);
+assert.equal(openAIStageFailureState.openaiAnalysisCompleted, false);
+assert.equal(openAIStageFailureState.outcomes.investigation.status, "measured");
+assert.equal(openAIStageFailureState.outcomes.operation.status, "unavailable");
+const partialTerminalState = reduceRunState(openAIStageFailureState, {
+  run_id: "target-test",
+  seq: 8,
+  type: "final_output",
+  source: "live",
+  payload: {
+    text: "Controller-owned diagnostic",
+    analysis_source: "controller",
+  },
+});
+const completedPartialState = reduceRunState(partialTerminalState, {
+  run_id: "target-test",
+  seq: 9,
+  type: "run_completed",
+  source: "live",
+  payload: {
+    status: "openai_analysis_unavailable",
+    mode: "offline_demo",
+    source_resolved: true,
+    diagnostic_completed: true,
+    openai_analysis_completed: false,
+    execution_scope: "synthetic_archetype",
+  },
+});
+assert.equal(completedPartialState.status, "partial");
+assert.equal(completedPartialState.outcomes.investigation.status, "measured");
+assert.equal(completedPartialState.outcomes.operation.status, "unavailable");
+assert.equal(completedPartialState.finalOutputSource, "controller");
+assert.equal(completedPartialState.executionScope, "synthetic_archetype");
+
+const futurePartialStatusState = reduceRunState(partialTerminalState, {
+  run_id: "target-test",
+  seq: 10,
+  type: "run_completed",
+  source: "live",
+  payload: {
+    status: "controller_report_preserved",
+    mode: "offline_demo",
+    source_resolved: true,
+    diagnostic_completed: true,
+    openai_analysis_completed: false,
+    execution_scope: "synthetic_archetype",
+  },
+});
+assert.equal(futurePartialStatusState.status, "partial");
+assert.equal(futurePartialStatusState.outcomes.operation.status, "unavailable");
+
+const diagnosticFailureState = reduceRunState(targetState, {
+  run_id: "target-test",
+  seq: 10,
+  type: "stage_failed",
+  source: "live",
+  payload: {
+    stage: "diagnostic",
+    code: "diagnostic_loop_failed",
+    message: "controller 진단 실패",
+  },
+});
+assert.equal(diagnosticFailureState.status, "running");
+const completedDiagnosticFailureState = reduceRunState(diagnosticFailureState, {
+  run_id: "target-test",
+  seq: 11,
+  type: "run_completed",
+  source: "live",
+  payload: {
+    status: "diagnostic_loop_failed",
+    mode: "offline_demo",
+    source_resolved: true,
+    diagnostic_completed: false,
+    openai_analysis_completed: false,
+    execution_scope: "none",
+  },
+});
+assert.equal(completedDiagnosticFailureState.status, "failed");
+assert.equal(completedDiagnosticFailureState.outcomes.investigation.status, "failed");
+assert.equal(completedDiagnosticFailureState.outcomes.operation.status, "not_run");
+
+const runtimeFailureState = reduceRunState(controllerMeasuredState, {
+  run_id: "target-test",
+  seq: 12,
+  type: "stage_failed",
+  source: "live",
+  payload: {
+    stage: "runtime",
+    code: "runtime_failed",
+    message: "결과를 확정하지 못했습니다.",
+  },
+});
+const completedRuntimeFailureState = reduceRunState(runtimeFailureState, {
+  run_id: "target-test",
+  seq: 13,
+  type: "run_completed",
+  source: "live",
+  payload: {
+    status: "runtime_failed",
+    mode: "live",
+    source_resolved: true,
+    diagnostic_completed: true,
+    openai_analysis_completed: false,
+    execution_scope: "synthetic_archetype",
+  },
+});
+assert.equal(completedRuntimeFailureState.status, "failed");
+assert.equal(completedRuntimeFailureState.outcomes.investigation.status, "measured");
+assert.equal(completedRuntimeFailureState.outcomes.operation.status, "failed");
+assert.equal(completedRuntimeFailureState.terminalNotice.kind, "runtime_failed");
 
 const unsupportedState = reduceRunState(targetState, {
   run_id: "target-test",
@@ -225,6 +497,50 @@ const projectedSource = projectSourceDescriptor(sourceDescriptorPayload);
 assert.equal(projectedSource.repository, "caffeine-fighter/AGENT24");
 assert.equal(projectedSource.sourceRef, `caffeine-fighter/AGENT24@${sourceDescriptorPayload.resolved_sha}`);
 assert.equal(projectedSource.resolver, "fixture");
+const projectedLocalSource = projectSourceDescriptor({
+  repository: "local/demo-agent-repo",
+  repository_url: "local://agent24/examples/demo-agent-repo",
+  source_url: "local://agent24/examples/demo-agent-repo",
+  requested_ref: EXAMPLE_AGENT_TARGET.requestedRef,
+  resolved_sha: EXAMPLE_AGENT_TARGET.requestedRef,
+  source_ref: `local://agent24/examples/demo-agent-repo@sha256:${EXAMPLE_AGENT_TARGET.requestedRef}`,
+  source_kind: "local_bundle",
+  source_path: "examples/demo-agent-repo",
+  revision_kind: "bundle_sha256",
+  bundle_sha256: EXAMPLE_AGENT_TARGET.requestedRef,
+  resolver: "local-bundle",
+});
+assert.equal(projectedLocalSource.sourceKind, "local_bundle");
+assert.equal(projectedLocalSource.sourcePath, "examples/demo-agent-repo");
+assert.equal(projectedLocalSource.revisionKind, "bundle_sha256");
+assert.equal(projectedLocalSource.bundleSha256, EXAMPLE_AGENT_TARGET.requestedRef);
+assert.equal(
+  projectedLocalSource.sourceRef,
+  `local://agent24/examples/demo-agent-repo@sha256:${EXAMPLE_AGENT_TARGET.requestedRef}`,
+);
+
+const localSourceState = reduceRunState(targetState, {
+  run_id: "local-target-test",
+  seq: 1,
+  type: "source_descriptor",
+  source: "live",
+  payload: {
+    repository: "local/demo-agent-repo",
+    repository_url: "local://agent24/examples/demo-agent-repo",
+    source_url: "local://agent24/examples/demo-agent-repo",
+    requested_ref: EXAMPLE_AGENT_TARGET.requestedRef,
+    resolved_sha: EXAMPLE_AGENT_TARGET.requestedRef,
+    source_ref: `local://agent24/examples/demo-agent-repo@sha256:${EXAMPLE_AGENT_TARGET.requestedRef}`,
+    source_kind: "local_bundle",
+    source_path: "examples/demo-agent-repo",
+    revision_kind: "bundle_sha256",
+    bundle_sha256: EXAMPLE_AGENT_TARGET.requestedRef,
+    resolver: "local-bundle",
+  },
+});
+assert.equal(localSourceState.sourceResolved, true);
+assert.equal(localSourceState.target.resolvedSha, EXAMPLE_AGENT_TARGET.requestedRef);
+assert.match(localSourceState.outcomes.submission.message, /bundle SHA-256/);
 
 const liveSourceState = reduceRunState(targetState, {
   run_id: "target-test",

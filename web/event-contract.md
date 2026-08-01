@@ -81,9 +81,31 @@ Accept: text/event-stream
 | `tool_call` | OpenAI raw function call |
 | `tool_result` | OpenAI raw function result |
 | `final_output` | 최종 진단문 |
-| `offline_demo` | 실제 API를 쓸 수 없어 합성 fallback으로 전환 |
-| `run_failed` | live 실행 실패 후 안전 fallback |
-| `run_completed` | 실행 종료 |
+| `offline_demo` | external target이 없는 실행에서만 deterministic synthetic fixture로 전환 |
+| `stage_failed` | source / diagnostic / OpenAI analysis / runtime 단계의 비종료 실패 |
+| `run_failed` | 과거 producer 호환용 비종료 alias. 새 producer는 `stage_failed`를 사용 |
+| `run_completed` | 유일한 종료 이벤트. stream의 마지막에 정확히 한 번만 존재 |
+
+모든 `run_completed.payload`는 기존 `status`, `mode`와 함께 다음 실행 진실성 필드를
+반드시 제공합니다.
+
+```json
+{
+  "status": "openai_analysis_unavailable",
+  "mode": "offline_demo",
+  "source_resolved": true,
+  "diagnostic_completed": true,
+  "openai_analysis_completed": false,
+  "execution_scope": "synthetic_archetype",
+  "safety_boundary": "SIMULATION_ONLY"
+}
+```
+
+`stage_failed`는 terminal이 아닙니다. 실패한 단계의 bounded `stage`, `code`, `message`만
+기록하고, credential이나 provider exception 원문은 넣지 않습니다. source 또는
+diagnostic 단계가 실패하면 관련 없는 fixture를 실행하지 않고 최종 `run_completed`로
+닫습니다. controller 진단 뒤 OpenAI 단계만 실패한 경우에는 실제 controller report를
+보존하고 `openai_analysis_completed=false`로 닫습니다.
 
 Lab Agent가 내보내는 아래 의미 이벤트도 같은 envelope를 사용합니다.
 
@@ -113,9 +135,13 @@ Lab Agent가 내보내는 아래 의미 이벤트도 같은 envelope를 사용�
 | `lab_report` | 동결된 Python `LabReport` payload를 관찰·가설·제안·검증 칸에 분리 표시 |
 
 `source_descriptor.payload`는 `src/agent24/agent/source.py::SourceDescriptor`의
-`model_dump(mode="json")` 결과입니다. `source: live`이면서 `resolved_sha`가 40자 이상의
-full hexadecimal SHA일 때만 상단 target에 반영합니다. fixture/short SHA는 실제 resolve
-결과로 승격하지 않고 Raw Stream에서만 감사할 수 있습니다.
+`model_dump(mode="json")` 결과입니다. `source: live` GitHub 입력은 `resolved_sha`가 정확히
+40자인 full hexadecimal commit SHA일 때만 상단 target에 반영합니다. fixture/short SHA는
+실제 resolve 결과로 승격하지 않고 Raw Stream에서만 감사할 수 있습니다.
+`source_kind=local_bundle`이면 `source_path`와 `local://...` source URL을 함께 표시하며,
+`revision_kind=bundle_sha256`과 64자 `bundle_sha256`을 source identity로 사용합니다.
+source snapshot의 파일별 `blob_sha`와 `content_sha256`도 함께 보존하며, 어느 값도 Git
+commit으로 표현하지 않습니다.
 
 `target_profile.payload`는
 `src/agent24/agent/participant_intake.py::ParticipantTargetProfile`의 JSON이다.
@@ -174,7 +200,8 @@ version에서 동일합니다. `why` / `expect` / `budget` / `fallback`은 표�
 
 - `run_started` → `run.started`
 - `run_completed` → `run.completed`
-- `run_failed` → `run.failed`
+- `stage_failed` → `stage.failed`
+- legacy `run_failed` / `run.failed` → `stage.failed`
 - `source_descriptor` → `source.descriptor`
 - `source_snapshot` → `source.snapshot`
 - `target_profile` → `target.profile`
@@ -193,12 +220,14 @@ version에서 동일합니다. `why` / `expect` / `budget` / `fallback`은 표�
 
 - `submission`: request accepted, full-SHA pin, source/manifest preflight 실패
 - `investigation`: profile/experiment 진행, measured, unsupported, no-failure, not-run
-- `operation`: controller running, explicit offline fallback, terminal complete/failed
+- `operation`: controller running, no-target offline fallback, partial OpenAI stage, terminal complete/failed
 
 `github.resolve_ref`가 full SHA를 반환하지 않으면 submission은 `failed`,
-investigation은 `not_run`, scope는 `fixture_fallback`입니다. 이후 내장 fixture가
-완주하더라도 제출 target의 measured finding으로 승격하지 않습니다. `offline_demo`는
-operation 축의 설명 경로 상태이며 finding이 아닙니다.
+investigation은 `not_run`, scope는 `none`입니다. external target 실행은 이후 내장
+fixture로 우회하지 않습니다. `offline_demo` synthetic fixture는 target이 없는 generic
+실행에만 허용됩니다. target의 controller 진단이 완료되고 OpenAI 설명만 불가능한 경우는
+operation을 `partial/unavailable`로 표시하며 measured investigation과 controller report를
+그대로 보존합니다.
 
 ## World shape
 

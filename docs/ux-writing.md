@@ -80,8 +80,8 @@ primary action은 mobile에서도 최초 viewport 높이 한 번 이내의 아�
 | source preflight 실패 | 저장소/ref 접근·manifest 중 무엇을 확인하지 못했는지와 외부 Agent 진단을 주장하지 않는다는 경계 | 입력·공개 범위·ref 또는 서버 token 권한 확인 | 제출 대상을 분석했거나 fallback 결과가 제출 대상의 결과라고 표현함 |
 | client request/첫 event 전 SSE 실패 | 제출 대상의 분석 결과를 확인하지 못했고 명시적 built-in fixture로 전환했음 | 예시임을 알고 탐색하거나 연결을 확인해 다시 시도 | 내장 예시를 제출 대상의 결과로 표현함 |
 | event 수신 뒤 valid terminal 전 SSE 단절 | 받은 기록은 보존하지만 신뢰할 수 있는 terminal 결과는 아직 없음 | 연결을 확인하고 같은 입력으로 다시 시도 | 부분 기록을 완료·미지원·내장 예시 terminal로 추정함 |
-| 설명 경로 offline/timeout | 이미 측정한 Gym evidence는 보존되고 설명만 결정적 offline 경로로 바뀌었음 | 측정 evidence와 Raw Stream 확인 | 저장소 preflight 실패 또는 측정 evidence 유실로 표현함 |
-| 진단 loop 실패 | 외부 Agent 결과를 만들지 못했고 합성 fallback으로 전환했음 | Raw Stream에서 축약된 원인을 확인하고 재시도 | 정상 진단 완료 또는 target finding으로 표현함 |
+| 설명 경로 unavailable/failed | 이미 측정한 controller evidence는 보존되고 OpenAI 설명만 완료되지 않았음 | 측정 evidence와 Raw Stream 확인 | fixture fallback, live 성공, 측정 evidence 유실로 표현함 |
+| 진단 loop 실패 | 외부 Agent 결과를 만들지 못했고 다른 fixture로 전환하지 않았음 | Raw Stream에서 축약된 원인을 확인하고 재시도 | 정상 진단 완료 또는 target finding으로 표현함 |
 
 지원하지 않음과 각 실패 상태는 terminal까지 끝나더라도 성공 결과처럼 보이면 안 된다.
 `완료`라는 단어를 쓸 때는 `지원하지 않음`, `분석하지 않음`, `offline`, `fallback` 경계를

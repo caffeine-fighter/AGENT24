@@ -48,6 +48,14 @@ cases:
     proves:
       - tests/integration/test_api.py::test_missing_key_is_explicit_offline_demo
 
+  - id: external-target-openai-unavailable
+    runner: pytest
+    issue: 98
+    expectation: a completed controller diagnosis survives OpenAI timeout/provider failure with typed stage truth, no generic fixture events, no provider detail, and exactly one run_completed
+    targets:
+      - tests/integration/test_api.py::test_external_timeout_preserves_controller_evidence_without_fixture_events
+      - tests/integration/test_api.py::test_external_provider_failure_is_typed_and_does_not_leak_provider_detail
+
   - id: life_cake_commit_then_timeout
     runner: gym_fixture
     expectation: payment commit is recorded exactly once per idempotency key even when the AUT observes TIMEOUT
@@ -395,7 +403,7 @@ cases:
     expectation: OpenAI receives bounded controller evidence labelled synthetic_archetype and never a target-code execution claim; diagnostic failures emit a sanitized explicit fallback without leaking the exception
     targets:
       - tests/integration/test_api.py::test_live_target_passes_bounded_synthetic_evidence_to_openai
-      - tests/integration/test_api.py::test_diagnostic_failure_is_sanitized_and_falls_back
+      - tests/integration/test_api.py::test_diagnostic_failure_is_sanitized_and_ends_without_fixture_fallback
 
   - id: one-input-source-preflight-boundary
     runner: pytest
@@ -444,7 +452,7 @@ cases:
       - tests/unit/test_packs.py::test_budget_exhausted_uses_the_selected_packs_own_bound
       - tests/unit/test_packs.py::test_a_pack_error_names_the_pack_and_does_not_reroute
       - tests/unit/test_packs.py::test_a_pack_error_never_reports_a_measured_failure
-      - tests/integration/test_api.py::test_diagnostic_failure_is_sanitized_and_falls_back
+      - tests/integration/test_api.py::test_diagnostic_failure_is_sanitized_and_ends_without_fixture_fallback
 
   - id: routing-determinism
     runner: pytest
@@ -615,6 +623,25 @@ cases:
       - tests/unit/test_packs.py::test_ticket_spec_matches_the_ticket_pack
       - tests/unit/test_packs.py::test_the_registry_agrees_with_the_metadata_each_pack_publishes
       - tests/unit/test_packs.py::test_a_real_ticket_agent_routes_to_the_ticket_pack
+
+  # Standalone local participant bundle and bounded AUT runner (issues #99, #100).
+  - id: local-demo-agent-contract
+    runner: pytest
+    issue: 99
+    expectation: the parent preflight accepts only the exact local bundle schemas, records bundle and file provenance, preserves explicit safety declarations, and rejects schema drift before entrypoint execution
+    targets:
+      - tests/unit/test_source_manifest.py::test_local_bundle_source_is_explicit_and_never_looks_like_public_github
+      - tests/unit/test_external_preflight.py::test_local_demo_bundle_preflight_preserves_sha_path_and_content_hash_evidence
+      - tests/unit/test_external_preflight.py::test_local_demo_bundle_schema_mismatch_fails_closed
+      - tests/unit/test_profile.py::test_category_hint_cannot_erase_explicit_side_effect_safety_metadata
+      - tests/integration/test_local_demo.py::test_local_demo_runs_example_participant_local_bundle
+
+  - id: local-sandbox-runner-boundary
+    runner: pytest
+    issue: 100
+    expectation: the checked-in local bundle is hash-verified and runs through the bounded child runner while host-owned SandboxGym evidence remains linked and boundary violations terminate with typed failures
+    targets:
+      - tests/unit/test_sandbox_runner.py
 
   # Live case binding (issue #120).  A `mode: live` case used to return an
   # unconditional pass and delegate to a bound test that owned its own copy of

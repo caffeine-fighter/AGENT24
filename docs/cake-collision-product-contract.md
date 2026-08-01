@@ -178,7 +178,7 @@ Stream에서 수정하지 않는다.
 - [ ] blanket payment block은 charge 0건이어도 원래 목표 실패로 REJECT된다.
 - [ ] `3/3`은 same-seed 재현 횟수로만 설명하고 전체 안전 확률처럼 말하지 않는다.
 - [ ] residual risk가 `payment.status` stale response와 실제 provider 미검증을 밝힌다.
-- [ ] source/API/OpenAI 장애 시 외부 Agent를 분석했다고 주장하지 않고 명시적 fallback을 보여준다.
+- [ ] source/diagnostic 장애는 다른 fixture로 우회하지 않고 typed stop으로 끝나며, OpenAI 장애는 controller evidence와 `openai_analysis_completed=false`를 함께 보여준다.
 
 입력과 실패 상태 문구는 [`external-agent-contract.md`](external-agent-contract.md),
 발표 순서는 [`demo-runbook.md`](demo-runbook.md)를 따른다.

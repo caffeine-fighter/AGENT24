@@ -11,7 +11,7 @@
 - [x] `CLONE → CRASH → AUTOPSY → VACCINE → REPLAY`가 하나의 run으로 이어진다.
 - [x] source SHA, BehaviorProfile evidence, plan의 `WHY`·`EXPECT`, oracle, report가 같은 Raw Stream에 남는다.
 - [x] raw `tool_call` / `tool_result` payload는 표시용 summary와 분리되어 보존된다.
-- [x] source/manifest, diagnostic loop, OpenAI timeout/API 오류에 explicit fallback이 있다.
+- [x] source/manifest, diagnostic loop, OpenAI timeout/API 오류가 typed stage/terminal로 드러나며 target 결과를 다른 fixture로 바꾸지 않는다.
 - [x] 외부 repository code를 실행하지 않는 P0 경계가 UI와 report에 표시된다.
 
 ### Real-time Adaptability · 25%
@@ -19,7 +19,7 @@
 - [x] fixed Surprise matrix 5개가 같은 HTTP/SSE path에서 `5/5 PASS`했다.
 - [x] 돈·커뮤니케이션·시간·데이터·bonus exact mission도 같은 path에서 `5/5 PASS`했다.
 - [x] 각 Surprise run은 mission 보존, expected scenario, `external_side_effects=false`를 raw evidence로 판정한다.
-- [x] OpenAI key가 없는 `offline_demo`와 private source token이 없는 preflight fallback을 실제 실행했다.
+- [x] OpenAI key가 없는 target의 controller-only partial terminal과 private source token이 없는 source-stage stop을 실제 실행했다.
 - [x] 실제 브라우저에서 정상·지원하지 않는 입력·API 연결 실패 세 경로가 마지막 기록을 정확히 한 번만 남기는지 확인했다.
 
 ### Prompt Quality · 20%
@@ -69,7 +69,7 @@
 | **BehaviorProfile은 README를 요약한 성격 분석인가요?** | “아닙니다. retry, idempotency, reconciliation, untrusted input, loop budget을 각각 present·absent·unknown으로 기록합니다. verdict는 manifest field나 trace reference가 필요하고 README만 있으면 unknown입니다.” | profile 다섯 assessment와 evidence/unknown reason |
 | **왜 먼저 duplicate payment를 고르나요?** | “현재 profile에 irreversible `payment.charge`가 있고 idempotency/reconciliation evidence가 비어 있으며, 돈 피해의 expected damage가 높기 때문입니다. 그 근거와 기대 evidence가 plan에 기록됩니다.” | selected nightmare의 `WHY`, `EXPECT`, `single_variable=true` |
 | **Surprise Task는 별도 데모 지름길 아닌가요?** | “일반 데모와 같은 structured `target`, `POST /api/runs`, SSE, 실행 기록, 종료 판정을 씁니다. 재현할 수 없는 입력은 결제 예시로 바꾸지 않고 `unsupported`로 끝냅니다.” | 요청 본문 한 개, `/api/runs/{id}/events`, 끊기지 않는 기록 번호, 마지막 기록 1개 |
-| **네트워크나 OpenAI가 실패하면 결과를 꾸미나요?** | “아닙니다. mode를 `offline_demo`로 표시하고 deterministic tool result를 같은 stream에 남깁니다. source preflight가 실패하면 외부 Agent를 분석했다고 주장하지 않습니다. 브라우저 fixture도 `AUTO / FIXTURE`를 숨기지 않습니다.” | 실제 rehearsed fallback event sequence와 mode badge |
+| **네트워크나 OpenAI가 실패하면 결과를 꾸미나요?** | “아닙니다. target의 source나 진단이 실패하면 다른 fixture를 실행하지 않습니다. controller 진단 뒤 OpenAI만 실패하면 그 report를 보존하고 `openai_analysis_completed=false`로 표시합니다. built-in fixture는 API가 첫 event 전에 실패했거나 target이 없는 경우에만 별도 source로 보입니다.” | `stage_failed`, 네 terminal truth field, generic fallback tool event 부재 |
 
 ## 피해야 할 답변
 

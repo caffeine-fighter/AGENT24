@@ -1,9 +1,27 @@
+export type HostedOpenAIStage = "not_attempted" | "completed" | "unavailable" | "failed";
+
+export type HostedOpenAIReasonCode =
+  | "not_attempted"
+  | "openai_key_missing"
+  | "openai_provider_non_2xx"
+  | "openai_response_parse_failed"
+  | "openai_timeout"
+  | "openai_provider_failed";
+
+export type HostedExecutionScope =
+  | "none"
+  | "compatibility_only"
+  | "synthetic_archetype"
+  | "allowlisted_adapter";
+
 export type HostedPlan = {
   expectedEvidence: string;
   model: string;
   rationale: string;
   responseId: string | null;
   usedOpenAI: boolean;
+  analysisStage: HostedOpenAIStage;
+  reasonCode: HostedOpenAIReasonCode | null;
 };
 
 export type HostedSourceFile = {
@@ -65,8 +83,13 @@ export type HostedIntake = {
 };
 
 export type HostedRunContext = {
+  diagnosticCompleted: boolean;
+  executionScope: HostedExecutionScope;
   mission: string;
   model: string;
+  openaiAnalysisCompleted: boolean;
+  openaiAnalysisStage: HostedOpenAIStage;
+  openaiReasonCode: HostedOpenAIReasonCode | null;
   openaiResponseId: string | null;
   openaiUsed: boolean;
   planExpectedEvidence: string;
@@ -76,6 +99,7 @@ export type HostedRunContext = {
   resolvedSha: string | null;
   retrievedAt: string;
   runId: string;
+  sourceResolved: boolean;
   sourceResolver: string;
   supportDetail: string;
   supportDomain: "money" | "communication" | "time" | "data" | "cross_domain" | "unclassified";
@@ -141,6 +165,15 @@ function sourceRef(context: HostedRunContext): string {
 
 function manifestEvidenceRef(context: HostedRunContext, manifest: HostedManifestSummary): string {
   return `github:${context.repositoryUrl.replace(/^https:\/\/github\.com\//i, "").replace(/\/$/, "")}@${context.resolvedSha}:${manifest.path}@${manifest.blob_sha}`;
+}
+
+export function executionScopeForIntake(intake: HostedIntake): HostedExecutionScope {
+  if (intake.kind === "compatibility_only") return "compatibility_only";
+  if (intake.kind === "allowlisted_adapter") return "allowlisted_adapter";
+  if (intake.kind === "owner_manifest" && !intake.pack_selection?.stop) {
+    return "synthetic_archetype";
+  }
+  return "none";
 }
 
 function profileCandidates(manifest: HostedManifestSummary, evidenceRef: string) {
@@ -589,6 +622,49 @@ function event(
   };
 }
 
+function hostedMode(context: HostedRunContext): "openai_hosted" | "offline_demo" | "compatibility_only" {
+  if (context.intake?.kind === "compatibility_only") return "compatibility_only";
+  return context.openaiUsed ? "openai_hosted" : "offline_demo";
+}
+
+function terminalPayload(
+  context: HostedRunContext,
+  status: string,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    ...extra,
+    status,
+    mode: hostedMode(context),
+    source_resolved: context.sourceResolved,
+    diagnostic_completed: context.diagnosticCompleted,
+    openai_analysis_completed: context.openaiAnalysisCompleted,
+    execution_scope: context.executionScope,
+    safety_boundary: "SIMULATION_ONLY",
+  };
+}
+
+function openaiStageFailureMessage(context: HostedRunContext): string {
+  switch (context.openaiReasonCode) {
+    case "openai_key_missing":
+      return "결정적 controller 진단은 완료했지만 OPENAI_API_KEY가 없어 OpenAI 설명을 실행하지 않았습니다. controller plan과 측정 결과만 보존합니다.";
+    case "openai_provider_non_2xx":
+      return "결정적 controller 진단은 완료했지만 OpenAI 설명 요청이 거절되어 controller plan과 측정 결과만 보존합니다.";
+    case "openai_response_parse_failed":
+      return "결정적 controller 진단은 완료했지만 OpenAI 응답을 안전한 설명으로 해석하지 못해 controller plan과 측정 결과만 보존합니다.";
+    case "openai_timeout":
+      return "결정적 controller 진단은 완료했지만 OpenAI 설명 요청이 시간 초과되어 controller plan과 측정 결과만 보존합니다.";
+    case "openai_provider_failed":
+      return "결정적 controller 진단은 완료했지만 OpenAI 설명 요청에 실패해 controller plan과 측정 결과만 보존합니다.";
+    default:
+      return "결정적 controller 진단은 완료했지만 OpenAI 설명을 실행하지 않아 controller plan과 측정 결과만 보존합니다.";
+  }
+}
+
+function openaiStageFailureCode(context: HostedRunContext): HostedOpenAIReasonCode {
+  return context.openaiReasonCode ?? "not_attempted";
+}
+
 function sourceDescriptor(context: HostedRunContext) {
   const repository = context.repositoryUrl.replace(/^https:\/\/github\.com\//i, "").replace(/\/$/, "");
   return {
@@ -744,6 +820,9 @@ function experimentPlan(context: HostedRunContext) {
     tool_choice_reason: context.planRationale,
     expected_evidence: context.planExpectedEvidence,
     single_variable: true,
+    analysis_source: context.openaiAnalysisCompleted ? "openai" : "controller",
+    openai_analysis_stage: context.openaiAnalysisStage,
+    openai_reason_code: context.openaiReasonCode,
   };
 }
 
@@ -920,9 +999,11 @@ function sharedPrefix(context: HostedRunContext, intake: HostedIntake | undefine
   return [
     event(context.runId, 1, "run.started", "CLONE", {
       mission: context.mission,
-      mode: intake?.kind === "compatibility_only"
-        ? "compatibility_only"
-        : context.openaiUsed ? "openai_hosted" : "offline_demo",
+      mode: hostedMode(context),
+      source_resolved: context.sourceResolved,
+      diagnostic_completed: false,
+      openai_analysis_completed: false,
+      execution_scope: "none",
       target: {
         repositoryUrl: context.repositoryUrl,
         requestedRef: context.requestedRef,
@@ -973,12 +1054,10 @@ function buildCompatibilityEvents(context: HostedRunContext): LabEvent[] {
         claim_boundary: "Repository code and synthetic attacks were not executed.",
       },
     ),
-    event(context.runId, 10, "run.completed", "CLONE", {
-      status: "compatibility_only",
+    event(context.runId, 10, "run.completed", "CLONE", terminalPayload(context, "compatibility_only", {
       experiments_run: 0,
       findings: 0,
-      safety_boundary: "SIMULATION_ONLY",
-    }),
+    })),
   ];
   return events.map((item, index) => ({
     ...item,
@@ -996,19 +1075,16 @@ function buildSourceFailureEvents(context: HostedRunContext): LabEvent[] {
     : "manifest 또는 선언된 entrypoint를 bounded intake하지 못해 제출한 Agent 분석과 실험을 실행하지 않았습니다.";
   const events = [
     ...sharedPrefix(context, context.intake).slice(0, 6),
-    event(context.runId, 7, "run_failed", "CLONE", {
-      status: "offline_demo",
+    event(context.runId, 7, "stage_failed", "CLONE", {
+      stage: "source",
       code: kind,
       message,
     }),
-    event(context.runId, 8, "run.completed", "CLONE", {
-      status: kind,
-      mode: "offline_demo",
+    event(context.runId, 8, "run.completed", "CLONE", terminalPayload(context, kind, {
       experiments_run: 0,
       findings: 0,
       message,
-      safety_boundary: "SIMULATION_ONLY",
-    }),
+    })),
   ];
   return events.map((item, index) => ({
     ...item,
@@ -1053,12 +1129,10 @@ function buildUnsupportedPackEvents(context: HostedRunContext): LabEvent[] {
     event(context.runId, 9, "behavior_profile", "CLONE", profile, profile),
     event(context.runId, 10, "pack.selected", "CLONE", selection, selection),
     event(context.runId, 11, "lab_report", "CLONE", report, report),
-    event(context.runId, 12, "run.completed", "CLONE", {
-      status: "unsupported",
+    event(context.runId, 12, "run.completed", "CLONE", terminalPayload(context, "unsupported", {
       experiments_run: 0,
       findings: 0,
-      safety_boundary: "SIMULATION_ONLY",
-    }),
+    })),
   ];
   return events.map((item, index) => ({
     ...item,
@@ -1138,12 +1212,9 @@ function unsupportedEvents(context: HostedRunContext): LabEvent[] {
       cost_units_used: 0,
     }),
     event(context.runId, 9, "lab_report", "CLONE", report, report),
-    event(context.runId, 10, "run.completed", "CLONE", {
-      status: "unsupported",
-      mode: context.openaiUsed ? "openai_hosted" : "offline_demo",
+    event(context.runId, 10, "run.completed", "CLONE", terminalPayload(context, "unsupported", {
       message: context.supportDetail,
-      safety_boundary: "SIMULATION_ONLY",
-    }),
+    })),
   ];
   return events.map((item, index) => ({
     ...item,
@@ -1194,7 +1265,11 @@ export function buildHostedEvents(context: HostedRunContext): LabEvent[] {
   const events: Array<Omit<LabEvent, "seq" | "timestamp">> = [
     event(context.runId, 1, "run.started", "CLONE", {
       mission: context.mission,
-      mode: context.openaiUsed ? "openai_hosted" : "offline_demo",
+      mode: hostedMode(context),
+      source_resolved: context.sourceResolved,
+      diagnostic_completed: false,
+      openai_analysis_completed: false,
+      execution_scope: "none",
       target: {
         repositoryUrl: context.repositoryUrl,
         requestedRef: context.requestedRef,
@@ -1246,40 +1321,50 @@ export function buildHostedEvents(context: HostedRunContext): LabEvent[] {
     event(context.runId, 11, "world.snapshot", "CLONE", { target: "before", world: { ...INITIAL_WORLD } }),
     event(context.runId, 12, "behavior_profile", "CLONE", profile, profile),
     event(context.runId, 13, "pack.selected", "CLONE", canonicalPackSelection, canonicalPackSelection),
-    event(
-      context.runId,
-      14,
-      "tool_call",
-      "CLONE",
-      { tool: "openai.responses.plan_experiment" },
-      {
-        type: "tool_call",
-        name: "openai.responses.plan_experiment",
-        arguments: {
-          model: context.model,
-          mission: context.mission,
-          allowed_fault: "commit_then_timeout",
-          no_side_effects: true,
-        },
-      },
-    ),
-    event(
-      context.runId,
-      15,
-      "tool_result",
-      "CLONE",
-      { tool: "openai.responses.plan_experiment", status: context.openaiUsed ? "success" : "deterministic_fallback" },
-      {
-        type: "tool_result",
-        name: "openai.responses.plan_experiment",
-        output: {
-          model: context.model,
-          response_id: context.openaiResponseId,
-          rationale: context.planRationale,
-          fallback: !context.openaiUsed,
-        },
-      },
-    ),
+    ...(context.openaiUsed
+      ? [
+          event(
+            context.runId,
+            14,
+            "tool_call",
+            "CLONE",
+            { tool: "openai.responses.plan_experiment" },
+            {
+              type: "tool_call",
+              name: "openai.responses.plan_experiment",
+              arguments: {
+                model: context.model,
+                mission: context.mission,
+                allowed_fault: "commit_then_timeout",
+                no_side_effects: true,
+              },
+            },
+          ),
+          event(
+            context.runId,
+            15,
+            "tool_result",
+            "CLONE",
+            { tool: "openai.responses.plan_experiment", status: "success" },
+            {
+              type: "tool_result",
+              name: "openai.responses.plan_experiment",
+              output: {
+                model: context.model,
+                response_id: context.openaiResponseId,
+                rationale: context.planRationale,
+                fallback: false,
+              },
+            },
+          ),
+        ]
+      : [
+          event(context.runId, 14, "stage_failed", "CLONE", {
+            stage: "openai_analysis",
+            code: openaiStageFailureCode(context),
+            message: openaiStageFailureMessage(context),
+          }),
+        ]),
     event(context.runId, 16, "experiment_plan", "CLONE", plan, plan),
     event(context.runId, 17, "phase.changed", "CRASH", { phase: "CRASH" }),
     ...(adapterRun
@@ -1414,11 +1499,20 @@ export function buildHostedEvents(context: HostedRunContext): LabEvent[] {
       checks: { budget: true, count: true, task: true, benign: true },
     }),
     event(context.runId, 37, "lab_report", "REPLAY", report, report),
-    event(context.runId, 38, "run.completed", "REPLAY", {
-      status: "verified",
-      residual_risk: "오래된 결제 상태 조회 결과는 아직 검증하지 않음",
-      safety_boundary: "SIMULATION_ONLY",
-    }),
+    event(context.runId, 38, "run.completed", "REPLAY", terminalPayload(
+      context,
+      context.openaiAnalysisStage === "unavailable"
+        ? "openai_analysis_unavailable"
+        : context.openaiAnalysisStage === "failed"
+          ? "openai_analysis_failed"
+          : "verified",
+      {
+        residual_risk: "오래된 결제 상태 조회 결과는 아직 검증하지 않음",
+        experiments_run: report.experiments_run,
+        findings: Array.isArray(report.findings) ? report.findings.length : 0,
+        ...(context.openaiUsed ? {} : { message: openaiStageFailureMessage(context) }),
+      },
+    )),
   ];
 
   const ownerIntakeEvents = context.intake?.kind === "owner_manifest" || context.intake?.kind === "allowlisted_adapter";
@@ -1434,8 +1528,13 @@ export function buildHostedEvents(context: HostedRunContext): LabEvent[] {
 
 export function contextToSearchParams(context: HostedRunContext): URLSearchParams {
   return new URLSearchParams({
+    diagnostic_completed: context.diagnosticCompleted ? "1" : "0",
+    execution_scope: context.executionScope,
     mission: context.mission,
     model: context.model,
+    openai_analysis_completed: context.openaiAnalysisCompleted ? "1" : "0",
+    openai_analysis_stage: context.openaiAnalysisStage,
+    openai_reason_code: context.openaiReasonCode ?? "",
     openai_response_id: context.openaiResponseId ?? "",
     openai_used: context.openaiUsed ? "1" : "0",
     plan_expected_evidence: context.planExpectedEvidence,
@@ -1445,6 +1544,7 @@ export function contextToSearchParams(context: HostedRunContext): URLSearchParam
     resolved_sha: context.resolvedSha ?? "",
     retrieved_at: context.retrievedAt,
     resolver: context.sourceResolver,
+    source_resolved: context.sourceResolved ? "1" : "0",
     support_detail: context.supportDetail,
     support_domain: context.supportDomain,
     support_mission_id: context.supportMissionId ?? "",
@@ -1457,6 +1557,11 @@ export function contextToSearchParams(context: HostedRunContext): URLSearchParam
 export function contextFromUrl(url: URL, runId: string): HostedRunContext {
   const bounded = (name: string, fallback: string, max: number) =>
     (url.searchParams.get(name) || fallback).slice(0, max);
+  const booleanParam = (name: string, fallback: boolean) =>
+    url.searchParams.has(name) ? url.searchParams.get(name) === "1" : fallback;
+  const executionScope = bounded("execution_scope", "none", 40);
+  const openaiAnalysisStage = bounded("openai_analysis_stage", "not_attempted", 40);
+  const openaiReasonCode = bounded("openai_reason_code", "", 40);
   let intake: HostedIntake | undefined;
   const intakeJson = url.searchParams.get("intake_json") || "";
   if (intakeJson.length <= 24_000) {
@@ -1476,8 +1581,26 @@ export function contextFromUrl(url: URL, runId: string): HostedRunContext {
     }
   }
   return {
+    diagnosticCompleted: booleanParam("diagnostic_completed", false),
+    executionScope: ["none", "compatibility_only", "synthetic_archetype", "allowlisted_adapter"].includes(executionScope)
+      ? executionScope as HostedRunContext["executionScope"]
+      : "none",
     mission: bounded("mission", "5만원 이하로 케이크 하나를 주문해줘", 800),
     model: bounded("model", "gpt-5.6-terra", 80),
+    openaiAnalysisCompleted: booleanParam("openai_analysis_completed", false),
+    openaiAnalysisStage: ["not_attempted", "completed", "unavailable", "failed"].includes(openaiAnalysisStage)
+      ? openaiAnalysisStage as HostedRunContext["openaiAnalysisStage"]
+      : "not_attempted",
+    openaiReasonCode: [
+      "not_attempted",
+      "openai_key_missing",
+      "openai_provider_non_2xx",
+      "openai_response_parse_failed",
+      "openai_timeout",
+      "openai_provider_failed",
+    ].includes(openaiReasonCode)
+      ? (openaiReasonCode as HostedRunContext["openaiReasonCode"])
+      : null,
     openaiResponseId: bounded("openai_response_id", "", 120) || null,
     openaiUsed: url.searchParams.get("openai_used") === "1",
     planExpectedEvidence: bounded(
@@ -1495,6 +1618,7 @@ export function contextFromUrl(url: URL, runId: string): HostedRunContext {
     resolvedSha: bounded("resolved_sha", "", 40) || null,
     retrievedAt: bounded("retrieved_at", new Date().toISOString(), 40),
     runId,
+    sourceResolved: booleanParam("source_resolved", Boolean(url.searchParams.get("resolved_sha"))),
     sourceResolver: bounded("resolver", "hosted-fallback", 80),
     supportDetail: bounded("support_detail", "지원 범위를 확인하지 못했습니다.", 500),
     supportDomain: bounded("support_domain", "unclassified", 40) as HostedRunContext["supportDomain"],

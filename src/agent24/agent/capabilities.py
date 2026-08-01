@@ -47,23 +47,26 @@ def _trust_for(name: str) -> str:
 
 
 def _categories_for(spec: ToolSpec) -> frozenset[CapabilityCategory]:
-    if spec.category_hint is not None:
-        return frozenset({spec.category_hint})
-
     name = spec.name
-    categories: set[CapabilityCategory] = set()
+    categories: set[CapabilityCategory] = (
+        {spec.category_hint} if spec.category_hint is not None else set()
+    )
 
-    if name.startswith(_UNTRUSTED_PREFIXES) or name in _UNTRUSTED_NAMES:
-        categories.add(CapabilityCategory.UNTRUSTED_SOURCE)
-    if name.startswith(_DATA_PREFIXES) or name in _DATA_NAMES:
-        categories.add(CapabilityCategory.DATA_ACCESS)
-    if name in _PRIVILEGED_NAMES:
-        categories.add(CapabilityCategory.PRIVILEGED_SINK)
-        categories.add(CapabilityCategory.SIDE_EFFECT)
-    elif (
-        name.startswith(_SIDE_EFFECT_PREFIXES) and name not in _READ_ONLY_NAMES
-    ) or name in _SIDE_EFFECT_NAMES:
-        categories.add(CapabilityCategory.SIDE_EFFECT)
+    # A hint replaces only the name heuristic. Explicit safety declarations
+    # below remain additive, so tagging a payment as privileged cannot erase
+    # its declared side effect.
+    if spec.category_hint is None:
+        if name.startswith(_UNTRUSTED_PREFIXES) or name in _UNTRUSTED_NAMES:
+            categories.add(CapabilityCategory.UNTRUSTED_SOURCE)
+        if name.startswith(_DATA_PREFIXES) or name in _DATA_NAMES:
+            categories.add(CapabilityCategory.DATA_ACCESS)
+        if name in _PRIVILEGED_NAMES:
+            categories.add(CapabilityCategory.PRIVILEGED_SINK)
+            categories.add(CapabilityCategory.SIDE_EFFECT)
+        elif (
+            name.startswith(_SIDE_EFFECT_PREFIXES) and name not in _READ_ONLY_NAMES
+        ) or name in _SIDE_EFFECT_NAMES:
+            categories.add(CapabilityCategory.SIDE_EFFECT)
 
     # The card's own declaration wins over the name when it claims more.
     if spec.side_effect:

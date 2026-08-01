@@ -78,8 +78,20 @@ function validContext(value: unknown, runId: string): value is HostedRunContext 
   const boundedString = (candidate: unknown, max: number) =>
     typeof candidate === "string" && candidate.length > 0 && candidate.length <= max;
   return context.runId === runId
+    && typeof context.diagnosticCompleted === "boolean"
+    && ["none", "compatibility_only", "synthetic_archetype", "allowlisted_adapter"].includes(String(context.executionScope))
     && boundedString(context.mission, 2_000)
     && boundedString(context.model, 80)
+    && typeof context.openaiAnalysisCompleted === "boolean"
+    && ["not_attempted", "completed", "unavailable", "failed"].includes(String(context.openaiAnalysisStage))
+    && (context.openaiReasonCode === null || [
+      "not_attempted",
+      "openai_key_missing",
+      "openai_provider_non_2xx",
+      "openai_response_parse_failed",
+      "openai_timeout",
+      "openai_provider_failed",
+    ].includes(String(context.openaiReasonCode)))
     && (context.openaiResponseId === null || boundedString(context.openaiResponseId, 120))
     && typeof context.openaiUsed === "boolean"
     && boundedString(context.planExpectedEvidence, 500)
@@ -87,6 +99,7 @@ function validContext(value: unknown, runId: string): value is HostedRunContext 
     && boundedString(context.repositoryUrl, 500)
     && boundedString(context.requestedRef, 200)
     && (context.resolvedSha === null || (typeof context.resolvedSha === "string" && /^[a-f0-9]{40}$/.test(context.resolvedSha)))
+    && typeof context.sourceResolved === "boolean"
     && boundedString(context.sourceResolver, 80)
     && boundedString(context.supportDetail, 500)
     && ["money", "communication", "time", "data", "cross_domain", "unclassified"].includes(String(context.supportDomain))

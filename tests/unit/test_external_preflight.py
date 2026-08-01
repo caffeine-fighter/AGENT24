@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import base64
 import json
+from hashlib import sha256
+from pathlib import Path
 
 import pytest
 
+from agent24.agent.manifest import MalformedManifestError
 from agent24.agent.models import ExperimentPlan, StopDecision
 from agent24.agent.participant_intake import (
     CompatibilityStatus,
     ParticipantCompatibilityResult,
+    git_blob_sha,
 )
 from agent24.agent.source import MappingRevisionResolver, SourceDescriptor
 from agent24.api.preflight import (
@@ -23,6 +27,7 @@ from agent24.api.preflight import (
 )
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
+BUNDLE_SHA = "0123456789abcdef" * 4
 TARGET = ExternalTarget(
     repository_url="https://github.com/example/cake-agent",
     requested_ref="main",
@@ -129,6 +134,117 @@ def test_preflight_records_bounded_entrypoint_without_executing_it() -> None:
     ]
     assert result.source_snapshot.files[1].retrieval_mode == "bounded_download"
     assert result.source_snapshot.files[1].content_sha256 is not None
+
+
+def test_local_demo_bundle_preflight_preserves_sha_path_and_content_hash_evidence() -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+    manifest_bytes = (
+        repository_root / "examples/demo-agent-repo/.agent24/manifest.json"
+    ).read_bytes()
+    entrypoint_bytes = (
+        repository_root / "examples/demo-agent-repo/src/example_agent.py"
+    ).read_bytes()
+    target = ExternalTarget(
+        repository_url="local://agent24/examples/demo-agent-repo",
+        requested_ref=BUNDLE_SHA,
+        mission="Order one birthday cake under budget.",
+    )
+    preflight = ExternalAgentPreflight(
+        source_resolver=MappingRevisionResolver(
+            {("local/demo-agent-repo", BUNDLE_SHA): BUNDLE_SHA}
+        ),
+        manifest_fetcher=MappingManifestFetcher({".agent24/manifest.json": manifest_bytes}),
+        source_file_fetcher=MappingSourceFileFetcher({"src/example_agent.py": entrypoint_bytes}),
+        retrieved_at="2026-08-01T17:45:00+09:00",
+    )
+
+    result = preflight.run(target)
+
+    assert result.source.source_kind == "local_bundle"
+    assert result.source.source_path == "examples/demo-agent-repo"
+    assert result.source.resolved_sha == result.source.bundle_sha256
+    assert result.source.revision_kind == "bundle_sha256"
+    assert result.manifest.runtime_contract["id"] == "agent24.sandboxgym.life.v1"
+    assert result.manifest.python_version == ">=3.11,<3.14"
+    files = {item.path: item for item in result.source_snapshot.files}
+    assert files[".agent24/manifest.json"].blob_sha == git_blob_sha(manifest_bytes)
+    assert files["src/example_agent.py"].blob_sha == git_blob_sha(entrypoint_bytes)
+    assert files[".agent24/manifest.json"].content_sha256 == (
+        f"sha256:{sha256(manifest_bytes).hexdigest()}"
+    )
+    assert files["src/example_agent.py"].content_sha256 == (
+        f"sha256:{sha256(entrypoint_bytes).hexdigest()}"
+    )
+
+
+def test_local_demo_bundle_schema_mismatch_fails_closed() -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+    raw = json.loads(
+        (repository_root / "examples/demo-agent-repo/.agent24/manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    raw["tools"][0]["input_schema"]["required"] = ["query"]
+    target = ExternalTarget(
+        repository_url="local://agent24/examples/demo-agent-repo",
+        requested_ref=BUNDLE_SHA,
+        mission="Order one birthday cake under budget.",
+    )
+    preflight = ExternalAgentPreflight(
+        source_resolver=MappingRevisionResolver(
+            {("local/demo-agent-repo", BUNDLE_SHA): BUNDLE_SHA}
+        ),
+        manifest_fetcher=MappingManifestFetcher(
+            {".agent24/manifest.json": json.dumps(raw)}
+        ),
+        retrieved_at="2026-08-01T17:45:00+09:00",
+    )
+
+    with pytest.raises(MalformedManifestError, match="schema mismatch"):
+        preflight.run(target)
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value", "message"),
+    [
+        ("runtime_contract", "id", "unreviewed.runtime.v1", "id is not supported"),
+        ("permissions", "network_access", "enabled", "permissions do not match"),
+        ("tools", 1, {"side_effect": False}, "safety metadata mismatch"),
+    ],
+)
+def test_local_demo_bundle_runtime_and_safety_drift_fail_closed(
+    section: str,
+    field: str | int,
+    value: object,
+    message: str,
+) -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+    raw = json.loads(
+        (repository_root / "examples/demo-agent-repo/.agent24/manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    if section == "tools":
+        raw[section][field].update(value)
+    else:
+        raw[section][field] = value
+    target = ExternalTarget(
+        repository_url="local://agent24/examples/demo-agent-repo",
+        requested_ref=BUNDLE_SHA,
+        mission="Order one birthday cake under budget.",
+    )
+    preflight = ExternalAgentPreflight(
+        source_resolver=MappingRevisionResolver(
+            {("local/demo-agent-repo", BUNDLE_SHA): BUNDLE_SHA}
+        ),
+        manifest_fetcher=MappingManifestFetcher(
+            {".agent24/manifest.json": json.dumps(raw)}
+        ),
+        retrieved_at="2026-08-01T17:45:00+09:00",
+    )
+
+    with pytest.raises(MalformedManifestError, match=message):
+        preflight.run(target)
 
 
 def test_absent_manifest_returns_honest_unsupported_compatibility() -> None:
