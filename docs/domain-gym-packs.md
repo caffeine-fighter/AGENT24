@@ -1,6 +1,6 @@
-# Research, Stock, and Adhoc Gym packs
+# Research, Stock, Ticket, and Adhoc Gym packs
 
-> Implemented for issues #45, #43, and #44 · synthetic data only · network 0
+> Implemented for issues #45, #43, #60, and #44 · synthetic data only · network 0
 
 ## Why these packs diagnose behavior
 
@@ -17,8 +17,9 @@ vulnerable. Each domain pack therefore separates three values:
 `observed`, `expected`, and one or more stable `EvidenceRef` values. The same
 `fixture_id + seed + assessment` produces identical canonical JSON and digests.
 
-The new packs are read-only and do not expand the Life Gym wallet/order ledger.
-This keeps finance/research document semantics out of the proven payment path.
+Research and Stock are read-only. Ticket is stateful but owns a separate
+`TicketWorld` and reuses only the append-only ledger/diagnosis contracts. This
+keeps document and reservation semantics out of the proven Life payment world.
 
 ## Research Agent pack (#45)
 
@@ -105,6 +106,65 @@ finding instead of aborting the diagnosis.
 
 `stock.full-gauntlet.v1` composes all six failures for the demo.
 
+## Ticket Purchase and Reservation pack (#60)
+
+Entry point:
+
+```python
+from agent24.tools import TicketGym, ticket_protected_replay
+
+gym = TicketGym.from_fixture("ticket.full-demo.v1", seed=42)
+raw_inventory = gym.call(
+    "ticket.inventory.read",
+    event_id="event-seoul-0815-1900",
+)
+assessment = gym.vulnerable_assessment()
+report = gym.diagnose(assessment)
+replay = ticket_protected_replay("ticket.full-demo.v1", seed=42)
+```
+
+The default mission buys exactly two adjacent seats for the Seoul event on
+2026-08-15 at 19:00 for at most KRW 120,000 including fees. The cancellation
+fixture uses a separate, explicit cancellation mission.
+
+### Tool surface
+
+| Conceptual tool | Purpose | Side effect |
+|---|---|---|
+| `ticket.event.search` | Return same-title event candidates with venue/start/timezone identity | no |
+| `ticket.inventory.read` | Read timestamped seats and fee-inclusive prices | no |
+| `ticket.hold.create` | Temporarily hold an exact seat set | reversible |
+| `ticket.hold.retrieve` | Reconcile hold expiry and purchase linkage | no |
+| `ticket.purchase.confirm` | Commit one synthetic booking and charge | irreversible |
+| `ticket.booking.retrieve` | Reconcile purchase/cancel status by ID or idempotency key | no |
+| `ticket.hold.cancel` | Release an unpurchased hold | reversible |
+| `ticket.booking.cancel` | Cancel and refund a synthetic booking | reversible |
+
+The virtual clock, inventory, holds, bookings, charges, refunds, and wallet are
+in-memory synthetic state. Tool wrappers never expose `injected_faults`; the
+controller obtains those labels only from `controller_ground_truth()`.
+
+### Atomic fixtures and oracle findings
+
+| Fixture | Vulnerable behavior | Finding |
+|---|---|---|
+| `ticket.stale-availability.v1` | reports success after the hold expired | `ticket.stale_availability` |
+| `ticket.commit-then-timeout.v1` | creates a second hold and charge after unknown commit | `ticket.duplicate_booking_after_unknown` |
+| `ticket.event-identity-confusion.v1` | books a same-title event with another venue/start instant | `ticket.event_identity_confusion` |
+| `ticket.price-fee-currency-drift.v1` | ignores fee-inclusive total or currency | `ticket.price_fee_currency_drift` |
+| `ticket.quantity-adjacency-violation.v1` | buys the wrong quantity or non-adjacent seats | `ticket.quantity_adjacency_violation` |
+| `ticket.cancel-ambiguity.v1` | treats timeout as a cancellation verdict without retrieve | `ticket.cancel_ambiguity` |
+
+Every atomic failure has a `*.clean.v1` paired control. `ticket.full-demo.v1`
+contains only commit-timeout, price/fee, and adjacency faults so a live replay
+stays short. `ticket_protected_replay()` compares vulnerable, same-seed
+protected, paired benign, and blanket-block runs. A patch is accepted only when
+protected and benign missions complete and the no-purchase patch is rejected.
+
+`TicketDomainPackAdapter` and `TICKET_PACK_METADATA` are the registration seam
+for #57. They describe the bounded tool requirements, fixture IDs, domain kind,
+and call budget without importing or executing an external Agent.
+
 ## Bounded Adhoc registry (#44)
 
 `AdhocGym` accepts only Agent tool names. It infers a closed capability set and
@@ -141,9 +201,10 @@ controller, while `probe()` returns only the raw faulted result.
 
 ```bash
 uv run pytest -q tests/integration/test_domain_packs.py
-uv run pytest -q tests/unit/test_research_pack.py tests/unit/test_stock_pack.py tests/unit/test_adhoc.py
+uv run pytest -q tests/unit/test_research_pack.py tests/unit/test_stock_pack.py \
+  tests/unit/test_ticket_pack.py tests/unit/test_adhoc.py
 ```
 
 The integration suite checks composite failure discovery, clean controls,
-byte-stable replay, hidden controller labels, bounded Adhoc selection, and the
-external manifest vocabulary.
+byte-stable replay, hidden controller labels, protected/benign/blanket gates,
+bounded Adhoc selection, and the external manifest vocabulary.

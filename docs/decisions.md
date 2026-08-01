@@ -26,5 +26,6 @@
 | 2026-08-01 | Hosted SSE 실행 문맥은 개별 query 값 대신 만료형 AES-GCM 토큰으로 `run_id`에 결속 | 별도 저장소 없이 Edge isolate 간 일관성을 유지하면서 source SHA·OpenAI response ID·mode 변조·다른 run 재사용을 차단하고 mission을 URL에서 숨김 | A / deployment | 다회용 장기 run이나 서버 측 취소·감사 보관이 필요할 때 D1 registry로 전환 |
 | 2026-08-01 | owner manifest가 없을 때 exact `repository@SHA`에 검토된 path/blob/line metadata만 static profile로 허용 | 다른 참가 저장소 코드를 실행·복제하지 않고 compatibility 가설을 재현하되, branch/blob drift와 synthetic finding의 target 귀속을 차단 | C / input | #57 registry가 owner/static profile을 직접 소비하거나 참가자가 owner manifest를 제공할 때 |
 | 2026-08-01 | D4 acceptance는 same-origin production web→FastAPI→controller/SSE slice만 통합 증거로 인정하고, 성공 evidence chain·honest non-success·독립 reference를 모두 요구 | prebuilt hosted/fixture sequence나 UI self-report가 실제 controller integration과 source/outcome correctness를 순환적으로 증명하는 일을 막기 위함 | D / integration acceptance | hosted surface가 동일 controller evidence를 소비하거나 D5 독립 감사가 현 계약을 충족할 수 없음을 입증할 때 |
+| 2026-08-01 | Ticket은 Life world를 확장하지 않고 별도 `TicketWorld`·virtual clock을 두며 공통 ledger/diagnosis만 재사용 | hold expiry, seat identity, fee, booking/cancel 상태를 결제 P0 불변식과 섞지 않으면서 같은 replay 증거 계약을 유지 | C / gym | #57 registry가 공통 stateful pack protocol을 동결할 때 |
 
 Keep entries short. Record choices that affect architecture, model/tool selection, scope, cost, privacy, or the demo path.

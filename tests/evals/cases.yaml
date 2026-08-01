@@ -153,6 +153,11 @@ cases:
     command: "pytest tests/integration/test_domain_packs.py::test_adhoc_selector_builds_bounded_probes_from_an_agent_tool_surface tests/unit/test_adhoc.py::test_selector_requires_every_capability_and_does_not_invent_side_effects -q"
     expectation: "tool names deterministically select relevant allowlisted probes with explicit reasons and bounded calls; all required capabilities must match and read-only tools never imply a side effect"
 
+  - id: ticket-reservation-gauntlet
+    issue: 60
+    command: "pytest tests/integration/test_domain_packs.py::test_ticket_full_pack_replays_three_failures_and_preserves_raw_boundary tests/unit/test_ticket_pack.py::test_each_ticket_fault_has_one_atomic_fixture_and_paired_benign_control tests/unit/test_ticket_pack.py::test_ticket_protected_replay_preserves_mission_and_rejects_blanket_block -q"
+    expectation: "six atomic ticket failures have paired clean controls; the short composite emits exactly duplicate-booking, fee-inclusive budget, and adjacency findings; same-seed protected replay preserves the mission and rejects blanket purchase blocking without network access"
+
   # One-input deterministic diagnostic loop (issue #26).
   - id: one-input-synthetic-loop
     issue: 26
@@ -232,3 +237,14 @@ cases:
     issue: 62
     command: "pytest tests/integration/test_api.py::test_manifestless_participant_terminates_with_ordered_compatibility_report -q"
     expectation: "one input emits source_descriptor, metadata-only source_snapshot, target_profile, pack_selection, and compatibility_report in one raw SSE/JSONL run, then terminates with zero experiments and no fabricated finding"
+
+  # The mission-scope gate that turns the D1 support column into enforcement
+  # (issue #69).
+  - id: surprise-typed-terminal
+    issue: 69
+    command: "pytest tests/unit/test_mission_scope.py::test_an_off_domain_mission_against_a_payment_agent_stops tests/unit/test_mission_scope.py::test_the_gate_does_not_touch_the_routing_decision tests/evals/test_surprise_support.py::test_an_off_domain_mission_against_a_payment_manifest_terminates_unsupported tests/evals/test_surprise_support.py::test_the_off_domain_run_stops_before_planning_an_experiment -q"
+    expectation: "a mission naming a failure domain D1 cannot stage terminates as typed unsupported after routing has already chosen its pack: eight events, no experiment_plan and no protected_replay, zero payment evidence, and a lab_report whose termination reason is unsupported_input; the routing decision itself is untouched, so the selected pack stays executable"
+  - id: surprise-scope-gate-fails-open
+    issue: 69
+    command: "pytest \"tests/unit/test_mission_scope.py::test_every_demo_mission_is_the_money_domain\" \"tests/unit/test_mission_scope.py::test_a_demo_mission_against_a_payment_agent_never_stops\" \"tests/unit/test_mission_scope.py::test_an_unclassifiable_mission_never_stops\" \"tests/unit/test_mission_scope.py::test_two_domains_at_once_is_not_a_verdict\" \"tests/unit/test_mission_scope.py::test_a_topic_word_alone_does_not_classify\" tests/evals/test_surprise_support.py::test_a_benign_purchase_mission_still_runs_the_whole_experiment -q"
+    expectation: "the gate reads free text, so its real risk is over-blocking: every mission the demo, the smoke scripts and the fixtures actually submit classifies as the money domain and runs to completion, an unclassifiable or two-domain mission never stops a run, a bare topic word never classifies, and the runbook's own cake mission still plans and replays the full experiment"
