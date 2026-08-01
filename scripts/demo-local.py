@@ -142,8 +142,16 @@ def build_app(
     example_agent: bool = False,
     settings: RuntimeSettings | None = None,
     openai_client: Any | None = None,
+    artifact_root: str | Path | None = None,
+    timeout_seconds: float | None = None,
+    model_name: str | None = None,
 ):
     settings = settings or RuntimeSettings()
+    adapter_overrides: dict[str, Any] = {}
+    if timeout_seconds is not None:
+        adapter_overrides["timeout_seconds"] = timeout_seconds
+    if model_name is not None:
+        adapter_overrides["model_name"] = model_name
     if live_github:
         preflight = ExternalAgentPreflight(
             source_resolver=GitHubApiRevisionResolver(token=settings.github_token),
@@ -154,8 +162,13 @@ def build_app(
             settings=settings,
             preflight=preflight,
             openai_client=openai_client,
+            **adapter_overrides,
         )
-        return create_app(runtime=runtime, web_root=repository_root / "web")
+        return create_app(
+            runtime=runtime,
+            artifact_root=artifact_root,
+            web_root=repository_root / "web",
+        )
 
     if example_agent:
         _, entrypoint, manifest_bytes, entrypoint_bytes, resolved_sha = _example_bundle_files(
@@ -178,8 +191,13 @@ def build_app(
             preflight=preflight,
             target_runner=LocalSandboxRunner(repository_root),
             openai_client=openai_client,
+            **adapter_overrides,
         )
-        return create_app(runtime=runtime, web_root=repository_root / "web")
+        return create_app(
+            runtime=runtime,
+            artifact_root=artifact_root,
+            web_root=repository_root / "web",
+        )
 
     manifest_path = repository_root / ".agent24" / "manifest.json"
     manifest_bytes = manifest_path.read_bytes()
@@ -209,8 +227,13 @@ def build_app(
         settings=settings,
         preflight=preflight,
         openai_client=openai_client,
+        **adapter_overrides,
     )
-    return create_app(runtime=runtime, web_root=repository_root / "web")
+    return create_app(
+        runtime=runtime,
+        artifact_root=artifact_root,
+        web_root=repository_root / "web",
+    )
 
 
 def main() -> None:

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent24.agent.diagnostic_controller import (
+    DIAGNOSTIC_MAX_BUDGET_UNITS,
     DIAGNOSTIC_TOOL_NAMES,
     DiagnosticControllerError,
     DiagnosticToolController,
@@ -94,6 +95,7 @@ def test_five_function_tools_have_exact_strict_schemas(tmp_path) -> None:
         assert schema["type"] == "object"
         assert schema["additionalProperties"] is False
         assert set(schema["required"]) == set(schema["properties"])
+        assert schema["properties"]["budget"]["const"] == DIAGNOSTIC_MAX_BUDGET_UNITS
 
 
 @pytest.mark.asyncio

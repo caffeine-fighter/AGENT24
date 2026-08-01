@@ -671,6 +671,20 @@ cases:
       - tests/integration/test_api.py::test_live_target_rejects_a_premature_model_final_then_runs_named_reference
       - tests/integration/test_api.py::test_external_timeout_preserves_controller_evidence_without_fixture_events
 
+  # Local-only demo release terminals and browser/API boundaries (issue #103).
+  # The quota-spending three-run provider smoke remains separately opt-in in
+  # tests/integration/test_openai_diagnostic_smoke.py and is never run by CI.
+  - id: local-demo-release-terminal-matrix
+    runner: pytest
+    issue: 103
+    expectation: the exact local bundle completes through the five-tool controller in live mode; missing key, unresolved source, sandbox runner failure and provider timeout each retain their own typed terminal without fixture substitution, fabricated findings or secret disclosure
+    targets:
+      - tests/integration/test_local_demo.py::test_live_local_demo_uses_five_controller_tools_over_actual_sandbox
+      - tests/integration/test_local_demo.py::test_local_demo_runs_example_participant_local_bundle
+      - tests/integration/test_api.py::test_source_preflight_failure_stops_without_target_claims
+      - tests/integration/test_local_demo.py::test_target_runner_crash_or_budget_stop_never_becomes_a_finding
+      - tests/integration/test_api.py::test_external_timeout_preserves_controller_evidence_without_fixture_events
+
   # Live case binding (issue #120).  A `mode: live` case used to return an
   # unconditional pass and delegate to a bound test that owned its own copy of
   # the literals, so editing the declaration changed nothing.
