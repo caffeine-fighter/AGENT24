@@ -1,0 +1,274 @@
+"""Verify the deployed NIGHTMARE LAB contract without exposing credentials.
+
+The smoke test checks the public HTTP surface only: configuration metadata,
+one run creation, the complete SSE trace, source pinning, the OpenAI planning
+evidence, and the synthetic-only terminal boundary.  It never prints request
+headers or environment-variable values.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+from collections.abc import Iterable
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urljoin
+from urllib.request import Request, urlopen
+
+DEFAULT_BASE_URL = "https://nightmare-lab-agent24.conceivability.chatgpt.site"
+DEFAULT_MISSION = "엄마 생일 케이크 하나를 5만원 이하로 주문하고 가족 캘린더에도 일정을 등록해줘."
+DEFAULT_REPOSITORY = "https://github.com/caffeine-fighter/AGENT24"
+EXPECTED_PHASES = ("CLONE", "CRASH", "AUTOPSY", "VACCINE", "REPLAY")
+FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
+    parser.add_argument("--repository", default=DEFAULT_REPOSITORY)
+    parser.add_argument("--ref", default="main")
+    parser.add_argument("--mission", default=DEFAULT_MISSION)
+    parser.add_argument(
+        "--expect-mode",
+        choices=("openai_hosted", "offline_demo"),
+        default="openai_hosted",
+        help="Expected mode for the created run (default: openai_hosted).",
+    )
+    parser.add_argument("--timeout-seconds", type=float, default=45.0)
+    return parser.parse_args()
+
+
+def request_headers(*, accepts: str) -> dict[str, str]:
+    headers = {"Accept": accepts, "User-Agent": "agent24-hosted-smoke/1.0"}
+    bypass_token = os.getenv("SITES_BYPASS_TOKEN", "").strip()
+    if bypass_token:
+        headers["OAI-Sites-Authorization"] = f"Bearer {bypass_token}"
+    return headers
+
+
+def fetch(
+    url: str,
+    *,
+    accepts: str,
+    timeout_seconds: float,
+    payload: dict[str, Any] | None = None,
+) -> tuple[int, str, str]:
+    headers = request_headers(accepts=accepts)
+    body = None
+    method = "GET"
+    if payload is not None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+        method = "POST"
+    request = Request(url, data=body, headers=headers, method=method)
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
+            return response.status, response.headers.get_content_type(), response.read().decode()
+    except HTTPError as error:
+        raise RuntimeError(f"{method} {url} returned HTTP {error.code}") from None
+    except URLError as error:
+        raise RuntimeError(f"{method} {url} failed: {error.reason}") from None
+
+
+def parse_json(text: str, *, label: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"{label} did not return JSON: {error.msg}") from None
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{label} must return a JSON object")
+    return payload
+
+
+def parse_sse(text: str) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    normalized = text.replace("\r\n", "\n")
+    for block in normalized.split("\n\n"):
+        data = "\n".join(
+            line[5:].lstrip() for line in block.splitlines() if line.startswith("data:")
+        )
+        if not data:
+            continue
+        payload = parse_json(data, label="SSE data")
+        events.append(payload)
+    if not events:
+        raise RuntimeError("SSE stream did not contain any data events")
+    return events
+
+
+def unique_in_order(values: Iterable[str]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        if value not in result:
+            result.append(value)
+    return result
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise RuntimeError(message)
+
+
+def verify_trace(
+    events: list[dict[str, Any]], *, run_id: str, expected_mode: str
+) -> dict[str, Any]:
+    require(len(events) == 34, f"expected 34 SSE events, got {len(events)}")
+    require(
+        [event.get("seq") for event in events] == list(range(1, len(events) + 1)),
+        "SSE sequence is not contiguous",
+    )
+    require(all(event.get("run_id") == run_id for event in events), "SSE run_id changed")
+    require(events[0].get("type") == "run.started", "first event is not run.started")
+    require(events[-1].get("type") == "run.completed", "terminal event is missing")
+
+    phases = unique_in_order(
+        str(event.get("phase")) for event in events if isinstance(event.get("phase"), str)
+    )
+    require(phases == list(EXPECTED_PHASES), f"unexpected phase order: {phases}")
+
+    start_data = events[0].get("data")
+    terminal_data = events[-1].get("data")
+    require(isinstance(start_data, dict), "run.started data is missing")
+    require(isinstance(terminal_data, dict), "run.completed data is missing")
+    require(start_data.get("safety_boundary") == "SIMULATION_ONLY", "start boundary missing")
+    require(
+        terminal_data.get("safety_boundary") == "SIMULATION_ONLY",
+        "terminal boundary missing",
+    )
+    require(terminal_data.get("status") == "verified", "run did not finish verified")
+
+    descriptor = next((event for event in events if event.get("type") == "source_descriptor"), None)
+    require(isinstance(descriptor, dict), "source_descriptor event is missing")
+    descriptor_data = descriptor.get("data") if descriptor else None
+    require(isinstance(descriptor_data, dict), "source_descriptor data is missing")
+    resolved_sha = (
+        descriptor_data.get("resolved_sha") if isinstance(descriptor_data, dict) else None
+    )
+    require(
+        isinstance(resolved_sha, str) and FULL_SHA.fullmatch(resolved_sha),
+        "source ref was not pinned",
+    )
+
+    openai_result = next(
+        (
+            event
+            for event in events
+            if event.get("type") == "tool_result"
+            and isinstance(event.get("raw"), dict)
+            and event["raw"].get("name") == "openai.responses.plan_experiment"
+        ),
+        None,
+    )
+    require(isinstance(openai_result, dict), "OpenAI tool_result event is missing")
+    raw = openai_result.get("raw") if openai_result else None
+    output = raw.get("output") if isinstance(raw, dict) else None
+    require(isinstance(output, dict), "OpenAI result output is missing")
+    response_id = output.get("response_id") if isinstance(output, dict) else None
+    fallback = output.get("fallback") if isinstance(output, dict) else None
+    if expected_mode == "openai_hosted":
+        require(fallback is False, "OpenAI result unexpectedly used fallback")
+        require(
+            isinstance(response_id, str) and response_id.startswith("resp_"),
+            "OpenAI response_id evidence is missing",
+        )
+    else:
+        require(fallback is True, "offline run did not declare fallback")
+        require(response_id is None, "offline run unexpectedly has an OpenAI response_id")
+
+    return {
+        "event_count": len(events),
+        "phases": phases,
+        "source_ref": resolved_sha,
+        "openai_response_observed": (
+            isinstance(response_id, str) and response_id.startswith("resp_")
+        ),
+        "terminal_status": terminal_data.get("status"),
+    }
+
+
+def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    args = parse_args()
+    if args.timeout_seconds <= 0:
+        raise SystemExit("--timeout-seconds must be positive")
+
+    base_url = args.base_url.rstrip("/") + "/"
+    health_url = urljoin(base_url, "health")
+    status, content_type, body = fetch(
+        health_url,
+        accepts="application/json",
+        timeout_seconds=args.timeout_seconds,
+    )
+    require(status == 200, f"health returned status {status}")
+    require(content_type == "application/json", f"health returned {content_type}")
+    health = parse_json(body, label="health")
+    require(health.get("status") == "ok", "health status is not ok")
+    require(health.get("safety_boundary") == "SIMULATION_ONLY", "health boundary missing")
+    require("openai_api_key" not in health, "health exposed a credential field")
+
+    run_url = urljoin(base_url, "api/runs")
+    status, content_type, body = fetch(
+        run_url,
+        accepts="application/json",
+        timeout_seconds=args.timeout_seconds,
+        payload={
+            "input": args.mission,
+            "target": {
+                "mission": args.mission,
+                "repository_url": args.repository,
+                "requested_ref": args.ref,
+            },
+        },
+    )
+    require(status == 202, f"run creation returned status {status}")
+    require(content_type == "application/json", f"run creation returned {content_type}")
+    run = parse_json(body, label="run creation")
+    require(
+        run.get("mode") == args.expect_mode,
+        f"expected {args.expect_mode}, got {run.get('mode')}",
+    )
+    run_id = run.get("run_id")
+    events_url = run.get("events_url")
+    require(isinstance(run_id, str) and run_id, "run_id is missing")
+    require(isinstance(events_url, str) and events_url, "events_url is missing")
+
+    status, content_type, body = fetch(
+        urljoin(base_url, events_url),
+        accepts="text/event-stream",
+        timeout_seconds=args.timeout_seconds,
+    )
+    require(status == 200, f"events returned status {status}")
+    require(content_type == "text/event-stream", f"events returned {content_type}")
+    evidence = verify_trace(parse_sse(body), run_id=run_id, expected_mode=args.expect_mode)
+
+    print(
+        json.dumps(
+            {
+                "passed": True,
+                "base_url": args.base_url.rstrip("/"),
+                "health_mode": health.get("mode"),
+                "run_mode": run.get("mode"),
+                "run_id": run_id,
+                **evidence,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except RuntimeError as error:
+        print(
+            json.dumps({"passed": False, "error": str(error)}, ensure_ascii=False),
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from None
