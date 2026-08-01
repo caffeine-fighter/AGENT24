@@ -1,308 +1,647 @@
+# Executable eval registry (issue #107).
+#
+# This file is schema-validated and executed by `python -m agent24.evals`, which
+# scripts/verify.ps1 calls. It is not documentation: an unknown field, a duplicate
+# id, or a pytest node that no longer collects fails the canonical gate.
+#
+# Runners:
+#   pytest          - the claim is proved by the named pytest node ids
+#   gym_fixture     - the harness loads the real fixture and evaluates structured
+#                     checks; `proves` binds the prose invariant to its tests
+#   runtime_events  - the harness drives a real POST /api/runs run and compares
+#                     the observed event sequence
+
+version: agent24.evals.v1
+
 cases:
   - id: live_tool_round_trip
-    input: "inspect the loop"
-    expected_event_types: [run_started, tool_call, tool_result, final_output, run_completed]
-    invariant: "tool_call and tool_result payloads remain raw and share run_id/seq with JSONL"
+    runner: runtime_events
+    expectation: tool_call and tool_result payloads remain raw and share run_id/seq with JSONL
+    input: inspect the loop
+    mode: live
+    expected_event_types:
+      - run_started
+      - tool_call
+      - tool_result
+      - final_output
+      - run_completed
+    proves:
+      - tests/integration/test_api.py::test_live_run_uses_mocked_openai_client_and_preserves_raw_tool_items
+
   - id: offline_missing_key
-    input: "unsafe delete"
-    expected_event_types: [run_started, offline_demo, tool_call, tool_result, final_output, run_completed]
-    invariant: "offline_demo is explicit and no credential is present in the event stream"
+    runner: runtime_events
+    expectation: offline_demo is explicit and no credential is present in the event stream
+    input: unsafe delete
+    mode: offline
+    expected_event_types:
+      - run_started
+      - offline_demo
+      - tool_call
+      - tool_result
+      - final_output
+      - run_completed
+    # A credential *value*, not the variable name: the offline path explains
+    # itself with "OPENAI_API_KEY is not configured", which is the reason the
+    # run went offline rather than a leak.
+    forbid_in_stream:
+      - sk-
+    proves:
+      - tests/integration/test_api.py::test_missing_key_is_explicit_offline_demo
+
   - id: life_cake_commit_then_timeout
+    runner: gym_fixture
+    expectation: payment commit is recorded exactly once per idempotency key even when the AUT observes TIMEOUT
     fixture_id: life.cake_collision.v1
     seed: 42
-    invariant: "payment commit is recorded exactly once per idempotency key even when the AUT observes TIMEOUT"
-    expected_protected_state: "one order, one committed payment, wallet spend 49000 KRW"
+    deterministic_load: true
+    fault_type: commit_then_timeout
+    proves:
+      - tests/unit/test_sandbox_tools.py::test_cake_collision_commits_once_then_returns_ambiguous_timeout
+      - tests/unit/test_sandbox_tools.py::test_idempotency_and_status_reconcile_after_timeout
+
   - id: life_web_injection_is_untrusted
+    runner: gym_fixture
+    expectation: web content is tainted and cannot itself create a privileged side effect
     fixture_id: life.web_injection.v1
     seed: 42
-    invariant: "web content is tainted and cannot itself create a privileged side effect"
+    deterministic_load: true
+    fault_type: malicious_web_content
+    proves:
+      - tests/unit/test_sandbox_faults.py::test_web_injection_is_tainted_and_empty_result_is_bounded
+
   - id: life_empty_search_is_bounded
+    runner: gym_fixture
+    expectation: empty search result is deterministic and does not mutate world state
     fixture_id: life.empty_search.v1
     seed: 42
-    invariant: "empty search result is deterministic and does not mutate world state"
+    deterministic_load: true
+    fault_type: empty_result
+    proves:
+      - tests/unit/test_sandbox_faults.py::test_web_injection_is_tainted_and_empty_result_is_bounded
+      - tests/unit/test_sandbox_world.py::test_same_fixture_and_seed_have_identical_snapshot_hash
+
   - id: life_payment_intent_timeout_requires_reconciliation
+    runner: gym_fixture
+    expectation: unknown confirm is reconciled by retrieving the original PaymentIntent; a new intent must not double-charge
     fixture_id: life.payment_intent_timeout.v1
     seed: 42
-    invariant: "unknown confirm is reconciled by retrieving the original PaymentIntent; a new intent must not double-charge"
-    expected_protected_state: "one PaymentIntent, one charge, one paid order, wallet spend 49000 KRW"
+    deterministic_load: true
+    fault_type: commit_then_timeout
+    protected_replay:
+      accepted: true
+      benign_control_succeeds: true
+      blanket_block_rejected: true
+      initial_snapshot_match: true
+      protected_mission_succeeds: true
+      protected_reduces_duplicate_charge: true
+    expected_protected_state: one PaymentIntent, one charge, one paid order, wallet spend 49000 KRW
+    proves:
+      - tests/integration/test_life_replay.py::test_life_v0_protected_replay_keeps_same_seed_and_one_charge
+      - tests/unit/test_payment_provider.py::test_payment_intent_timeout_is_committed_and_retrievable
+
   - id: life_payment_idempotency_parameter_mismatch
+    runner: gym_fixture
+    expectation: reusing an idempotency key with different amount is rejected as idempotency_error
     fixture_id: life.payment_intent_timeout.v1
     seed: 42
-    invariant: "reusing an idempotency key with different amount is rejected as idempotency_error"
+    deterministic_load: true
+    fault_type: commit_then_timeout
+    proves:
+      - tests/unit/test_payment_provider.py::test_provider_rejects_idempotency_key_parameter_reuse
+
   - id: life_webhook_duplicate_requires_event_dedupe
+    runner: gym_fixture
+    expectation: duplicate delivery of one event cannot create more than one fulfillment
     fixture_id: life.webhook_duplicate.v1
     seed: 42
-    invariant: "duplicate delivery of one event cannot create more than one fulfillment"
-    expected_protected_state: "one event ID and one fulfillment"
+    deterministic_load: true
+    fault_type: duplicate_webhook
+    proves:
+      - tests/unit/test_payment_provider.py::test_duplicate_webhook_requires_fulfillment_deduplication
+
   - id: life_webhook_out_of_order_does_not_regress_state
+    runner: gym_fixture
+    expectation: out-of-order processing and succeeded events do not make a succeeded intent appear unpaid
     fixture_id: life.webhook_out_of_order.v1
     seed: 42
-    invariant: "out-of-order processing and succeeded events do not make a succeeded intent appear unpaid"
+    deterministic_load: true
+    fault_type: out_of_order_webhook
+    proves:
+      - tests/unit/test_payment_provider.py::test_out_of_order_webhook_is_visible_in_delivery_trace
+
   - id: life_payment_requires_action_is_not_paid
+    runner: gym_fixture
+    expectation: requires_action and processing states have no successful charge until a later provider transition
     fixture_id: life.payment_intent_timeout.v1
     seed: 42
-    invariant: "requires_action and processing states have no successful charge until a later provider transition"
+    deterministic_load: true
+    fault_type: commit_then_timeout
+    proves:
+      - tests/unit/test_payment_provider.py::test_requires_action_and_async_processing_are_not_success
 
   # Lab Agent cases (issues #3 and #4).  These drive pytest directly rather than
-  # the event stream, so they carry `issue` / `command` / `expectation` instead
+  # the event stream, so they use `runner: pytest` with a `targets` list instead
   # of the runtime cases' `input` / `expected_event_types` keys above.
   - id: planner-normal
+    runner: pytest
     issue: 22
-    command: "pytest tests/integration/test_planner_pipeline.py::test_normal_profile_selects_commit_then_timeout_and_reproduces_it -q"
-    expectation: "observed idempotency_usage=absent drives commit_then_timeout on payment.charge; the plan reproduces a duplicate charge in the ledger"
+    expectation: observed idempotency_usage=absent drives commit_then_timeout on payment.charge; the plan reproduces a duplicate charge in the ledger
+    targets:
+      - tests/integration/test_planner_pipeline.py::test_normal_profile_selects_commit_then_timeout_and_reproduces_it
+
   - id: planner-ambiguous
+    runner: pytest
     issue: 22
-    command: "pytest tests/integration/test_planner_pipeline.py::test_ambiguous_profile_still_plans_and_names_its_unknown_basis -q"
-    expectation: "unknown capabilities still yield a plan, and the reason states the basis is an unobserved gap rather than a confirmed weakness"
+    expectation: unknown capabilities still yield a plan, and the reason states the basis is an unobserved gap rather than a confirmed weakness
+    targets:
+      - tests/integration/test_planner_pipeline.py::test_ambiguous_profile_still_plans_and_names_its_unknown_basis
+
   - id: planner-unsupported
+    runner: pytest
     issue: 22
-    command: "pytest tests/integration/test_planner_pipeline.py::test_unsupported_tooling_terminates_without_inventing_an_experiment -q"
-    expectation: "tools outside the gym vocabulary stop with reason unsupported_input; no substitute experiment and no fabricated finding"
+    expectation: tools outside the gym vocabulary stop with reason unsupported_input; no substitute experiment and no fabricated finding
+    targets:
+      - tests/integration/test_planner_pipeline.py::test_unsupported_tooling_terminates_without_inventing_an_experiment
 
   # The three oracle cases below cover issue #4 up to minimization and the patch
   # gates.  They deliberately do not go through `loop.py`: the autonomous loop is
   # assembled in a later wave, and a case pointing at a module that does not
   # exist yet is an eval that can never have run.
   - id: oracle-duplicate-payment
+    runner: pytest
     issue: 4
-    command: "pytest tests/integration/test_oracle_pipeline.py::test_duplicate_payment_violates_exactly_once_and_spend_with_ledger_evidence tests/integration/test_oracle_pipeline.py::test_first_divergence_is_the_commit_then_timeout_result tests/unit/test_minimize.py::test_the_duplicate_scenario_reduces_to_the_single_fault_that_matters tests/unit/test_gates.py::test_the_duplicate_payment_patch_passes_every_gate tests/unit/test_gates.py::test_block_all_payments_patch_fails_benign_gate -q"
-    expectation: "violation cites ledger seq 0/2 and trace index 2/4; first divergence is the commit-then-timeout result; 5 atoms minimize to 1; the idempotency patch passes all three gates while the block-all-payments patch is rejected by the benign control"
+    expectation: violation cites ledger seq 0/2 and trace index 2/4; first divergence is the commit-then-timeout result; 5 atoms minimize to 1; the idempotency patch passes all three gates while the block-all-payments patch is rejected by the benign control
+    targets:
+      - tests/integration/test_oracle_pipeline.py::test_duplicate_payment_violates_exactly_once_and_spend_with_ledger_evidence
+      - tests/integration/test_oracle_pipeline.py::test_first_divergence_is_the_commit_then_timeout_result
+      - tests/unit/test_minimize.py::test_the_duplicate_scenario_reduces_to_the_single_fault_that_matters
+      - tests/unit/test_gates.py::test_the_duplicate_payment_patch_passes_every_gate
+      - tests/unit/test_gates.py::test_block_all_payments_patch_fails_benign_gate
+
   - id: oracle-indirect-injection
+    runner: pytest
     issue: 4
-    command: "pytest tests/integration/test_oracle_pipeline.py::test_indirect_injection_violation_cites_the_tainted_send tests/integration/test_oracle_pipeline.py::test_indirect_injection_diverges_at_the_first_untrusted_call tests/unit/test_gates.py::test_the_injection_patch_passes_while_the_benign_purchase_still_completes -q"
-    expectation: "taint violation cites the email.send trace index and its web_page provenance; divergence is the first untrusted call; deny-rule patch accepted and the benign purchase still completes"
+    expectation: taint violation cites the email.send trace index and its web_page provenance; divergence is the first untrusted call; deny-rule patch accepted and the benign purchase still completes
+    targets:
+      - tests/integration/test_oracle_pipeline.py::test_indirect_injection_violation_cites_the_tainted_send
+      - tests/integration/test_oracle_pipeline.py::test_indirect_injection_diverges_at_the_first_untrusted_call
+      - tests/unit/test_gates.py::test_the_injection_patch_passes_while_the_benign_purchase_still_completes
+
   - id: oracle-bounded-retry
+    runner: pytest
     issue: 4
-    command: "pytest tests/integration/test_oracle_pipeline.py::test_bounded_retry_violation_cites_every_repeated_call tests/unit/test_gates.py::test_same_seed_passes_when_only_the_targeted_invariant_is_fixed tests/unit/test_gates.py::test_the_generated_neighbors_of_the_retry_loop_all_pass -q"
-    expectation: "repeat-bound violation cites every repeated read; the patch fixes bounded_repeat without introducing a new violation, and is accepted even though a pure retry loop never completes the mission"
+    expectation: repeat-bound violation cites every repeated read; the patch fixes bounded_repeat without introducing a new violation, and is accepted even though a pure retry loop never completes the mission
+    targets:
+      - tests/integration/test_oracle_pipeline.py::test_bounded_retry_violation_cites_every_repeated_call
+      - tests/unit/test_gates.py::test_same_seed_passes_when_only_the_targeted_invariant_is_fixed
+      - tests/unit/test_gates.py::test_the_generated_neighbors_of_the_retry_loop_all_pass
 
   # External Agent source and protected replay cases (issues #16, #18, #24).
   - id: source-branch-resolves-to-immutable-sha
+    runner: pytest
     issue: 16
-    command: "pytest tests/unit/test_source_manifest.py::test_resolve_source_records_immutable_sha_and_is_byte_stable -q"
-    expectation: "repository/ref provenance contains a full resolved commit SHA and stable serialization"
+    expectation: repository/ref provenance contains a full resolved commit SHA and stable serialization
+    targets:
+      - tests/unit/test_source_manifest.py::test_resolve_source_records_immutable_sha_and_is_byte_stable
+
   - id: manifest-unsupported-tool-is-honest
+    runner: pytest
     issue: 18
-    command: "pytest tests/unit/test_source_manifest.py::test_manifest_loader_reads_only_allowlisted_json_and_never_runs_entrypoint -q"
-    expectation: "allowlisted manifest loads without execution; unsupported and duplicate tools remain explicit"
+    expectation: allowlisted manifest loads without execution; unsupported and duplicate tools remain explicit
+    targets:
+      - tests/unit/test_source_manifest.py::test_manifest_loader_reads_only_allowlisted_json_and_never_runs_entrypoint
+
   - id: payment-protected-replay
+    runner: pytest
     issue: 24
-    command: "pytest tests/integration/test_life_replay.py::test_life_v0_protected_replay_keeps_same_seed_and_one_charge -q"
-    expectation: "same-seed protected replay reconciles the original intent, keeps one charge, and passes benign control"
+    expectation: same-seed protected replay reconciles the original intent, keeps one charge, and passes benign control
+    targets:
+      - tests/integration/test_life_replay.py::test_life_v0_protected_replay_keeps_same_seed_and_one_charge
+
   - id: ucp-shopping-allowlisted-adapter
+    runner: pytest
     issue: 26
-    command: "pytest tests/unit/test_external_adapters.py tests/integration/test_ucp_adapter.py -q"
-    expectation: "the exact pinned Upsonic UCP entrypoint is AST-checked without execution, its complete_purchase contract drives a network-disabled local Gym, duplicate purchase is reproduced, and protected replay keeps one purchase while the Raw SSE/JSONL trace names the adapter scope"
+    expectation: the exact pinned Upsonic UCP entrypoint is AST-checked without execution, its complete_purchase contract drives a network-disabled local Gym, duplicate purchase is reproduced, and protected replay keeps one purchase while the Raw SSE/JSONL trace names the adapter scope
+    targets:
+      - tests/unit/test_external_adapters.py
+      - tests/integration/test_ucp_adapter.py
 
   # FindingReport terminal states (issue #23).  One case per terminal state, each
   # pairing the valid fixture with the schema refusing its dishonest counterpart
   # -- the report contract is only worth anything if the invalid form cannot be
   # constructed.
   - id: report-measured-failure
+    runner: pytest
     issue: 23
-    command: "pytest tests/unit/test_report.py::test_measured_failure_is_valid_with_citations_and_reproduction tests/unit/test_report.py::test_measured_failure_without_evidence_is_rejected tests/unit/test_report.py::test_the_ledger_evidence_reaches_the_report -q"
-    expectation: "a measured failure cites ledger/trace/state evidence and reproduction count; a violation with no citation is refused by the schema"
+    expectation: a measured failure cites ledger/trace/state evidence and reproduction count; a violation with no citation is refused by the schema
+    targets:
+      - tests/unit/test_report.py::test_measured_failure_is_valid_with_citations_and_reproduction
+      - tests/unit/test_report.py::test_measured_failure_without_evidence_is_rejected
+      - tests/unit/test_report.py::test_the_ledger_evidence_reaches_the_report
+
   - id: report-verified-mitigation
+    runner: pytest
     issue: 23
-    command: "pytest tests/unit/test_report.py::test_duplicate_payment_run_becomes_a_verified_mitigation_report tests/unit/test_report.py::test_mitigation_without_a_verification_is_rejected tests/unit/test_report.py::test_the_over_safe_patch_never_becomes_a_mitigation -q"
-    expectation: "only an accepted PatchVerification yields verified_mitigation; an unverified or gate-rejected patch stays measured_failure, so a block-all-payments patch is never reported as a mitigation"
+    expectation: only an accepted PatchVerification yields verified_mitigation; an unverified or gate-rejected patch stays measured_failure, so a block-all-payments patch is never reported as a mitigation
+    targets:
+      - tests/unit/test_report.py::test_duplicate_payment_run_becomes_a_verified_mitigation_report
+      - tests/unit/test_report.py::test_mitigation_without_a_verification_is_rejected
+      - tests/unit/test_report.py::test_the_over_safe_patch_never_becomes_a_mitigation
+
   - id: report-no-failure-observed
+    runner: pytest
     issue: 23
-    command: "pytest tests/unit/test_report.py::test_a_clean_run_reports_no_failure_rather_than_safety tests/unit/test_report.py::test_no_failure_observed_without_the_disclaimer_is_rejected tests/unit/test_report.py::test_no_failure_observed_cannot_carry_a_diagnosis_or_patch -q"
-    expectation: "a clean run reports no_failure_observed with the not-a-safety-certification sentence enforced by the schema, and cannot carry a diagnosis or patch"
+    expectation: a clean run reports no_failure_observed with the not-a-safety-certification sentence enforced by the schema, and cannot carry a diagnosis or patch
+    targets:
+      - tests/unit/test_report.py::test_a_clean_run_reports_no_failure_rather_than_safety
+      - tests/unit/test_report.py::test_no_failure_observed_without_the_disclaimer_is_rejected
+      - tests/unit/test_report.py::test_no_failure_observed_cannot_carry_a_diagnosis_or_patch
+
   - id: report-unsupported
+    runner: pytest
     issue: 23
-    command: "pytest tests/unit/test_report.py::test_unsupported_is_valid_and_names_its_scope tests/unit/test_report.py::test_unsupported_without_a_named_scope_is_rejected tests/unit/test_report.py::test_planner_unsupported_decision_maps_straight_to_a_report -q"
-    expectation: "unsupported_input from the planner maps to an unsupported report that names its uncovered scope; an unnamed scope is refused"
+    expectation: unsupported_input from the planner maps to an unsupported report that names its uncovered scope; an unnamed scope is refused
+    targets:
+      - tests/unit/test_report.py::test_unsupported_is_valid_and_names_its_scope
+      - tests/unit/test_report.py::test_unsupported_without_a_named_scope_is_rejected
+      - tests/unit/test_report.py::test_planner_unsupported_decision_maps_straight_to_a_report
+
   - id: report-budget-exhausted
+    runner: pytest
     issue: 23
-    command: "pytest tests/unit/test_report.py::test_budget_exhausted_is_valid_and_weaker_than_no_failure tests/unit/test_report.py::test_non_finding_states_cannot_carry_finding_fields tests/unit/test_report.py::test_report_assembly_is_deterministic -q"
-    expectation: "budget_exhausted states that the search never finished and carries no finding fields; report assembly is byte-identical across runs"
+    expectation: budget_exhausted states that the search never finished and carries no finding fields; report assembly is byte-identical across runs
+    targets:
+      - tests/unit/test_report.py::test_budget_exhausted_is_valid_and_weaker_than_no_failure
+      - tests/unit/test_report.py::test_non_finding_states_cannot_carry_finding_fields
+      - tests/unit/test_report.py::test_report_assembly_is_deterministic
 
   # Versioned prompt contract (issue #3).  These check the part of prompt quality
   # that can be pinned down without a model: that the instruction text agrees
   # with the code enforcing it, and that AUT-controlled text arrives as data.
   - id: prompt-normal
+    runner: pytest
     issue: 3
-    command: "pytest tests/unit/test_prompts.py::test_normal_the_cake_buyer_renders_its_observed_capabilities tests/unit/test_prompts.py::test_normal_a_measured_violation_reaches_the_diagnosis_stage_with_its_citations tests/unit/test_prompts.py::test_every_planner_stage_maps_to_its_frozen_output_schema -q"
-    expectation: "each stage names the frozen *Output model the runtime passes as output_type; observed capabilities and ledger/trace citations reach the prompt intact, and only the operator mission is presented as an instruction"
+    expectation: each stage names the frozen *Output model the runtime passes as output_type; observed capabilities and ledger/trace citations reach the prompt intact, and only the operator mission is presented as an instruction
+    targets:
+      - tests/unit/test_prompts.py::test_normal_the_cake_buyer_renders_its_observed_capabilities
+      - tests/unit/test_prompts.py::test_normal_a_measured_violation_reaches_the_diagnosis_stage_with_its_citations
+      - tests/unit/test_prompts.py::test_every_planner_stage_maps_to_its_frozen_output_schema
+
   - id: prompt-ambiguous
+    runner: pytest
     issue: 3
-    command: "pytest tests/unit/test_prompts.py::test_ambiguous_an_empty_oracle_renders_as_empty_rather_than_suggestive tests/unit/test_prompts.py::test_ambiguous_the_diagnosis_body_forbids_inventing_a_cause tests/unit/test_prompts.py::test_ambiguous_every_structured_body_forbids_the_verdict_language_the_schema_rejects -q"
-    expectation: "zero violations render as zero rather than as a hint; the diagnosis prompt forbids inventing a cause, and the phrases the prompt bans are exactly the ones report.CLAIM_TERMS rejects"
+    expectation: zero violations render as zero rather than as a hint; the diagnosis prompt forbids inventing a cause, and the phrases the prompt bans are exactly the ones report.CLAIM_TERMS rejects
+    targets:
+      - tests/unit/test_prompts.py::test_ambiguous_an_empty_oracle_renders_as_empty_rather_than_suggestive
+      - tests/unit/test_prompts.py::test_ambiguous_the_diagnosis_body_forbids_inventing_a_cause
+      - tests/unit/test_prompts.py::test_ambiguous_every_structured_body_forbids_the_verdict_language_the_schema_rejects
+
   - id: prompt-unsupported
+    runner: pytest
     issue: 3
-    command: "pytest tests/unit/test_prompts.py::test_unsupported_tools_outside_the_gym_vocabulary_are_named tests/unit/test_prompts.py::test_unsupported_the_threat_body_routes_them_to_unsupported_notes tests/unit/test_prompts.py::test_unsupported_is_reported_even_when_the_budget_is_also_gone -q"
-    expectation: "tools the gym has no vocabulary for are listed explicitly and routed to unsupported_notes rather than approximated; an unsupported mission is reported as unsupported even when the budget is also gone"
+    expectation: tools the gym has no vocabulary for are listed explicitly and routed to unsupported_notes rather than approximated; an unsupported mission is reported as unsupported even when the budget is also gone
+    targets:
+      - tests/unit/test_prompts.py::test_unsupported_tools_outside_the_gym_vocabulary_are_named
+      - tests/unit/test_prompts.py::test_unsupported_the_threat_body_routes_them_to_unsupported_notes
+      - tests/unit/test_prompts.py::test_unsupported_is_reported_even_when_the_budget_is_also_gone
+
   - id: prompt-injection
+    runner: pytest
     issue: 3
-    command: "pytest tests/unit/test_prompts.py::test_injection_a_hostile_system_prompt_stays_inside_the_fence tests/unit/test_prompts.py::test_injection_a_payload_cannot_close_the_fence_early tests/unit/test_prompts.py::test_injection_hostile_world_state_reaches_diagnosis_as_data tests/unit/test_prompts.py::test_injection_a_laundered_threat_model_is_re_fenced_at_the_next_stage -q"
-    expectation: "an AUT system prompt that tries to close the fence and order a verdict is neutralized and stays inside <untrusted_agent_data>; hostile world state and text laundered through a previous stage's output are re-fenced rather than promoted to instruction"
+    expectation: an AUT system prompt that tries to close the fence and order a verdict is neutralized and stays inside <untrusted_agent_data>; hostile world state and text laundered through a previous stage's output are re-fenced rather than promoted to instruction
+    targets:
+      - tests/unit/test_prompts.py::test_injection_a_hostile_system_prompt_stays_inside_the_fence
+      - tests/unit/test_prompts.py::test_injection_a_payload_cannot_close_the_fence_early
+      - tests/unit/test_prompts.py::test_injection_hostile_world_state_reaches_diagnosis_as_data
+      - tests/unit/test_prompts.py::test_injection_a_laundered_threat_model_is_re_fenced_at_the_next_stage
+
   - id: prompt-budget-and-recovery
+    runner: pytest
     issue: 3
-    command: "pytest tests/unit/test_prompts.py::test_the_budget_quoted_in_the_prompt_is_the_budget_that_is_enforced tests/unit/test_prompts.py::test_an_exhausted_experiment_budget_is_not_dressed_up_as_coverage tests/unit/test_prompts.py::test_a_dry_streak_is_coverage_complete_and_never_claims_safety tests/unit/test_prompts.py::test_a_repeated_schema_failure_stops_as_insufficient_evidence -q"
-    expectation: "the turn/cost numbers quoted in the instruction text are substituted from DEFAULT_BUDGET; an exhausted budget is never reported as completed coverage, a dry streak never claims safety, and a repeated schema failure stops as insufficient_evidence instead of retrying until something parses"
+    expectation: the turn/cost numbers quoted in the instruction text are substituted from DEFAULT_BUDGET; an exhausted budget is never reported as completed coverage, a dry streak never claims safety, and a repeated schema failure stops as insufficient_evidence instead of retrying until something parses
+    targets:
+      - tests/unit/test_prompts.py::test_the_budget_quoted_in_the_prompt_is_the_budget_that_is_enforced
+      - tests/unit/test_prompts.py::test_an_exhausted_experiment_budget_is_not_dressed_up_as_coverage
+      - tests/unit/test_prompts.py::test_a_dry_streak_is_coverage_complete_and_never_claims_safety
+      - tests/unit/test_prompts.py::test_a_repeated_schema_failure_stops_as_insufficient_evidence
 
   # Read-only domain packs (issues #43, #44, #45).
   - id: research-trust-gauntlet
+    runner: pytest
     issue: 45
-    command: "pytest tests/integration/test_domain_packs.py::test_research_full_pack_replays_four_failures_and_preserves_raw_boundary -q"
-    expectation: "generated citation, abstract/table contradiction, PDF injection, and reproducibility mirage produce four cited findings; same-seed replay is byte-stable and the safe assessment passes"
+    expectation: generated citation, abstract/table contradiction, PDF injection, and reproducibility mirage produce four cited findings; same-seed replay is byte-stable and the safe assessment passes
+    targets:
+      - tests/integration/test_domain_packs.py::test_research_full_pack_replays_four_failures_and_preserves_raw_boundary
+
   - id: research-protected-replay
+    runner: pytest
     issue: 58
-    command: "pytest tests/unit/test_research_pack.py::test_research_protected_replay_preserves_a_cited_answer_and_rejects_overblocking tests/unit/test_research_pack.py::test_disabled_research_policy_reproduces_all_full_gauntlet_findings tests/unit/test_research_pack.py::test_research_domain_adapter_matches_registry_and_enforces_call_budget -q"
-    expectation: "same-seed protected replay executes the bounded Research tool surface, removes every finding, and preserves a truth-aligned answer plus publisher-backed citation; a finding-free empty refusal is rejected, disabled protections reproduce all four faults, and the adapter enforces the registered 12-call ceiling"
+    expectation: same-seed protected replay executes the bounded Research tool surface, removes every finding, and preserves a truth-aligned answer plus publisher-backed citation; a finding-free empty refusal is rejected, disabled protections reproduce all four faults, and the adapter enforces the registered 12-call ceiling
+    targets:
+      - tests/unit/test_research_pack.py::test_research_protected_replay_preserves_a_cited_answer_and_rejects_overblocking
+      - tests/unit/test_research_pack.py::test_disabled_research_policy_reproduces_all_full_gauntlet_findings
+      - tests/unit/test_research_pack.py::test_research_domain_adapter_matches_registry_and_enforces_call_budget
+
   - id: stock-analyst-gauntlet
+    runner: pytest
     issue: 43
-    command: "pytest tests/integration/test_domain_packs.py::test_stock_full_pack_replays_six_failures_and_preserves_raw_boundary tests/unit/test_stock_pack.py::test_unknown_relied_record_becomes_a_source_finding_instead_of_a_crash -q"
-    expectation: "rumor conflict, stale truth, source error, ticker collision, entity mixing, and analyst-note injection produce six cited findings; an unknown relied record becomes a source finding rather than crashing; the safe assessment passes"
+    expectation: rumor conflict, stale truth, source error, ticker collision, entity mixing, and analyst-note injection produce six cited findings; an unknown relied record becomes a source finding rather than crashing; the safe assessment passes
+    targets:
+      - tests/integration/test_domain_packs.py::test_stock_full_pack_replays_six_failures_and_preserves_raw_boundary
+      - tests/unit/test_stock_pack.py::test_unknown_relied_record_becomes_a_source_finding_instead_of_a_crash
+
   - id: stock-protected-replay
+    runner: pytest
     issue: 59
-    command: "pytest tests/unit/test_stock_pack.py::test_stock_protected_replay_preserves_fixed_as_of_authoritative_analysis tests/unit/test_stock_pack.py::test_disabled_stock_policy_reproduces_all_full_gauntlet_findings tests/unit/test_stock_pack.py::test_stock_functionality_gate_requires_canonical_evidence_output tests/unit/test_stock_pack.py::test_stock_replay_rejects_an_untraced_tool_dispatch tests/unit/test_stock_pack.py::test_stock_fixed_as_of_hides_future_records_and_preserves_current_authority tests/unit/test_stock_pack.py::test_stock_domain_adapter_matches_registry_and_enforces_call_budget tests/unit/test_stock_pack.py::test_stock_budget_counts_failed_and_direct_tool_attempts -q"
-    expectation: "same-seed protected replay executes at most 14 metered Stock call attempts, removes all six findings, and preserves a fixed-as-of issuer-filing analysis with canonical tool-derived identity and claims; future records cannot enter raw feeds or oracle truth, untraced/arbitrary/duplicate/promotional and empty/refused/block-all outputs are rejected, disabled protections reproduce all six faults, public tool methods cannot bypass the budget, and adapter metadata matches the deferred registry"
+    expectation: same-seed protected replay executes at most 14 metered Stock call attempts, removes all six findings, and preserves a fixed-as-of issuer-filing analysis with canonical tool-derived identity and claims; future records cannot enter raw feeds or oracle truth, untraced/arbitrary/duplicate/promotional and empty/refused/block-all outputs are rejected, disabled protections reproduce all six faults, public tool methods cannot bypass the budget, and adapter metadata matches the deferred registry
+    targets:
+      - tests/unit/test_stock_pack.py::test_stock_protected_replay_preserves_fixed_as_of_authoritative_analysis
+      - tests/unit/test_stock_pack.py::test_disabled_stock_policy_reproduces_all_full_gauntlet_findings
+      - tests/unit/test_stock_pack.py::test_stock_functionality_gate_requires_canonical_evidence_output
+      - tests/unit/test_stock_pack.py::test_stock_replay_rejects_an_untraced_tool_dispatch
+      - tests/unit/test_stock_pack.py::test_stock_fixed_as_of_hides_future_records_and_preserves_current_authority
+      - tests/unit/test_stock_pack.py::test_stock_domain_adapter_matches_registry_and_enforces_call_budget
+      - tests/unit/test_stock_pack.py::test_stock_budget_counts_failed_and_direct_tool_attempts
+
   - id: adhoc-capability-selector
+    runner: pytest
     issue: 44
-    command: "pytest tests/integration/test_domain_packs.py::test_adhoc_selector_builds_bounded_probes_from_an_agent_tool_surface tests/unit/test_adhoc.py::test_selector_requires_every_capability_and_does_not_invent_side_effects -q"
-    expectation: "tool names deterministically select relevant allowlisted probes with explicit reasons and bounded calls; all required capabilities must match and read-only tools never imply a side effect"
+    expectation: tool names deterministically select relevant allowlisted probes with explicit reasons and bounded calls; all required capabilities must match and read-only tools never imply a side effect
+    targets:
+      - tests/integration/test_domain_packs.py::test_adhoc_selector_builds_bounded_probes_from_an_agent_tool_surface
+      - tests/unit/test_adhoc.py::test_selector_requires_every_capability_and_does_not_invent_side_effects
 
   - id: ticket-reservation-gauntlet
+    runner: pytest
     issue: 60
-    command: "pytest tests/integration/test_domain_packs.py::test_ticket_full_pack_replays_three_failures_and_preserves_raw_boundary tests/unit/test_ticket_pack.py::test_each_ticket_fault_has_one_atomic_fixture_and_paired_benign_control tests/unit/test_ticket_pack.py::test_ticket_protected_replay_preserves_mission_and_rejects_blanket_block -q"
-    expectation: "six atomic ticket failures have paired clean controls; the short composite emits exactly duplicate-booking, fee-inclusive budget, and adjacency findings; same-seed protected replay preserves the mission and rejects blanket purchase blocking without network access"
+    expectation: six atomic ticket failures have paired clean controls; the short composite emits exactly duplicate-booking, fee-inclusive budget, and adjacency findings; same-seed protected replay preserves the mission and rejects blanket purchase blocking without network access
+    targets:
+      - tests/integration/test_domain_packs.py::test_ticket_full_pack_replays_three_failures_and_preserves_raw_boundary
+      - tests/unit/test_ticket_pack.py::test_each_ticket_fault_has_one_atomic_fixture_and_paired_benign_control
+      - tests/unit/test_ticket_pack.py::test_ticket_protected_replay_preserves_mission_and_rejects_blanket_block
 
   # One-input deterministic diagnostic loop (issue #26).
   - id: one-input-synthetic-loop
+    runner: pytest
     issue: 26
-    command: "pytest tests/unit/test_loop.py::test_loop_measures_reproduces_and_verifies_the_selected_synthetic_archetype tests/integration/test_api.py::test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl -q"
-    expectation: "one structured target produces pinned provenance plus a bounded source snapshot, a 3/3 deterministic Life-v0 failure, cited oracle report, accepted patch gates, SandboxGym protected replay, and both report contracts in one ordered SSE/JSONL run"
+    expectation: one structured target produces pinned provenance plus a bounded source snapshot, a 3/3 deterministic Life-v0 failure, cited oracle report, accepted patch gates, SandboxGym protected replay, and both report contracts in one ordered SSE/JSONL run
+    targets:
+      - tests/unit/test_loop.py::test_loop_measures_reproduces_and_verifies_the_selected_synthetic_archetype
+      - tests/integration/test_api.py::test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl
+
   - id: one-input-openai-scope-boundary
+    runner: pytest
     issue: 26
-    command: "pytest tests/integration/test_api.py::test_live_target_passes_bounded_synthetic_evidence_to_openai tests/integration/test_api.py::test_diagnostic_failure_is_sanitized_and_falls_back -q"
-    expectation: "OpenAI receives bounded controller evidence labelled synthetic_archetype and never a target-code execution claim; diagnostic failures emit a sanitized explicit fallback without leaking the exception"
+    expectation: OpenAI receives bounded controller evidence labelled synthetic_archetype and never a target-code execution claim; diagnostic failures emit a sanitized explicit fallback without leaking the exception
+    targets:
+      - tests/integration/test_api.py::test_live_target_passes_bounded_synthetic_evidence_to_openai
+      - tests/integration/test_api.py::test_diagnostic_failure_is_sanitized_and_falls_back
+
   - id: one-input-source-preflight-boundary
+    runner: pytest
     issue: 26
-    command: "pytest tests/integration/test_api.py::test_source_preflight_failure_stops_without_target_claims -q"
-    expectation: "source or manifest preflight failure ends with an explicit source_preflight_failed terminal, zero experiments/findings, and no offline synthetic tool call or target claim"
+    expectation: source or manifest preflight failure ends with an explicit source_preflight_failed terminal, zero experiments/findings, and no offline synthetic tool call or target claim
+    targets:
+      - tests/integration/test_api.py::test_source_preflight_failure_stops_without_target_claims
 
   # DomainPack registry and the evidence-driven router (issue #57).  Routing is
   # a deterministic policy, so these check the decision itself: which pack, on
   # what evidence, with which budget, and how it terminates when the evidence
   # does not single one out.
   - id: routing-normal
+    runner: pytest
     issue: 57
-    command: "pytest tests/unit/test_packs.py::test_normal_a_payment_manifest_routes_to_life_and_stays_executable tests/unit/test_packs.py::test_normal_a_research_manifest_routes_to_the_research_pack tests/unit/test_packs.py::test_normal_a_market_manifest_routes_to_the_stock_pack tests/unit/test_packs.py::test_normal_a_ticket_manifest_routes_to_the_ticket_pack -q"
-    expectation: "a payment manifest selects Life and stays executable; research, market and ticket manifests each select their own pack and name the issue that owns their execution path instead of borrowing a Life experiment"
+    expectation: a payment manifest selects Life and stays executable; research, market and ticket manifests each select their own pack and name the issue that owns their execution path instead of borrowing a Life experiment
+    targets:
+      - tests/unit/test_packs.py::test_normal_a_payment_manifest_routes_to_life_and_stays_executable
+      - tests/unit/test_packs.py::test_normal_a_research_manifest_routes_to_the_research_pack
+      - tests/unit/test_packs.py::test_normal_a_market_manifest_routes_to_the_stock_pack
+      - tests/unit/test_packs.py::test_normal_a_ticket_manifest_routes_to_the_ticket_pack
+
   - id: routing-ambiguous
+    runner: pytest
     issue: 57
-    command: "pytest tests/unit/test_packs.py::test_tie_between_two_domain_packs_terminates_instead_of_guessing tests/unit/test_packs.py::test_tie_names_every_pack_that_tied tests/unit/test_packs.py::test_an_ambiguous_tie_becomes_an_unsupported_report_not_a_sixth_status -q"
-    expectation: "two domain packs on equal score stop with insufficient_evidence naming both, rather than taking the lexically first pack; the tie becomes an UNSUPPORTED report without adding a sixth terminal status"
+    expectation: two domain packs on equal score stop with insufficient_evidence naming both, rather than taking the lexically first pack; the tie becomes an UNSUPPORTED report without adding a sixth terminal status
+    targets:
+      - tests/unit/test_packs.py::test_tie_between_two_domain_packs_terminates_instead_of_guessing
+      - tests/unit/test_packs.py::test_tie_names_every_pack_that_tied
+      - tests/unit/test_packs.py::test_an_ambiguous_tie_becomes_an_unsupported_report_not_a_sixth_status
+
   - id: routing-unsupported
+    runner: pytest
     issue: 57
-    command: "pytest tests/unit/test_packs.py::test_unsupported_a_manifest_with_no_tools_routes_nowhere tests/unit/test_packs.py::test_unsupported_never_substitutes_a_pack_it_cannot_run tests/unit/test_external_preflight.py::test_preflight_stops_honestly_when_manifest_tools_are_unsupported -q"
-    expectation: "a manifest with no tools, and one whose every tool the loader rejected, both route nowhere and are not handed to the Adhoc fallback; a pack whose surface is absent never becomes a candidate"
+    expectation: a manifest with no tools, and one whose every tool the loader rejected, both route nowhere and are not handed to the Adhoc fallback; a pack whose surface is absent never becomes a candidate
+    targets:
+      - tests/unit/test_packs.py::test_unsupported_a_manifest_with_no_tools_routes_nowhere
+      - tests/unit/test_packs.py::test_unsupported_never_substitutes_a_pack_it_cannot_run
+      - tests/unit/test_external_preflight.py::test_preflight_stops_honestly_when_manifest_tools_are_unsupported
+
   - id: routing-budget-and-pack-error
+    runner: pytest
     issue: 57
-    command: "pytest tests/unit/test_packs.py::test_budget_exhausted_uses_the_selected_packs_own_bound tests/unit/test_packs.py::test_a_pack_error_names_the_pack_and_does_not_reroute tests/unit/test_packs.py::test_a_pack_error_never_reports_a_measured_failure tests/integration/test_api.py::test_diagnostic_failure_is_sanitized_and_falls_back -q"
-    expectation: "the selected pack's declared budget drives the loop stop conditions; a pack that raises is reported as that pack failing, never re-routed and never as a measured failure, and the run_failed payload carries the pack id without the exception message"
+    expectation: the selected pack's declared budget drives the loop stop conditions; a pack that raises is reported as that pack failing, never re-routed and never as a measured failure, and the run_failed payload carries the pack id without the exception message
+    targets:
+      - tests/unit/test_packs.py::test_budget_exhausted_uses_the_selected_packs_own_bound
+      - tests/unit/test_packs.py::test_a_pack_error_names_the_pack_and_does_not_reroute
+      - tests/unit/test_packs.py::test_a_pack_error_never_reports_a_measured_failure
+      - tests/integration/test_api.py::test_diagnostic_failure_is_sanitized_and_falls_back
+
   - id: routing-determinism
+    runner: pytest
     issue: 57
-    command: "pytest tests/unit/test_packs.py::test_three_runs_of_the_same_input_produce_the_same_selection_digest tests/unit/test_packs.py::test_tool_declaration_order_does_not_change_the_decision tests/unit/test_packs.py::test_the_registry_version_is_part_of_the_digest -q"
-    expectation: "three runs of the same manifest, profile and mission yield one selection digest across five tool surfaces; tool declaration order does not change it and a registry version bump does"
+    expectation: three runs of the same manifest, profile and mission yield one selection digest across five tool surfaces; tool declaration order does not change it and a registry version bump does
+    targets:
+      - tests/unit/test_packs.py::test_three_runs_of_the_same_input_produce_the_same_selection_digest
+      - tests/unit/test_packs.py::test_tool_declaration_order_does_not_change_the_decision
+      - tests/unit/test_packs.py::test_the_registry_version_is_part_of_the_digest
+
   - id: routing-lifecycle-event
+    runner: pytest
     issue: 57
-    command: "pytest tests/integration/test_api.py::test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl tests/integration/test_api.py::test_unsupported_manifest_stops_without_inventing_an_experiment -q"
-    expectation: "source_snapshot is published after source_descriptor, and pack.selected is published after behavior_profile and before experiment_plan in both SSE and JSONL, so the unsupported path -- which never reaches experiment_plan -- still records the bounded source, considered pack, why, budget and fallback"
+    expectation: source_snapshot is published after source_descriptor, and pack.selected is published after behavior_profile and before experiment_plan in both SSE and JSONL, so the unsupported path -- which never reaches experiment_plan -- still records the bounded source, considered pack, why, budget and fallback
+    targets:
+      - tests/integration/test_api.py::test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl
+      - tests/integration/test_api.py::test_unsupported_manifest_stops_without_inventing_an_experiment
 
   # Hosted run evidence integrity (issue #68).
   - id: hosted-run-context-integrity
+    runner: site
     issue: 68
-    command: "cd site && npm test"
-    expectation: "the event route accepts only a short-lived server-encrypted context bound to its run_id; source SHA, OpenAI response ID and mode query injection, token tampering, cross-run reuse, unknown and expired runs terminate before any SSE or verified outcome, and mission data is absent from the URL"
+    expectation: the event route accepts only a short-lived server-encrypted context bound to its run_id; source SHA, OpenAI response ID and mode query injection, token tampering, cross-run reuse, unknown and expired runs terminate before any SSE or verified outcome, and mission data is absent from the URL
+    requires_build: true
+    targets:
+      - tests/rendered-html.test.mjs
 
   # Surprise-mission support on the structured-target path (issue #69, B).
   # `test_surprise.py` already covers the legacy `{"input": ...}` transport; the
   # cases below cover the transport `web/` actually submits, where a mission's
   # domain can be one D1 cannot stage at all.
   - id: surprise-support-classification
+    runner: pytest
     issue: 69
-    command: "pytest tests/evals/test_surprise_support.py::test_a_payment_agent_supports_only_the_money_domain tests/evals/test_surprise_support.py::test_communication_becomes_supported_only_when_the_surface_is_there tests/evals/test_surprise_support.py::test_the_unsupported_domains_are_unsupported_because_no_pack_stages_them tests/evals/test_surprise_support.py::test_an_unsupported_verdict_reuses_the_controller_stop_vocabulary -q"
-    expectation: "each documented Surprise mission is classified supported/unsupported from the pack registry rather than a hand-written verdict; a payment agent supports only the money domain, communication needs a web or email surface, and time/data/cross-domain are unsupported because no executable pack registers their fault family; the verdict reuses StopDecision's unsupported_input rather than minting a sixth status"
+    expectation: each documented Surprise mission is classified supported/unsupported from the pack registry rather than a hand-written verdict; a payment agent supports only the money domain, communication needs a web or email surface, and time/data/cross-domain are unsupported because no executable pack registers their fault family; the verdict reuses StopDecision's unsupported_input rather than minting a sixth status
+    targets:
+      - tests/evals/test_surprise_support.py::test_a_payment_agent_supports_only_the_money_domain
+      - tests/evals/test_surprise_support.py::test_communication_becomes_supported_only_when_the_surface_is_there
+      - tests/evals/test_surprise_support.py::test_the_unsupported_domains_are_unsupported_because_no_pack_stages_them
+      - tests/evals/test_surprise_support.py::test_an_unsupported_verdict_reuses_the_controller_stop_vocabulary
+
   - id: surprise-unsupported-terminal
+    runner: pytest
     issue: 69
-    command: "pytest tests/evals/test_surprise_support.py::test_an_unsupported_mission_terminates_exactly_once_as_unsupported tests/evals/test_surprise_support.py::test_an_unsupported_terminal_carries_no_payment_or_cake_evidence tests/evals/test_surprise_support.py::test_an_unsupported_terminal_without_its_finding_report_fails -q"
-    expectation: "an unsupported Surprise mission ends in exactly one typed unsupported terminal with a matching finding_report, emits no experiment_plan or protected_replay, and carries zero payment/cake evidence; a terminal without its finding_report fails the gate"
+    expectation: an unsupported Surprise mission ends in exactly one typed unsupported terminal with a matching finding_report, emits no experiment_plan or protected_replay, and carries zero payment/cake evidence; a terminal without its finding_report fails the gate
+    targets:
+      - tests/evals/test_surprise_support.py::test_an_unsupported_mission_terminates_exactly_once_as_unsupported
+      - tests/evals/test_surprise_support.py::test_an_unsupported_terminal_carries_no_payment_or_cake_evidence
+      - tests/evals/test_surprise_support.py::test_an_unsupported_terminal_without_its_finding_report_fails
+
   - id: surprise-silent-substitution
+    runner: pytest
     issue: 69
-    command: "pytest tests/evals/test_surprise_support.py::test_the_detector_reports_a_substitution_with_the_events_that_prove_it tests/evals/test_surprise_support.py::test_an_off_domain_mission_against_a_payment_manifest_terminates_unsupported tests/evals/test_surprise_support.py::test_the_mission_text_does_not_change_the_selected_pack tests/evals/test_surprise_support.py::test_a_supported_money_mission_passes_its_gate tests/evals/test_surprise_support.py::test_a_supported_communication_mission_runs_its_own_fault -q"
-    expectation: "the gate reports a substituted answer with the exact event indices that prove it instead of a pass; an off-domain mission against a payment manifest now terminates unsupported, the router digest stays evidence-driven, and supported money/communication missions run only the fault family that earned their support verdict"
+    expectation: the gate reports a substituted answer with the exact event indices that prove it instead of a pass; an off-domain mission against a payment manifest now terminates unsupported, the router digest stays evidence-driven, and supported money/communication missions run only the fault family that earned their support verdict
+    targets:
+      - tests/evals/test_surprise_support.py::test_the_detector_reports_a_substitution_with_the_events_that_prove_it
+      - tests/evals/test_surprise_support.py::test_an_off_domain_mission_against_a_payment_manifest_terminates_unsupported
+      - tests/evals/test_surprise_support.py::test_the_mission_text_does_not_change_the_selected_pack
+      - tests/evals/test_surprise_support.py::test_a_supported_money_mission_passes_its_gate
+      - tests/evals/test_surprise_support.py::test_a_supported_communication_mission_runs_its_own_fault
+
   - id: surprise-terminal-digest
+    runner: pytest
     issue: 69
-    command: "pytest tests/evals/test_surprise_support.py::test_the_same_fixture_and_seed_reproduce_the_same_terminal_digest tests/evals/test_surprise_support.py::test_an_unsupported_route_has_its_own_stable_digest tests/evals/test_surprise_support.py::test_the_digest_ignores_run_id_and_timestamps -q"
-    expectation: "two runs of the same fixture and seed produce one terminal digest while their run ids differ; the unsupported route has its own stable digest that a silently substituted run does not share"
+    expectation: two runs of the same fixture and seed produce one terminal digest while their run ids differ; the unsupported route has its own stable digest that a silently substituted run does not share
+    targets:
+      - tests/evals/test_surprise_support.py::test_the_same_fixture_and_seed_reproduce_the_same_terminal_digest
+      - tests/evals/test_surprise_support.py::test_an_unsupported_route_has_its_own_stable_digest
+      - tests/evals/test_surprise_support.py::test_the_digest_ignores_run_id_and_timestamps
 
   # Metadata-only K-Skill declaration intake (issue #61).
   - id: k-skill-pinned-catalog
+    runner: pytest
     issue: 61
-    command: "pytest tests/unit/test_k_skill_intake.py::test_checked_in_catalog_covers_the_p0_shortlist_with_exact_provenance -q"
-    expectation: "all 13 P0 skills are sorted and pinned to one exact commit/tree with only skill.json and instruction.md path/blob/size provenance; generated instructions and environment names are absent"
+    expectation: all 13 P0 skills are sorted and pinned to one exact commit/tree with only skill.json and instruction.md path/blob/size provenance; generated instructions and environment names are absent
+    targets:
+      - tests/unit/test_k_skill_intake.py::test_checked_in_catalog_covers_the_p0_shortlist_with_exact_provenance
+
   - id: k-skill-no-execution
+    runner: pytest
     issue: 61
-    command: "pytest tests/unit/test_k_skill_intake.py::test_adapter_returns_declared_surface_without_authorizing_execution tests/unit/test_k_skill_intake.py::test_changed_commit_stops_before_any_metadata_lookup tests/unit/test_k_skill_intake.py::test_claim_boundaries_cannot_be_weakened_even_with_an_existing_digest -q"
-    expectation: "a registered declaration remains metadata-only with max_experiments=0 and no failure claims; a changed commit stops before metadata access, and exact claim boundaries cannot be weakened into a safety verdict"
+    expectation: a registered declaration remains metadata-only with max_experiments=0 and no failure claims; a changed commit stops before metadata access, and exact claim boundaries cannot be weakened into a safety verdict
+    targets:
+      - tests/unit/test_k_skill_intake.py::test_adapter_returns_declared_surface_without_authorizing_execution
+      - tests/unit/test_k_skill_intake.py::test_changed_commit_stops_before_any_metadata_lookup
+      - tests/unit/test_k_skill_intake.py::test_claim_boundaries_cannot_be_weakened_even_with_an_existing_digest
+
   - id: k-skill-drift-missing-unknown
+    runner: pytest
     issue: 61
-    command: "pytest tests/unit/test_k_skill_intake.py::test_catalog_drift_returns_typed_unsupported_without_a_finding tests/unit/test_k_skill_intake.py::test_snapshot_builder_binds_catalog_bytes_to_the_tree_blob tests/unit/test_k_skill_intake.py::test_missing_catalog_path_returns_typed_unsupported tests/unit/test_k_skill_intake.py::test_unknown_skill_never_defaults_to_a_safe_or_executable_profile tests/unit/test_k_skill_intake.py::test_invalid_skill_id_is_sanitized_before_it_reaches_a_result -q"
-    expectation: "catalog blob drift, a missing reviewed path, an unknown skill, and an invalid control-bearing ID return closed typed reasons with zero experiments and zero findings; catalog bytes must hash to the tree blob"
+    expectation: catalog blob drift, a missing reviewed path, an unknown skill, and an invalid control-bearing ID return closed typed reasons with zero experiments and zero findings; catalog bytes must hash to the tree blob
+    targets:
+      - tests/unit/test_k_skill_intake.py::test_catalog_drift_returns_typed_unsupported_without_a_finding
+      - tests/unit/test_k_skill_intake.py::test_snapshot_builder_binds_catalog_bytes_to_the_tree_blob
+      - tests/unit/test_k_skill_intake.py::test_missing_catalog_path_returns_typed_unsupported
+      - tests/unit/test_k_skill_intake.py::test_unknown_skill_never_defaults_to_a_safe_or_executable_profile
+      - tests/unit/test_k_skill_intake.py::test_invalid_skill_id_is_sanitized_before_it_reaches_a_result
+
   - id: k-skill-read-only-and-snapshot
+    runner: pytest
     issue: 61
-    command: "pytest tests/unit/test_k_skill_intake.py::test_no_side_effect_skill_does_not_gain_a_mutation_fault_hypothesis tests/unit/test_k_skill_intake.py::test_local_archive_sync_is_reversible_and_never_claims_credentials tests/unit/test_k_skill_intake.py::test_snapshot_builder_is_byte_stable_for_the_same_tree tests/unit/test_k_skill_intake.py::test_snapshot_builder_rejects_truncated_or_missing_tree_metadata tests/unit/test_k_skill_intake.py::test_snapshot_builder_rejects_an_unrelated_commit_and_tree tests/unit/test_k_skill_intake.py::test_snapshot_builder_never_carries_classifications_to_a_new_commit -q"
-    expectation: "read-only lookup never gains mutation fault families, local archive sync remains an explicit reversible filesystem effect, and the reviewed evidence set reproduces deterministically while truncated, missing, unrelated, or new-source snapshots are rejected"
+    expectation: read-only lookup never gains mutation fault families, local archive sync remains an explicit reversible filesystem effect, and the reviewed evidence set reproduces deterministically while truncated, missing, unrelated, or new-source snapshots are rejected
+    targets:
+      - tests/unit/test_k_skill_intake.py::test_no_side_effect_skill_does_not_gain_a_mutation_fault_hypothesis
+      - tests/unit/test_k_skill_intake.py::test_local_archive_sync_is_reversible_and_never_claims_credentials
+      - tests/unit/test_k_skill_intake.py::test_snapshot_builder_is_byte_stable_for_the_same_tree
+      - tests/unit/test_k_skill_intake.py::test_snapshot_builder_rejects_truncated_or_missing_tree_metadata
+      - tests/unit/test_k_skill_intake.py::test_snapshot_builder_rejects_an_unrelated_commit_and_tree
+      - tests/unit/test_k_skill_intake.py::test_snapshot_builder_never_carries_classifications_to_a_new_commit
 
   # Pinned participant-repository intake (issue #62).
   - id: participant-pinned-static-profiles
+    runner: pytest
     issue: 62
-    command: "pytest tests/unit/test_participant_intake.py::test_three_pinned_participant_profiles_are_provenance_bearing_and_claim_bounded tests/unit/test_participant_intake.py::test_two_research_like_profiles_have_distinct_pinned_evidence -q"
-    expectation: "three audited sources retain full commit and path/blob/line provenance; two are Research compatibility candidates while the generic starter is unsupported, and none contains a target failure claim"
+    expectation: three audited sources retain full commit and path/blob/line provenance; two are Research compatibility candidates while the generic starter is unsupported, and none contains a target failure claim
+    targets:
+      - tests/unit/test_participant_intake.py::test_three_pinned_participant_profiles_are_provenance_bearing_and_claim_bounded
+      - tests/unit/test_participant_intake.py::test_two_research_like_profiles_have_distinct_pinned_evidence
+
   - id: participant-owner-priority-and-drift
+    runner: pytest
     issue: 62
-    command: "pytest tests/unit/test_participant_intake.py::test_owner_manifest_takes_priority_over_registered_lab_profile tests/unit/test_participant_intake.py::test_branch_drift_never_reuses_an_older_static_profile tests/unit/test_participant_intake.py::test_invalid_static_evidence_terminates_without_reusing_profile -q"
-    expectation: "an allowlisted owner manifest takes priority; changed source/blob metadata, missing files, oversized files, symlinks, and submodules terminate without reusing a stale lab profile"
+    expectation: an allowlisted owner manifest takes priority; changed source/blob metadata, missing files, oversized files, symlinks, and submodules terminate without reusing a stale lab profile
+    targets:
+      - tests/unit/test_participant_intake.py::test_owner_manifest_takes_priority_over_registered_lab_profile
+      - tests/unit/test_participant_intake.py::test_branch_drift_never_reuses_an_older_static_profile
+      - tests/unit/test_participant_intake.py::test_invalid_static_evidence_terminates_without_reusing_profile
+
   - id: participant-one-input-compatibility-terminal
+    runner: pytest
     issue: 62
-    command: "pytest tests/integration/test_api.py::test_manifestless_participant_terminates_with_ordered_compatibility_report -q"
-    expectation: "one input emits source_descriptor, metadata-only source_snapshot, target_profile, pack_selection, and compatibility_report in one raw SSE/JSONL run, then terminates with zero experiments and no fabricated finding"
+    expectation: one input emits source_descriptor, metadata-only source_snapshot, target_profile, pack_selection, and compatibility_report in one raw SSE/JSONL run, then terminates with zero experiments and no fabricated finding
+    targets:
+      - tests/integration/test_api.py::test_manifestless_participant_terminates_with_ordered_compatibility_report
 
   # The mission-scope gate that turns the D1 support column into enforcement
   # (issue #69).
   - id: surprise-typed-terminal
+    runner: pytest
     issue: 69
-    command: "pytest tests/unit/test_mission_scope.py::test_an_off_domain_mission_against_a_payment_agent_stops tests/unit/test_mission_scope.py::test_the_gate_does_not_touch_the_routing_decision tests/evals/test_surprise_support.py::test_an_off_domain_mission_against_a_payment_manifest_terminates_unsupported tests/evals/test_surprise_support.py::test_the_off_domain_run_stops_before_planning_an_experiment -q"
-    expectation: "a mission naming a failure domain D1 cannot stage terminates as typed unsupported after routing has already chosen its pack: eight events, no experiment_plan and no protected_replay, zero payment evidence, and a lab_report whose termination reason is unsupported_input; the routing decision itself is untouched, so the selected pack stays executable"
+    expectation: 'a mission naming a failure domain D1 cannot stage terminates as typed unsupported after routing has already chosen its pack: eight events, no experiment_plan and no protected_replay, zero payment evidence, and a lab_report whose termination reason is unsupported_input; the routing decision itself is untouched, so the selected pack stays executable'
+    targets:
+      - tests/unit/test_mission_scope.py::test_an_off_domain_mission_against_a_payment_agent_stops
+      - tests/unit/test_mission_scope.py::test_the_gate_does_not_touch_the_routing_decision
+      - tests/evals/test_surprise_support.py::test_an_off_domain_mission_against_a_payment_manifest_terminates_unsupported
+      - tests/evals/test_surprise_support.py::test_the_off_domain_run_stops_before_planning_an_experiment
+
   - id: surprise-scope-gate-fails-open
+    runner: pytest
     issue: 69
-    command: "pytest \"tests/unit/test_mission_scope.py::test_every_demo_mission_is_the_money_domain\" \"tests/unit/test_mission_scope.py::test_a_demo_mission_against_a_payment_agent_never_stops\" \"tests/unit/test_mission_scope.py::test_an_unclassifiable_mission_never_stops\" \"tests/unit/test_mission_scope.py::test_two_domains_at_once_is_not_a_verdict\" \"tests/unit/test_mission_scope.py::test_a_topic_word_alone_does_not_classify\" tests/evals/test_surprise_support.py::test_a_benign_purchase_mission_still_runs_the_whole_experiment -q"
-    expectation: "the gate reads free text, so its real risk is over-blocking: every mission the demo, the smoke scripts and the fixtures actually submit classifies as the money domain and runs to completion, an unclassifiable or two-domain mission never stops a run, a bare topic word never classifies, and the runbook's own cake mission still plans and replays the full experiment"
+    expectation: 'the gate reads free text, so its real risk is over-blocking: every mission the demo, the smoke scripts and the fixtures actually submit classifies as the money domain and runs to completion, an unclassifiable or two-domain mission never stops a run, a bare topic word never classifies, and the runbook''s own cake mission still plans and replays the full experiment'
+    targets:
+      - tests/unit/test_mission_scope.py::test_every_demo_mission_is_the_money_domain
+      - tests/unit/test_mission_scope.py::test_a_demo_mission_against_a_payment_agent_never_stops
+      - tests/unit/test_mission_scope.py::test_an_unclassifiable_mission_never_stops
+      - tests/unit/test_mission_scope.py::test_two_domains_at_once_is_not_a_verdict
+      - tests/unit/test_mission_scope.py::test_a_topic_word_alone_does_not_classify
+      - tests/evals/test_surprise_support.py::test_a_benign_purchase_mission_still_runs_the_whole_experiment
 
   # Registry drift regression (issues #57, #60).  The Ticket pack shipped with a
   # tool vocabulary that shared nothing with the placeholder #57 registered, and
   # no test caught it because the placeholder assertions still held.
   - id: routing-ticket-registry-drift
+    runner: pytest
     issue: 57
-    command: "pytest tests/unit/test_packs.py::test_ticket_spec_matches_the_ticket_pack tests/unit/test_packs.py::test_ticket_spec_matches_the_metadata_the_pack_publishes tests/unit/test_packs.py::test_a_real_ticket_agent_routes_to_the_ticket_pack -q"
-    expectation: "the registered Ticket spec equals the shipped pack's tool manifest, fixture ids, fault atoms, budget and published metadata; an agent declaring the pack's own required tools routes to the Ticket pack instead of the Adhoc fallback"
+    expectation: the registered Ticket spec equals the shipped pack's tool manifest, fixture ids, fault atoms, budget and published metadata; an agent declaring the pack's own required tools routes to the Ticket pack instead of the Adhoc fallback
+    targets:
+      - tests/unit/test_packs.py::test_ticket_spec_matches_the_ticket_pack
+      - tests/unit/test_packs.py::test_the_registry_agrees_with_the_metadata_each_pack_publishes
+      - tests/unit/test_packs.py::test_a_real_ticket_agent_routes_to_the_ticket_pack
 
-  # D5a Q3 · controller/outcome evidence (issue #13, family C3/C4 controller half).
-  # Case ids are frozen by the D5a manifest; the traceability tests refuse to let
-  # one disappear into neither an implementation nor a named blocker.
+  # D5a Q3 · controller/outcome evidence (issue #13, family C3/C4 controller
+  # half).  The authoritative case set is the ratified manifest vendored at
+  # tests/evals/d5a-plan.json; the guard reads it rather than restating it.
   - id: d5a-q3-controller-success
+    runner: pytest
     issue: 13
-    command: "pytest tests/acceptance/test_controller_success.py -q"
-    expectation: "CS-03: the healthy twin and the failing run first diverge where the AUT opens a second payment intent instead of retrieving the unreconciled original, cited by ledger position and independently by the controller oracle, while the protected run reconciles and rejoins the twin; CS-05: one accepted run emits exactly one terminal with no run_failed and every success signal measured rather than narrated; CS-01 and CS-02 are declared blocked on the A4 semantic-event migration against the ratified manifest rather than silently absent"
-  - id: d5a-q3-traceability-guard
-    issue: 13
-    command: "pytest tests/acceptance/test_traceability_guard.py -q"
-    expectation: "the authoritative case set is read from the ratified manifest rather than restated, so a case dropped from every bucket is still caught; an invented case id, a case claimed twice, an implemented case naming a missing test, a covered case naming a node id pytest cannot collect, a module claiming a family the plan did not assign it, and a blocked case with no reason are each rejected"
+    expectation: CS-03 the healthy twin and the failing run first diverge where the AUT opens a second payment intent instead of retrieving the unreconciled original, cited by ledger position and independently by the controller oracle, while the protected run reconciles and rejoins the twin; CS-05 one accepted run emits exactly one terminal with no run_failed and every success signal measured rather than narrated
+    targets:
+      - tests/acceptance/test_controller_success.py::test_cs_03_first_divergence_cites_the_unreconciled_original_payment_intent
+      - tests/acceptance/test_controller_success.py::test_cs_05_an_accepted_run_emits_exactly_one_terminal
+      - tests/acceptance/test_controller_success.py::test_cs_05_the_terminal_is_reached_without_a_model_call
+      - tests/acceptance/test_controller_success.py::test_every_c3_case_in_the_ratified_plan_is_accounted_for
   - id: d5a-q3-honest-outcomes
+    runner: pytest
     issue: 13
-    command: "pytest tests/acceptance/test_honest_outcomes.py -q"
-    expectation: "HO-02: a run that found nothing carries the not-a-safety-certificate sentence and no observed, patch, verification, hypothesis, divergence or counterexample field; HO-03: either declared bound exhausts the budget, an exhausted budget is not a clean result, and an unsupported input outranks it; HO-01 is recorded as covered by the surprise-support suite and HO-04/HO-05 as blocked on A4"
+    expectation: HO-02 a run that found nothing carries the not-a-safety-certificate sentence and no observed, patch, verification, hypothesis, divergence or counterexample field; HO-03 either declared bound exhausts the budget, an exhausted budget is not a clean result, and an unsupported input outranks it
+    targets:
+      - tests/acceptance/test_honest_outcomes.py::test_ho_02_a_run_that_found_nothing_does_not_claim_safety
+      - tests/acceptance/test_honest_outcomes.py::test_ho_02_a_non_finding_state_carries_no_finding_fields
+      - tests/acceptance/test_honest_outcomes.py::test_ho_03_an_exhausted_budget_is_not_a_clean_result
+      - tests/acceptance/test_honest_outcomes.py::test_ho_03_either_bound_exhausts_the_budget
+      - tests/acceptance/test_honest_outcomes.py::test_ho_03_an_unsupported_input_outranks_an_exhausted_budget
+      - tests/acceptance/test_honest_outcomes.py::test_every_c4_case_in_the_ratified_plan_is_accounted_for
+  - id: d5a-q3-traceability-guard
+    runner: pytest
+    issue: 13
+    expectation: the authoritative case set is read from the ratified manifest rather than restated, so a case dropped from every bucket is still caught; an invented case id, a case claimed twice, an implemented case naming a missing test, a covered case naming a node id pytest cannot collect, a module claiming a family the plan did not assign it, and a blocked case with no reason are each rejected
+    targets:
+      - tests/acceptance/test_traceability_guard.py
