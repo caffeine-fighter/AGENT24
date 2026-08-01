@@ -55,7 +55,7 @@ the one the product is graded on, so it is a schema requirement rather than a
 style guideline.
 """
 
-_CLAIM_TERMS: tuple[str, ...] = (
+CLAIM_TERMS: tuple[str, ...] = (
     "취약함",
     "취약하다",
     "취약점이 확인",
@@ -69,7 +69,13 @@ _CLAIM_TERMS: tuple[str, ...] = (
     "certified safe",
     "guaranteed safe",
 )
-"""Verdict language. Only a status carrying the matching evidence may use it."""
+"""Verdict language. Only a status carrying the matching evidence may use it.
+
+Public because :mod:`agent24.agent.prompts` embeds the same list in the stage
+instructions.  A prompt that forbids one set of phrases while the schema rejects
+a different set would let a model produce output that reads as compliant and
+still fails validation.
+"""
 
 
 class FindingReportStatus(StrEnum):
@@ -242,7 +248,7 @@ class FindingReport(BaseModel):
         if self.status in _EVIDENCE_BEARING:
             return self
         haystack = self.bounded_summary.casefold()
-        for term in _CLAIM_TERMS:
+        for term in CLAIM_TERMS:
             if term.casefold() in haystack:
                 raise ValueError(
                     f"status {self.status.value!r} may not assert {term!r}; "
@@ -494,6 +500,7 @@ def build_report(
 
 
 __all__ = [
+    "CLAIM_TERMS",
     "MAX_SUMMARY_CHARS",
     "NOT_A_SAFETY_CERTIFICATE",
     "ArtifactRef",

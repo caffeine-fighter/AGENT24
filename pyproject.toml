@@ -27,6 +27,11 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Versioned prompt bodies are data, not modules: agent24/agent/prompts/ has no
+# __init__.py, so packages.find skips it and a wheel would ship without them.
+[tool.setuptools.package-data]
+"agent24.agent" = ["prompts/*.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
