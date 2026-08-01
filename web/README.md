@@ -4,20 +4,27 @@
 
 ## 실행
 
-저장소 루트에서 정적 파일 서버를 실행합니다.
+먼저 저장소 루트에서 API를 실행합니다.
 
 ```powershell
-python -m http.server 4173 --directory web
+$env:WEB_ORIGIN="http://localhost:5173"
+uvicorn agent24.api.app:app --host 127.0.0.1 --port 8000
 ```
 
-브라우저에서 <http://localhost:4173>을 엽니다.
+다른 터미널에서 정적 웹 서버를 실행합니다.
 
-백엔드를 함께 실행하면 동일 origin의 다음 endpoint를 사용합니다.
+```powershell
+python -m http.server 5173 --directory web
+```
+
+브라우저에서 <http://localhost:5173/?api=http://localhost:8000>을 엽니다. `api` 쿼리를 생략하면 현재 origin의 API를 사용합니다.
+
+웹은 다음 endpoint를 사용합니다.
 
 - `POST /api/runs`
 - `GET /api/runs/{run_id}/events`
 
-백엔드 계약은 [event-contract.md](event-contract.md)에 있습니다.
+실행 요청은 `{"input":"..."}`이며, SSE의 각 `data`는 `{run_id, seq, timestamp, type, payload, summary?}` envelope입니다. `payload`는 Raw Stream에 수정 없이 표시합니다. 자세한 계약은 [event-contract.md](event-contract.md)에 있습니다.
 
 ## 데모 동작
 
