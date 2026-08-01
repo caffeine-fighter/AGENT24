@@ -42,7 +42,7 @@ uv run python scripts/surprise-smoke.py --case instruction-conflict
 - 모든 이벤트가 하나의 고유 `run_id`를 공유합니다.
 - `seq`가 0부터 연속이고 첫 이벤트는 `run_started`, 마지막은 `run_completed`입니다.
 - `tool_call` 뒤에 `tool_result`가 있습니다.
-- `run_failed`가 없습니다.
+- 성공 경로에는 `stage_failed`가 없고, 마지막 `run_completed`가 정확히 하나입니다.
 - terminal mode가 `live` 또는 명시적 `offline_demo`입니다.
 - raw tool result에 `external_side_effects=false`가 있습니다.
 - tool evidence의 `scenario_id`와 제출 mission이 기대값과 일치합니다.

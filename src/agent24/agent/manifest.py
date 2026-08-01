@@ -20,6 +20,10 @@ from pydantic import ValidationError
 
 from .models import MissionFamily, ToolSpec
 from .profile import AgentManifest
+from .sandbox_contract import (
+    SANDBOX_GYM_CONTRACT_ID,
+    validate_sandbox_manifest,
+)
 from .source import SourceDescriptor
 
 MANIFEST_VERSION = "agent24.manifest.v1"
@@ -197,6 +201,8 @@ def _parse_manifest(
         "permissions",
         "mission_family",
         "adapter_version",
+        "python_version",
+        "runtime_contract",
     }
     unknown_fields = sorted(set(raw) - allowed_fields)
     if unknown_fields:
@@ -206,6 +212,26 @@ def _parse_manifest(
     if not isinstance(raw.get("name"), str) or not raw["name"].strip():
         raise MalformedManifestError("name must be a non-empty string")
     entrypoint = _safe_entrypoint(raw.get("entrypoint"))
+    python_version = raw.get("python_version")
+    if python_version is not None and (
+        not isinstance(python_version, str) or not python_version.strip()
+    ):
+        raise MalformedManifestError("python_version must be a non-empty string")
+    runtime_contract = raw.get("runtime_contract", {})
+    if not isinstance(runtime_contract, Mapping):
+        raise MalformedManifestError("runtime_contract must be a JSON object")
+    if runtime_contract:
+        if runtime_contract.get("id") != SANDBOX_GYM_CONTRACT_ID:
+            raise MalformedManifestError("runtime_contract id is not supported")
+        try:
+            validate_sandbox_manifest(
+                raw.get("tools"),
+                runtime_contract,
+                permissions=raw.get("permissions"),
+                python_version=python_version,
+            )
+        except ValueError as error:
+            raise MalformedManifestError(str(error)) from error
     tools, unsupported = _parse_tools(raw.get("tools"))
 
     permissions = raw.get("permissions", {})
@@ -236,6 +262,8 @@ def _parse_manifest(
         tools=tools,
         permissions=dict(permissions),
         entrypoint=entrypoint,
+        python_version=python_version,
+        runtime_contract=dict(runtime_contract),
         mission_family=mission_family,
         manifest_hash=hashlib.sha256(raw_bytes).hexdigest(),
         adapter_version=adapter_version,
@@ -270,9 +298,33 @@ def load_manifest(
             raise ManifestNotFoundError(f"allowlisted manifest does not exist: {relative}")
     try:
         raw_bytes = path.read_bytes()
+    except OSError as error:
+        raise MalformedManifestError(f"could not read manifest {relative}") from error
+    return load_manifest_bytes(raw_bytes, source, manifest_path=relative)
+
+
+def load_manifest_bytes(
+    raw_bytes: bytes,
+    source: SourceDescriptor,
+    *,
+    manifest_path: str = ".agent24/manifest.json",
+) -> AgentManifest:
+    """Validate already-read manifest bytes without reopening the source.
+
+    The local runner uses this boundary after hashing the checked-in bytes once.
+    It prevents a second source read from becoming a time-of-check/time-of-use
+    gap while retaining the same schema loader used by normal preflight.
+    """
+
+    if not source.resolved_sha or len(source.resolved_sha) < 40:
+        raise PinnedSourceRequiredError("manifest loading requires a full source revision")
+    relative = manifest_path.replace("\\", "/").lstrip("/")
+    if relative not in ALLOWED_MANIFEST_PATHS:
+        raise ManifestPathError("manifest path is not allowlisted")
+    try:
         raw = json.loads(raw_bytes.decode("utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise MalformedManifestError(f"could not parse manifest {relative}: {error}") from error
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise MalformedManifestError(f"could not parse manifest {relative}") from error
     return _parse_manifest(raw, source=source, raw_bytes=raw_bytes)
 
 
@@ -289,5 +341,6 @@ __all__ = [
     "MalformedManifestError",
     "PinnedSourceRequiredError",
     "load_agent_manifest",
+    "load_manifest_bytes",
     "load_manifest",
 ]

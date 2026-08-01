@@ -53,6 +53,7 @@ PAPER_PLAYGROUND_SHA = "bf6c545b6c3fd547819b76f9d3d96c5995d43eb0"
 CREATIVE_STARTER_SHA = "f5527715e6ab6ef1f0ce7b2e098a5d181b5e26cb"
 
 _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_SOURCE_REVISION_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _LINE_SELECTOR_RE = re.compile(r"^L([1-9][0-9]*)(?:-L([1-9][0-9]*))?$")
 _ALLOWED_STATIC_SUFFIXES = frozenset(
     {".md", ".json", ".yaml", ".yml", ".toml", ".py", ".ts", ".tsx", ".js", ".mjs"}
@@ -546,6 +547,8 @@ class TargetEvidenceRef(BaseModel):
     kind: StaticEvidenceKind
     repository: str
     resolved_sha: str
+    revision_kind: Literal["commit", "bundle_sha256"] = "commit"
+    bundle_sha256: str | None = None
     path: str
     blob_sha: str
     line_selector: str
@@ -554,7 +557,23 @@ class TargetEvidenceRef(BaseModel):
     @field_validator("resolved_sha", "blob_sha")
     @classmethod
     def _sha(cls, value: str, info) -> str:
-        return _validated_sha(value, field_name=info.field_name)
+        if info.field_name == "blob_sha":
+            return _validated_sha(value, field_name=info.field_name)
+        normalized = value.strip().lower()
+        if not _SOURCE_REVISION_RE.fullmatch(normalized):
+            raise ValueError(f"{info.field_name} must be a full source revision")
+        return normalized
+
+    @model_validator(mode="after")
+    def _revision_matches_kind(self) -> Self:
+        if self.revision_kind == "bundle_sha256":
+            if not re.fullmatch(r"[0-9a-f]{64}", self.resolved_sha):
+                raise ValueError("bundle_sha256 evidence requires a 64-character revision")
+            if self.bundle_sha256 != self.resolved_sha:
+                raise ValueError("bundle_sha256 evidence must match resolved_sha")
+        elif len(self.resolved_sha) != 40 or self.bundle_sha256 is not None:
+            raise ValueError("commit evidence requires a 40-character revision")
+        return self
 
     @field_validator("path")
     @classmethod
@@ -568,8 +587,14 @@ class TargetEvidenceRef(BaseModel):
 
     @property
     def stable_ref(self) -> str:
+        source_kind = "local_bundle" if self.revision_kind == "bundle_sha256" else "github"
+        revision = (
+            f"sha256:{self.bundle_sha256}"
+            if self.revision_kind == "bundle_sha256"
+            else self.resolved_sha
+        )
         return (
-            f"github:{self.repository}@{self.resolved_sha}:"
+            f"{source_kind}:{self.repository}@{revision}:"
             f"{self.path}@{self.blob_sha}#{self.line_selector}"
         )
 
@@ -580,6 +605,8 @@ class TargetProfileProvenance(BaseModel):
     origin: ProfileOrigin
     repository_url: str
     resolved_sha: str
+    revision_kind: Literal["commit", "bundle_sha256"] = "commit"
+    bundle_sha256: str | None = None
     generated_at: str
     reviewed_at: str | None = None
     adapter_version: str = PARTICIPANT_INTAKE_ADAPTER_VERSION
@@ -592,7 +619,19 @@ class TargetProfileProvenance(BaseModel):
     @field_validator("resolved_sha")
     @classmethod
     def _source_sha(cls, value: str) -> str:
-        return _validated_sha(value, field_name="resolved_sha")
+        normalized = value.strip().lower()
+        if not _SOURCE_REVISION_RE.fullmatch(normalized):
+            raise ValueError("resolved_sha must be a full source revision")
+        return normalized
+
+    @model_validator(mode="after")
+    def _revision_matches_kind(self) -> Self:
+        if self.revision_kind == "bundle_sha256":
+            if len(self.resolved_sha) != 64 or self.bundle_sha256 != self.resolved_sha:
+                raise ValueError("bundle_sha256 provenance must match the 64-character revision")
+        elif len(self.resolved_sha) != 40 or self.bundle_sha256 is not None:
+            raise ValueError("commit provenance requires a 40-character revision")
+        return self
 
     @field_validator("generated_at")
     @classmethod
@@ -999,6 +1038,8 @@ def build_owner_manifest_compatibility(
         kind=StaticEvidenceKind.OWNER_MANIFEST,
         repository=source.repository,
         resolved_sha=source.resolved_sha,
+        revision_kind=source.revision_kind,
+        bundle_sha256=source.bundle_sha256,
         path=safe_path,
         blob_sha=git_blob_sha(manifest_bytes),
         line_selector=f"L1-L{manifest_line_count}",
@@ -1013,6 +1054,8 @@ def build_owner_manifest_compatibility(
         origin=ProfileOrigin.OWNER_MANIFEST,
         repository_url=source.repository_url,
         resolved_sha=source.resolved_sha,
+        revision_kind=source.revision_kind,
+        bundle_sha256=source.bundle_sha256,
         generated_at=source.retrieved_at,
         public_visibility="unknown",
         evidence=(evidence,),
@@ -1065,6 +1108,8 @@ def build_allowlisted_adapter_compatibility(
         kind=StaticEvidenceKind.ARCHITECTURE,
         repository=source.repository,
         resolved_sha=source.resolved_sha,
+        revision_kind=source.revision_kind,
+        bundle_sha256=source.bundle_sha256,
         path=safe_path,
         blob_sha=git_blob_sha(entrypoint_bytes),
         line_selector=f"L1-L{line_count}",
@@ -1085,6 +1130,8 @@ def build_allowlisted_adapter_compatibility(
         origin=ProfileOrigin.ALLOWLISTED_ADAPTER,
         repository_url=source.repository_url,
         resolved_sha=source.resolved_sha,
+        revision_kind=source.revision_kind,
+        bundle_sha256=source.bundle_sha256,
         generated_at=source.retrieved_at,
         adapter_version=adapter_version,
         public_visibility="unknown",

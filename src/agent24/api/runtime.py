@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from agents import Agent, OpenAIProvider, RunConfig, Runner
@@ -36,6 +37,7 @@ from agent24.events import RunChannel
 from agent24.tools import PAYMENT_FIXTURE, SyntheticGym, protected_replay
 
 from .config import RuntimeSettings
+from .contracts import ExecutionScope, RunTerminalPayload, StageFailurePayload
 from .preflight import (
     ExternalAgentPreflight,
     ExternalPreflightResult,
@@ -47,6 +49,52 @@ from .preflight import (
 
 DEFAULT_MAX_TURNS = LIVE_EXPLAINER_MAX_TURNS
 DEFAULT_TIMEOUT_SECONDS = 45.0
+NO_TARGET_SCOPE: ExecutionScope = "no_target"
+NO_TARGET_OFFLINE_SCOPE: ExecutionScope = "no_target_offline_demo"
+SYNTHETIC_EXECUTION_SCOPE: ExecutionScope = "synthetic_archetype"
+ALLOWLISTED_EXECUTION_SCOPE: ExecutionScope = "allowlisted_adapter"
+COMPATIBILITY_EXECUTION_SCOPE: ExecutionScope = "compatibility_only"
+NO_EXECUTION_SCOPE: ExecutionScope = "none"
+
+
+@dataclass(frozen=True, slots=True)
+class _PreflightTerminal:
+    """A typed preflight stop passed to the central terminal builder."""
+
+    mode: str
+    status: str
+    source_resolved: bool
+    execution_scope: ExecutionScope
+    message: str
+    experiments_run: int = 0
+    findings: int = 0
+
+
+def _terminal_payload(
+    *,
+    status: str,
+    mode: str,
+    source_resolved: bool,
+    diagnostic_completed: bool,
+    openai_analysis_completed: bool,
+    execution_scope: ExecutionScope,
+    message: str | None = None,
+    experiments_run: int | None = None,
+    findings: int | None = None,
+) -> dict[str, Any]:
+    """Build every terminal payload through one schema and one field set."""
+
+    return RunTerminalPayload(
+        status=status,
+        mode=mode,
+        source_resolved=source_resolved,
+        diagnostic_completed=diagnostic_completed,
+        openai_analysis_completed=openai_analysis_completed,
+        execution_scope=execution_scope,
+        message=message[:500] if message else None,
+        experiments_run=experiments_run,
+        findings=findings,
+    ).model_dump(mode="json", exclude_none=True)
 
 
 def _read_timeout(value: float | None) -> float:
@@ -128,6 +176,85 @@ class OpenAIWhiteBoxAdapter:
     @property
     def mode(self) -> str:
         return "live" if self.openai_configured else "offline_demo"
+
+    @staticmethod
+    def _execution_scope(preflight: ExternalPreflightResult) -> ExecutionScope:
+        return (
+            ALLOWLISTED_EXECUTION_SCOPE
+            if preflight.adapter_contract is not None
+            else SYNTHETIC_EXECUTION_SCOPE
+        )
+
+    @staticmethod
+    def _publish_stage_failure(
+        channel: RunChannel,
+        *,
+        stage: str,
+        code: str,
+        message: str,
+        pack_id: str | None = None,
+    ) -> None:
+        """Publish bounded failure metadata without making a second terminal."""
+
+        payload = StageFailurePayload(
+            stage=stage,  # type: ignore[arg-type] - callers use the closed stage vocabulary
+            code=code,
+            message=message[:500],
+            pack_id=pack_id,
+        )
+        channel.publish("stage_failed", payload, summary=f"{stage} stage failed")
+
+    @staticmethod
+    def _publish_terminal(
+        channel: RunChannel,
+        *,
+        status: str,
+        mode: str,
+        source_resolved: bool,
+        diagnostic_completed: bool,
+        openai_analysis_completed: bool,
+        execution_scope: ExecutionScope,
+        message: str | None = None,
+        experiments_run: int | None = None,
+        findings: int | None = None,
+    ) -> None:
+        channel.publish(
+            "run_completed",
+            _terminal_payload(
+                status=status,
+                mode=mode,
+                source_resolved=source_resolved,
+                diagnostic_completed=diagnostic_completed,
+                openai_analysis_completed=openai_analysis_completed,
+                execution_scope=execution_scope,
+                message=message,
+                experiments_run=experiments_run,
+                findings=findings,
+            ),
+        )
+
+    @staticmethod
+    def _publish_controller_summary(
+        result: DiagnosticLoopResult,
+        channel: RunChannel,
+        *,
+        reason: str,
+    ) -> None:
+        """Expose only the deterministic report, explicitly marked non-OpenAI."""
+
+        channel.publish(
+            "final_output",
+            {
+                "text": (
+                    "Controller-owned diagnostic (OpenAI explanation unavailable): "
+                    f"{result.report.bounded_summary}"
+                ),
+                "analysis_source": "controller",
+                "openai_analysis_completed": False,
+                "reason": reason,
+            },
+            summary="controller-derived summary; not an OpenAI response",
+        )
 
     def _agent(self) -> Agent:
         return Agent(
@@ -211,38 +338,53 @@ class OpenAIWhiteBoxAdapter:
         self,
         target: ExternalTarget,
         channel: RunChannel,
-    ) -> ExternalPreflightResult | None:
-        """Publish pinned planning artifacts, or finish with an honest terminal."""
+    ) -> ExternalPreflightResult | _PreflightTerminal:
+        """Publish pinned planning artifacts, or return a typed preflight stop."""
 
         channel.publish("phase.changed", {"phase": "CLONE"}, summary="external preflight")
         try:
             result = await asyncio.to_thread(self.preflight.run, target)
-        except (SourceResolutionError, ManifestLoadError, ManifestFetchError):
+        except (SourceResolutionError, ManifestLoadError, ManifestFetchError) as error:
+            source_failure = isinstance(error, SourceResolutionError)
+            code = "source_unresolved" if source_failure else "source_preflight_failed"
             message = (
-                "외부 Agent source preflight를 완료하지 못해 제출한 Agent 분석과 "
-                "synthetic target 실험을 실행하지 않았습니다."
+                "GitHub source를 immutable SHA로 고정하지 못해 제출 Agent 분석과 실험을 "
+                "실행하지 않았습니다."
+                if source_failure
+                else "외부 Agent source preflight를 완료하지 못해 제출 Agent 분석과 synthetic "
+                "target 실험을 실행하지 않았습니다."
             )
-            channel.publish(
-                "run_failed",
-                {
-                    "status": "offline_demo",
-                    "code": "source_preflight_failed",
-                    "message": message,
-                },
-                summary="External Agent source or manifest unavailable",
+            self._publish_stage_failure(
+                channel,
+                stage="source",
+                code=code,
+                message=message,
             )
-            channel.publish(
-                "run_completed",
-                {
-                    "status": "source_preflight_failed",
-                    "mode": "offline_demo",
-                    "experiments_run": 0,
-                    "findings": 0,
-                    "message": message,
-                    "safety_boundary": "SIMULATION_ONLY",
-                },
+            return _PreflightTerminal(
+                mode=self.mode,
+                status=code,
+                source_resolved=not source_failure,
+                execution_scope=NO_EXECUTION_SCOPE,
+                message=message,
             )
-            return None
+        except Exception:  # noqa: BLE001 - source boundary must close with safe typed state
+            message = (
+                "외부 Agent source preflight 중 안전하게 분류할 수 없는 오류가 발생해 "
+                "제출 Agent 분석과 실험을 실행하지 않았습니다."
+            )
+            self._publish_stage_failure(
+                channel,
+                stage="source",
+                code="source_preflight_failed",
+                message=message,
+            )
+            return _PreflightTerminal(
+                mode=self.mode,
+                status="source_preflight_failed",
+                source_resolved=False,
+                execution_scope=NO_EXECUTION_SCOPE,
+                message=message,
+            )
 
         channel.publish("source_descriptor", result.source, summary=result.source.source_ref)
         channel.publish(
@@ -276,17 +418,13 @@ class OpenAIWhiteBoxAdapter:
                 result.compatibility_report,
                 summary=result.compatibility_report.status.value,
             )
-            channel.publish(
-                "run_completed",
-                {
-                    "status": result.pack_selection.status.value,
-                    "mode": "compatibility_only",
-                    "message": result.compatibility_report.message,
-                    "experiments_run": 0,
-                },
-                summary=result.pack_selection.status.value,
+            return _PreflightTerminal(
+                mode="compatibility_only",
+                status=result.pack_selection.status.value,
+                source_resolved=True,
+                execution_scope=COMPATIBILITY_EXECUTION_SCOPE,
+                message=result.compatibility_report.message,
             )
-            return None
 
         channel.publish(
             "pack_selection",
@@ -315,16 +453,13 @@ class OpenAIWhiteBoxAdapter:
                 summary=finding_report.status.value,
             )
             channel.publish("lab_report", lab_report, summary=result.decision.reason)
-            channel.publish(
-                "run_completed",
-                {
-                    "status": "unsupported",
-                    "mode": self.mode,
-                    "message": result.decision.detail,
-                },
-                summary=result.decision.reason,
+            return _PreflightTerminal(
+                mode=self.mode,
+                status="unsupported",
+                source_resolved=True,
+                execution_scope=NO_EXECUTION_SCOPE,
+                message=result.decision.detail,
             )
-            return None
         if not isinstance(result.decision, ExperimentPlan):
             raise TypeError("preflight returned an unknown decision type")
         channel.publish(
@@ -584,12 +719,23 @@ class OpenAIWhiteBoxAdapter:
     ) -> None:
         """Execute a run and always close the channel after its final event."""
 
+        preflight_result: ExternalPreflightResult | None = None
+        diagnostic_result: DiagnosticLoopResult | None = None
+        terminal_emitted = False
+        execution_scope: ExecutionScope = (
+            NO_EXECUTION_SCOPE if target is not None else NO_TARGET_SCOPE
+        )
         try:
             channel.publish(
                 "run_started",
                 {
                     "mode": self.mode,
                     "input_received": True,
+                    "external_target": target is not None,
+                    "source_resolved": False,
+                    "diagnostic_completed": False,
+                    "openai_analysis_completed": False,
+                    "execution_scope": NO_EXECUTION_SCOPE,
                     **(
                         {
                             "target": {
@@ -605,17 +751,30 @@ class OpenAIWhiteBoxAdapter:
                     ),
                 },
             )
-            preflight_result = None
-            diagnostic_result = None
             if target is not None:
-                preflight_result = await self._run_external_preflight(target, channel)
-                if preflight_result is None:
+                preflight_outcome = await self._run_external_preflight(target, channel)
+                if isinstance(preflight_outcome, _PreflightTerminal):
+                    self._publish_terminal(
+                        channel,
+                        status=preflight_outcome.status,
+                        mode=preflight_outcome.mode,
+                        source_resolved=preflight_outcome.source_resolved,
+                        diagnostic_completed=False,
+                        openai_analysis_completed=False,
+                        execution_scope=preflight_outcome.execution_scope,
+                        message=preflight_outcome.message,
+                        experiments_run=preflight_outcome.experiments_run,
+                        findings=preflight_outcome.findings,
+                    )
+                    terminal_emitted = True
                     return
+                preflight_result = preflight_outcome
+                execution_scope = self._execution_scope(preflight_result)
                 try:
                     diagnostic_result = await self._run_diagnostic_loop(
                         preflight_result, channel
                     )
-                except Exception as error:  # noqa: BLE001 - keep a safe terminal state
+                except Exception as error:  # noqa: BLE001 - keep a safe typed terminal state
                     # Name the pack that failed.  Re-routing to another pack
                     # here is exactly how one pack's failure would come out
                     # looking like a different pack's success.  The exception
@@ -623,61 +782,243 @@ class OpenAIWhiteBoxAdapter:
                     stop = pack_failure_stop(
                         preflight_result.pack_selection, type(error).__name__
                     )
-                    channel.publish(
-                        "run_failed",
-                        {
-                            "status": "offline_demo",
-                            "code": "diagnostic_loop_failed",
-                            "pack_id": preflight_result.pack_selection.pack_id,
-                            "message": stop.detail,
-                        },
-                        summary="Deterministic diagnostic loop failed",
-                    )
-                    await self._run_offline(
-                        query,
+                    self._publish_stage_failure(
                         channel,
-                        reason="Deterministic diagnostic loop failed",
+                        stage="diagnostic",
+                        code="diagnostic_loop_failed",
+                        message=stop.detail,
+                        pack_id=preflight_result.pack_selection.pack_id,
                     )
-                    channel.publish(
-                        "run_completed",
-                        {"status": "offline_demo", "mode": "offline_demo"},
+                    self._publish_terminal(
+                        channel,
+                        status="diagnostic_loop_failed",
+                        mode=self.mode,
+                        source_resolved=True,
+                        diagnostic_completed=False,
+                        openai_analysis_completed=False,
+                        execution_scope=NO_EXECUTION_SCOPE,
+                        message=stop.detail,
+                        experiments_run=0,
+                        findings=0,
                     )
+                    terminal_emitted = True
                     return
                 query = self._diagnostic_query(query, preflight_result, diagnostic_result)
+
+            if target is not None and diagnostic_result is not None:
+                if not self.openai_configured:
+                    reason = "openai_key_missing"
+                    message = (
+                        "결정적 controller 진단은 완료했지만 OPENAI_API_KEY가 없어 "
+                        "OpenAI 설명을 실행하지 않았습니다. controller report만 보존합니다."
+                    )
+                    self._publish_stage_failure(
+                        channel,
+                        stage="openai_analysis",
+                        code=reason,
+                        message=message,
+                    )
+                    self._publish_controller_summary(diagnostic_result, channel, reason=reason)
+                    self._publish_terminal(
+                        channel,
+                        status="openai_analysis_unavailable",
+                        mode=self.mode,
+                        source_resolved=True,
+                        diagnostic_completed=True,
+                        openai_analysis_completed=False,
+                        execution_scope=execution_scope,
+                        message=message,
+                        experiments_run=diagnostic_result.experiments_run,
+                        findings=len(diagnostic_result.lab_report.findings),
+                    )
+                    terminal_emitted = True
+                    return
+
+                try:
+                    async with asyncio.timeout(self.timeout_seconds):
+                        final_text = await self._run_live(query, channel)
+                except TimeoutError:
+                    reason = "openai_timeout"
+                    message = (
+                        "결정적 controller 진단은 완료했지만 OpenAI 설명 요청이 시간 초과되어 "
+                        "controller report만 보존합니다."
+                    )
+                    self._publish_stage_failure(
+                        channel,
+                        stage="openai_analysis",
+                        code=reason,
+                        message=message,
+                    )
+                    self._publish_controller_summary(diagnostic_result, channel, reason=reason)
+                    self._publish_terminal(
+                        channel,
+                        status="openai_analysis_failed",
+                        mode=self.mode,
+                        source_resolved=True,
+                        diagnostic_completed=True,
+                        openai_analysis_completed=False,
+                        execution_scope=execution_scope,
+                        message=message,
+                        experiments_run=diagnostic_result.experiments_run,
+                        findings=len(diagnostic_result.lab_report.findings),
+                    )
+                    terminal_emitted = True
+                    return
+                except Exception:  # noqa: BLE001 - provider detail must stay out of the wire
+                    reason = "openai_provider_failed"
+                    message = (
+                        "결정적 controller 진단은 완료했지만 OpenAI 설명 요청에 실패해 "
+                        "controller report만 보존합니다."
+                    )
+                    self._publish_stage_failure(
+                        channel,
+                        stage="openai_analysis",
+                        code=reason,
+                        message=message,
+                    )
+                    self._publish_controller_summary(diagnostic_result, channel, reason=reason)
+                    self._publish_terminal(
+                        channel,
+                        status="openai_analysis_failed",
+                        mode=self.mode,
+                        source_resolved=True,
+                        diagnostic_completed=True,
+                        openai_analysis_completed=False,
+                        execution_scope=execution_scope,
+                        message=message,
+                        experiments_run=diagnostic_result.experiments_run,
+                        findings=len(diagnostic_result.lab_report.findings),
+                    )
+                    terminal_emitted = True
+                    return
+
+                channel.publish("final_output", {"text": final_text})
+                self._publish_terminal(
+                    channel,
+                    status="completed",
+                    mode="live",
+                    source_resolved=True,
+                    diagnostic_completed=True,
+                    openai_analysis_completed=True,
+                    execution_scope=execution_scope,
+                    experiments_run=diagnostic_result.experiments_run,
+                    findings=len(diagnostic_result.lab_report.findings),
+                )
+                terminal_emitted = True
+                return
+
             if not self.openai_configured:
+                execution_scope = NO_TARGET_OFFLINE_SCOPE
                 await self._run_offline(query, channel, reason="OPENAI_API_KEY is not configured")
-                channel.publish("run_completed", {"status": "offline_demo", "mode": "offline_demo"})
+                self._publish_terminal(
+                    channel,
+                    status="offline_demo",
+                    mode="offline_demo",
+                    source_resolved=False,
+                    diagnostic_completed=False,
+                    openai_analysis_completed=False,
+                    execution_scope=execution_scope,
+                )
+                terminal_emitted = True
                 return
 
             try:
                 async with asyncio.timeout(self.timeout_seconds):
                     final_text = await self._run_live(query, channel)
             except TimeoutError:
-                channel.publish(
-                    "run_failed",
-                    {"status": "offline_demo", "code": "timeout"},
-                    summary="OpenAI run timed out",
+                reason = "openai_timeout"
+                message = "OpenAI 설명 요청이 시간 초과되어 no-target offline_demo로 전환했습니다."
+                self._publish_stage_failure(
+                    channel,
+                    stage="openai_analysis",
+                    code=reason,
+                    message=message,
                 )
+                execution_scope = NO_TARGET_OFFLINE_SCOPE
                 await self._run_offline(query, channel, reason="OpenAI run timed out")
-                channel.publish("run_completed", {"status": "offline_demo", "mode": "offline_demo"})
-                return
-            except Exception as error:  # noqa: BLE001 - convert upstream failures to a demo state
-                # Do not include the exception string: provider errors can echo
-                # request metadata, while the event contract must never expose a
-                # credential or transport detail.
-                channel.publish(
-                    "run_failed",
-                    {"status": "offline_demo", "code": type(error).__name__},
-                    summary="OpenAI run failed",
+                self._publish_terminal(
+                    channel,
+                    status="offline_demo",
+                    mode="offline_demo",
+                    source_resolved=False,
+                    diagnostic_completed=False,
+                    openai_analysis_completed=False,
+                    execution_scope=execution_scope,
+                    message=message,
                 )
+                terminal_emitted = True
+                return
+            except Exception:  # noqa: BLE001 - provider detail must stay out of the wire
+                reason = "openai_provider_failed"
+                message = "OpenAI 설명 요청에 실패해 no-target offline_demo로 전환했습니다."
+                self._publish_stage_failure(
+                    channel,
+                    stage="openai_analysis",
+                    code=reason,
+                    message=message,
+                )
+                execution_scope = NO_TARGET_OFFLINE_SCOPE
                 await self._run_offline(query, channel, reason="OpenAI run failed")
-                channel.publish("run_completed", {"status": "offline_demo", "mode": "offline_demo"})
+                self._publish_terminal(
+                    channel,
+                    status="offline_demo",
+                    mode="offline_demo",
+                    source_resolved=False,
+                    diagnostic_completed=False,
+                    openai_analysis_completed=False,
+                    execution_scope=execution_scope,
+                    message=message,
+                )
+                terminal_emitted = True
                 return
 
             channel.publish("final_output", {"text": final_text})
-            channel.publish("run_completed", {"status": "completed", "mode": "live"})
+            self._publish_terminal(
+                channel,
+                status="completed",
+                mode="live",
+                source_resolved=False,
+                diagnostic_completed=False,
+                openai_analysis_completed=True,
+                execution_scope=NO_TARGET_SCOPE,
+            )
+            terminal_emitted = True
+        except Exception:  # noqa: BLE001 - last-resort typed closure; never fallback or leak detail
+            if not terminal_emitted and not any(
+                event["type"] == "run_completed" for event in channel.events
+            ):
+                message = (
+                    "실행 중 안전하게 분류할 수 없는 오류가 발생해 "
+                    "결과를 확정하지 못했습니다."
+                )
+                self._publish_stage_failure(
+                    channel,
+                    stage="runtime",
+                    code="runtime_failed",
+                    message=message,
+                )
+                self._publish_terminal(
+                    channel,
+                    status="runtime_failed",
+                    mode=self.mode,
+                    source_resolved=preflight_result is not None,
+                    diagnostic_completed=diagnostic_result is not None,
+                    openai_analysis_completed=False,
+                    execution_scope=(
+                        execution_scope
+                        if diagnostic_result is not None
+                        else NO_EXECUTION_SCOPE
+                        if target is not None
+                        else NO_TARGET_OFFLINE_SCOPE
+                    ),
+                    message=message,
+                )
         finally:
             channel.close()
 
 
-__all__ = ["DEFAULT_MAX_TURNS", "DEFAULT_TIMEOUT_SECONDS", "OpenAIWhiteBoxAdapter"]
+__all__ = [
+    "DEFAULT_MAX_TURNS",
+    "DEFAULT_TIMEOUT_SECONDS",
+    "OpenAIWhiteBoxAdapter",
+]

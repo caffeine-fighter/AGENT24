@@ -28,9 +28,9 @@ import hashlib
 import json
 from collections.abc import Mapping
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_serializer, model_validator
 
 # --------------------------------------------------------------------------
 # Canonical invariant ids
@@ -118,13 +118,21 @@ UNTRUSTED_LABELS: frozenset[TrustLabel] = frozenset(
 
 
 class ToolSpec(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str
     description: str = ""
     side_effect: bool = False
     irreversible: bool = False
     category_hint: CapabilityCategory | None = None
+    input_schema: dict[str, JsonValue] | None = None
+    output_schema: dict[str, JsonValue] | None = None
+
+    @model_validator(mode="after")
+    def _schemas_are_paired(self) -> Self:
+        if (self.input_schema is None) != (self.output_schema is None):
+            raise ValueError("input_schema and output_schema must be declared together")
+        return self
 
 
 class AgentCard(BaseModel):

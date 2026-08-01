@@ -4,9 +4,11 @@ import {
   createHostedFallbackIntake,
   createHostedOwnerIntake,
   ALLOWLISTED_ADAPTER_CLAIM_BOUNDARY,
+  executionScopeForIntake,
   type HostedAdapterContract,
   type HostedManifestSummary,
   type HostedIntake,
+  type HostedOpenAIReasonCode,
   type HostedPlan,
   type HostedRunContext,
   type HostedSourceFile,
@@ -565,8 +567,7 @@ async function planWithOpenAI(
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   const sideEffectTool = intake.kind === "allowlisted_adapter" ? "complete_purchase" : "payment.charge";
   const reconcileTool = intake.kind === "allowlisted_adapter" ? "get_order_status" : "payment.status";
-  const fallback = fallbackPlan(sideEffectTool, model);
-  if (!apiKey) return fallback;
+  if (!apiKey) return fallbackPlan(sideEffectTool, model, "openai_key_missing");
 
   const developerPrompt = [
     "You plan one bounded synthetic crash test for an AI agent.",
@@ -609,22 +610,39 @@ async function planWithOpenAI(
       }),
       signal: AbortSignal.timeout(18_000),
     });
-    if (!response.ok) return fallback;
-    const payload = (await response.json()) as { id?: unknown };
+    if (!response.ok) return fallbackPlan(sideEffectTool, model, "openai_provider_non_2xx");
+    let payload: { id?: unknown };
+    try {
+      payload = (await response.json()) as { id?: unknown };
+    } catch {
+      return fallbackPlan(sideEffectTool, model, "openai_response_parse_failed");
+    }
     const parsed = parsePlan(extractOutputText(payload));
-    if (!parsed) return fallback;
+    if (!parsed) return fallbackPlan(sideEffectTool, model, "openai_response_parse_failed");
     return {
       ...parsed,
       model,
       responseId: typeof payload.id === "string" ? payload.id : null,
       usedOpenAI: true,
+      analysisStage: "completed",
+      reasonCode: null,
     };
-  } catch {
-    return fallback;
+  } catch (error) {
+    const reasonCode: HostedOpenAIReasonCode = error instanceof DOMException
+      && ["AbortError", "TimeoutError"].includes(error.name)
+      ? "openai_timeout"
+      : error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name)
+        ? "openai_timeout"
+        : "openai_provider_failed";
+    return fallbackPlan(sideEffectTool, model, reasonCode);
   }
 }
 
-function fallbackPlan(sideEffectTool = "payment.charge", model = process.env.OPENAI_MODEL?.trim() || "gpt-5.6-terra"): HostedPlan {
+function fallbackPlan(
+  sideEffectTool = "payment.charge",
+  model = process.env.OPENAI_MODEL?.trim() || "gpt-5.6-terra",
+  reasonCode: HostedOpenAIReasonCode = "not_attempted",
+): HostedPlan {
   const adapter = sideEffectTool === "complete_purchase";
   return {
     expectedEvidence: adapter
@@ -636,6 +654,12 @@ function fallbackPlan(sideEffectTool = "payment.charge", model = process.env.OPE
       : FALLBACK_RATIONALE,
     responseId: null,
     usedOpenAI: false,
+    analysisStage: reasonCode === "not_attempted"
+      ? "not_attempted"
+      : reasonCode === "openai_key_missing"
+        ? "unavailable"
+        : "failed",
+    reasonCode,
   };
 }
 
@@ -704,8 +728,13 @@ export async function POST(request: Request) {
   const runId = crypto.randomUUID();
   const initialPlan = fallbackPlan();
   const baseContext: HostedRunContext = {
+    diagnosticCompleted: false,
+    executionScope: "none",
     mission,
     model: initialPlan.model,
+    openaiAnalysisCompleted: false,
+    openaiAnalysisStage: initialPlan.analysisStage,
+    openaiReasonCode: initialPlan.reasonCode,
     openaiResponseId: initialPlan.responseId,
     openaiUsed: initialPlan.usedOpenAI,
     planExpectedEvidence: initialPlan.expectedEvidence,
@@ -715,6 +744,7 @@ export async function POST(request: Request) {
     resolvedSha: source.resolvedSha,
     retrievedAt: source.retrievedAt,
     runId,
+    sourceResolved: Boolean(source.resolvedSha),
     sourceResolver: source.resolver,
     supportDetail: support.detail,
     supportDomain: support.domain,
@@ -757,7 +787,13 @@ export async function POST(request: Request) {
   const context: HostedRunContext = {
     ...baseContext,
     intake: hostedIntake,
+    diagnosticCompleted: executionScopeForIntake(hostedIntake) === "synthetic_archetype"
+      || executionScopeForIntake(hostedIntake) === "allowlisted_adapter",
+    executionScope: executionScopeForIntake(hostedIntake),
     model: plan.model,
+    openaiAnalysisCompleted: plan.analysisStage === "completed",
+    openaiAnalysisStage: plan.analysisStage,
+    openaiReasonCode: plan.reasonCode,
     openaiResponseId: plan.responseId,
     openaiUsed: plan.usedOpenAI,
     planExpectedEvidence: plan.expectedEvidence,
