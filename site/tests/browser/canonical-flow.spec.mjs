@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.mjs";
 
 const TIME_MISSION = "같은 캘린더 검색을 무한 반복하지만 상태가 바뀌지 않는 Agent를 진단해줘.";
 const CASE_ORDER = ["normal_hosted", "typed_unsupported", "explicit_fixture_fallback"];
@@ -67,10 +67,20 @@ function buildObservedCase({
 }
 
 async function submit(page, mission) {
-  await page.goto("/demo/index.html");
+  await page.goto("/demo/index.html?demo=github");
   await page.locator("#missionInput").fill(mission);
   await page.locator("#runButton").click();
   await expect(page.locator("#connectionStatus")).toContainText("완료", { timeout: 15_000 });
+  await openRawStream(page);
+}
+
+async function openRawStream(page) {
+  const disclosure = page.locator("#rawStreamDisclosure");
+  await expect(disclosure).not.toHaveAttribute("hidden");
+  if (!(await disclosure.evaluate((element) => element.open))) {
+    await disclosure.locator("summary").click();
+  }
+  await expect(page.locator("#rawStream")).toBeVisible();
 }
 
 async function streamMetrics(page) {
@@ -137,10 +147,11 @@ test("canonical normal hosted path", async ({ page }) => {
   await guarded(id, "terminal_count_invalid", () => expect(metrics.terminalCount).toBe(1));
 
   const paymentEvidenceCount = await page.locator("#rawStream .stream-line", { hasText: "payment.charge" }).count();
-  const fallbackScopeCount = await page.locator('#scopeNotice[data-scope="fixture_fallback"]').count();
-  const unsupportedOutcomeCount = await page.locator('#investigationOutcome[data-status="unsupported"]').count();
+  const scope = await page.locator("#scopeNotice").getAttribute("data-scope");
+  const severity = await page.locator("#diagnosisSeverity").textContent();
   const result = await guarded(id, "normal_route_failed", () => buildObservedCase({
-    boundaryVisible: paymentEvidenceCount > 0 && fallbackScopeCount === 0,
+    boundaryVisible: paymentEvidenceCount > 0
+      && ["fixture_fallback", "synthetic_archetype", "allowlisted_adapter"].includes(scope),
     expectedRuns: 1,
     id,
     rawVisible: metrics.rawVisible,
@@ -148,7 +159,7 @@ test("canonical normal hosted path", async ({ page }) => {
     sequenceContiguous: metrics.sequenceContiguous,
     submitCount: requests.submitCount,
     terminalCount: metrics.terminalCount,
-    unexpectedEvidenceCount: fallbackScopeCount + unsupportedOutcomeCount,
+    unexpectedEvidenceCount: severity === "NOT RUN · 지원하지 않음" ? 1 : 0,
   }));
   results.set(id, result);
 });
@@ -179,15 +190,16 @@ test("canonical typed unsupported path is stable across isolated runs", async ({
       await guarded(id, "sequence_gap", () => expect(metrics.sequenceContiguous).toBe(true));
       await guarded(id, "terminal_count_invalid", () => expect(metrics.terminalCount).toBe(1));
 
-      const investigationText = await page.locator("#investigationOutcome").textContent();
+      const investigationText = await page.locator("#diagnosisSeverity").textContent();
       const noticeText = await page.locator("#runNotice").textContent();
-      boundaryVisible &&= investigationText === "아직 지원하지 않음"
+      boundaryVisible &&= investigationText === "NOT RUN · 지원하지 않음"
         && (noticeText ?? "").includes("지금은 이 작업에서 생길 수 있는 문제를 재현할 실험이 없어요");
       unexpectedEvidenceCount += await page.locator("#rawStream .stream-line").filter({
         hasText: /payment\.charge|experiment_plan|protected_replay/,
       }).count();
       const safeProjection = await Promise.all([
-        page.locator("#investigationOutcome").textContent(),
+        page.locator("#diagnosisSeverity").textContent(),
+        page.locator("#diagnosisScope").textContent(),
         page.locator("#runNotice").textContent(),
         page.locator("#rawStream .stream-type").allTextContents(),
       ]);
@@ -223,6 +235,7 @@ test("canonical explicit fixture fallback path", async ({ page }) => {
     await page.locator("#runButton").click();
     await expect(page.locator("#connectionStatus")).toContainText("완료", { timeout: 15_000 });
   });
+  await openRawStream(page);
   const metrics = await streamMetrics(page);
   await guarded(id, "sequence_gap", () => expect(metrics.sequenceContiguous).toBe(true));
   await guarded(id, "terminal_count_invalid", () => expect(metrics.terminalCount).toBe(1));
@@ -230,11 +243,11 @@ test("canonical explicit fixture fallback path", async ({ page }) => {
   const noticeText = await page.locator("#runNotice").textContent();
   const modeText = await page.locator("#modeBadge").textContent();
   const fallbackScopeCount = await page.locator('#scopeNotice[data-scope="fixture_fallback"]').count();
-  const submittedClaimCount = await page.locator(
-    '#submissionOutcome[data-status="accepted"], #investigationOutcome[data-status="verified"]',
-  ).count();
-  const targetShaText = await page.locator("#targetSha").textContent();
-  const pinnedSubmittedShaCount = /^[a-f0-9]{40}$/i.test((targetShaText ?? "").trim()) ? 1 : 0;
+  const submittedClaimCount = await page.locator("#rawStream .stream-line").filter({
+    hasText: /source.*resolved_sha|pinned source/i,
+  }).count();
+  const reportSourceRef = await page.locator("#reportSourceRef").textContent();
+  const pinnedSubmittedShaCount = /\b[a-f0-9]{40}\b/i.test(reportSourceRef ?? "") ? 1 : 0;
   const result = await guarded(id, "fallback_boundary_failed", () => buildObservedCase({
     boundaryVisible: (noticeText ?? "").includes("API에 연결하지 못해 내장 예시를 보여드려요")
       && modeText === "내장 예시 확인 완료"

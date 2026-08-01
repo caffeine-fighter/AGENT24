@@ -19,7 +19,7 @@ export default defineConfig({
       url: "http://127.0.0.1:4174/health",
     },
     {
-      command: "node tests/browser/production-server.mjs",
+      command: "npm run build && node tests/browser/production-server.mjs",
       env: {
         ...process.env,
         AGENT24_GITHUB_API_BASE_URL: "http://127.0.0.1:4174",

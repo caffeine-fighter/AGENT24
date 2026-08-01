@@ -8,17 +8,6 @@ const MIRRORS = [
   ["src/core.mjs", "src/core.mjs"],
 ];
 
-const LOCAL_TIMEOUT = "  const timeout = setTimeout(() => controller.abort(), 1600);";
-const HOSTED_TIMEOUT = [
-  "  // A hosted Responses API planning turn can take longer than a local fixture.",
-  "  // Keep the fallback bounded while allowing the real server-side call to finish.",
-  "  const timeout = setTimeout(() => controller.abort(), 22000);",
-].join("\n");
-
-function count(haystack, needle) {
-  return haystack.split(needle).length - 1;
-}
-
 export async function verifyWebSiteDrift(repoRoot) {
   const webRoot = path.join(repoRoot, "web");
   const siteRoot = path.join(repoRoot, "site", "public", "demo");
@@ -36,11 +25,8 @@ export async function verifyWebSiteDrift(repoRoot) {
     readFile(path.join(webRoot, "src", "app.mjs"), "utf8"),
     readFile(path.join(siteRoot, "src", "app.mjs"), "utf8"),
   ]);
-  if (count(webApp, LOCAL_TIMEOUT) !== 1 || count(hostedApp, HOSTED_TIMEOUT) !== 1) {
-    throw new Error("VERIFY drift FAIL: the documented timeout adapter is missing or duplicated. Recover: keep only local 1600 ms and hosted 22000 ms timeout blocks.");
-  }
-  if (webApp.replace(LOCAL_TIMEOUT, HOSTED_TIMEOUT) !== hostedApp) {
-    throw new Error("VERIFY drift FAIL: app contract differs beyond the documented timeout. Recover: synchronize app.mjs and retain only the bounded timeout adapter.");
+  if (webApp !== hostedApp) {
+    throw new Error("VERIFY drift FAIL: shared file differs (src/app.mjs). Recover: synchronize web/src/app.mjs and site/public/demo/src/app.mjs.");
   }
 }
 

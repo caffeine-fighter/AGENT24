@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.mjs";
 
 const TIME_MISSION = "같은 캘린더 검색을 무한 반복하지만 상태가 바뀌지 않는 Agent를 진단해줘.";
 
@@ -9,6 +9,10 @@ async function submit(page, mission, api = null, repository = null) {
   await page.locator("#missionInput").fill(mission);
   await page.locator("#runButton").click();
   await expect(page.locator("#connectionStatus")).toContainText(/완료|진행하지 못함/, { timeout: 15_000 });
+  const disclosure = page.locator("#rawStreamDisclosure");
+  await expect(disclosure).not.toHaveAttribute("hidden");
+  if (!(await disclosure.evaluate((element) => element.open))) await disclosure.locator("summary").click();
+  await expect(page.locator("#rawStream")).toBeVisible();
 }
 
 test("unresolved hosted source stops before a synthetic payment experiment", async ({ page }) => {
@@ -16,7 +20,7 @@ test("unresolved hosted source stops before a synthetic payment experiment", asy
     page,
     "엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문해줘.",
     null,
-    "https://github.com/caffeine-fighter/AGENT24",
+    "https://github.com/example/not-found",
   );
 
   await expect(page.locator("#rawStream .stream-type", { hasText: "run.completed" })).toHaveCount(1);
