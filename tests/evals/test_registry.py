@@ -11,6 +11,8 @@ duplicating those assertions here would just be a second place to update.
 
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 
 import pytest
@@ -82,9 +84,9 @@ def test_every_shipped_case_executes_something() -> None:
         elif isinstance(case, GymFixtureCase):
             assert case.deterministic_load or case.fault_type or case.protected_replay
         elif isinstance(case, RuntimeEventsCase):
+            # Since #120 both modes execute the declaration itself, so a live
+            # case no longer needs a bound test to be non-inert.
             assert case.expected_event_types
-            if case.mode == "live":
-                assert case.proves, f"{case.id} is live and must name its test"
 
 
 # --------------------------------------------------------------------------
@@ -275,6 +277,145 @@ def test_selection_replays_in_registry_order() -> None:
     )
 
     assert [case.id for case in registry.select(["second", "first"])] == ["first", "second"]
+
+
+# --------------------------------------------------------------------------
+# Live cases execute their own declaration (issue #120)
+# --------------------------------------------------------------------------
+
+
+def _live_case(**overrides) -> RuntimeEventsCase:
+    """The shipped live case, optionally mutated."""
+
+    registry = load_registry(REPO_ROOT / DEFAULT_REGISTRY_PATH)
+    shipped = registry.by_id()["live_tool_round_trip"]
+    return shipped.model_copy(update=overrides)
+
+
+def test_a_live_case_runs_the_mocked_app_instead_of_delegating() -> None:
+    """The #120 regression: live mode used to return an unconditional pass.
+
+    ``delegated_to_pytest`` was the whole result, so the declared input and
+    event sequence never reached anything that ran.
+    """
+
+    from agent24.evals.harness import run_runtime_events_case
+
+    result = run_runtime_events_case(_live_case())
+
+    assert result.passed
+    names = {check.name for check in result.checks}
+    assert "delegated_to_pytest" not in names
+    assert {"event_types", "run_id", "jsonl_payloads"} <= names
+    assert len(result.checks) >= 8
+
+
+def test_a_live_case_reports_which_fields_stayed_prose() -> None:
+    from agent24.evals.harness import run_runtime_events_case
+
+    result = run_runtime_events_case(_live_case())
+
+    assert result.prose_only == ("expectation",)
+
+
+@pytest.mark.parametrize(
+    "mutation,failing_check",
+    [
+        ({"expected_event_types": ("run_started", "run_completed")}, "event_types"),
+        ({"expected_event_types": ("run_started", "tool_call", "run_completed")}, "event_types"),
+        ({"mode": "offline"}, "event_types"),
+    ],
+    ids=["truncated-sequence", "missing-middle-event", "wrong-mode"],
+)
+def test_mutating_a_live_declaration_changes_the_result(
+    mutation: dict, failing_check: str
+) -> None:
+    """Drift proof: the declaration is what runs, so editing it must be visible.
+
+    Before #120 every one of these still passed, because the bound test owned
+    its own copy of the literals and the harness never read the case.
+    """
+
+    from agent24.evals.harness import run_runtime_events_case
+
+    result = run_runtime_events_case(_live_case(**mutation))
+
+    assert not result.passed
+    assert failing_check in {check.name for check in result.failures()}
+
+
+def test_the_declared_input_is_what_reaches_the_model() -> None:
+    """The case's own ``input`` drives the run, not a literal in a bound test."""
+
+    from agent24.evals.harness import run_runtime_events_case
+    from agent24.evals.live_stub import StubOpenAIClient
+
+    case = _live_case(input="a distinctive declared mission string")
+    assert run_runtime_events_case(case).passed
+
+    assert StubOpenAIClient.last is not None
+    rendered = json.dumps(StubOpenAIClient.last.requests[0], default=str)
+    assert "a distinctive declared mission string" in rendered
+
+
+def test_a_mutated_expected_event_fails_the_whole_registry_run(tmp_path: Path) -> None:
+    """End to end through the CLI, not just the harness function."""
+
+    import yaml
+
+    from agent24.evals.runner import main
+
+    registry = load_registry(REPO_ROOT / DEFAULT_REGISTRY_PATH)
+    case = registry.by_id()["live_tool_round_trip"].model_dump(mode="json", exclude_none=True)
+    case["expected_event_types"] = ["run_started", "run_completed"]
+    case["proves"] = []
+    path = tmp_path / "cases.yaml"
+    path.write_text(
+        yaml.safe_dump({"version": "agent24.evals.v1", "cases": [case]}, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+    assert main(["--registry", str(path)]) == 1
+
+
+def test_forbid_in_stream_is_checked_against_the_persisted_jsonl_too() -> None:
+    """A value scrubbed from SSE but left in the artifact has still leaked."""
+
+    from agent24.evals.harness import run_runtime_events_case
+
+    result = run_runtime_events_case(_live_case(forbid_in_stream=("Mock final diagnosis",)))
+
+    failed = {check.name for check in result.failures()}
+    assert "absent:Mock final diagnosis:sse" in failed
+    assert "absent:Mock final diagnosis:jsonl" in failed
+
+
+def test_the_live_stub_never_reaches_the_network() -> None:
+    """The provider is production; only its transport constructor is replaced."""
+
+    import agents.models.openai_provider as provider_module
+
+    from agent24.evals.live_stub import StubOpenAIClient, mocked_openai_provider
+
+    original = provider_module.AsyncOpenAI
+    with mocked_openai_provider():
+        assert provider_module.AsyncOpenAI is StubOpenAIClient
+    assert provider_module.AsyncOpenAI is original
+
+
+def test_the_live_stub_restores_the_ambient_environment(monkeypatch) -> None:
+    """A pinned test key must not survive the context and leak into later runs."""
+
+    from agent24.evals.live_stub import mocked_openai_provider
+
+    monkeypatch.setenv("OPENAI_API_KEY", "ambient-value")
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+
+    with mocked_openai_provider():
+        assert os.environ["OPENAI_API_KEY"] == "test-only-key"
+
+    assert os.environ["OPENAI_API_KEY"] == "ambient-value"
+    assert "OPENAI_MODEL" not in os.environ
 
 
 # --------------------------------------------------------------------------
