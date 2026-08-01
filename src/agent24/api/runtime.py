@@ -44,8 +44,18 @@ from agent24.agent.prompts import (
     LIVE_EXPLAINER_MAX_TURNS,
 )
 from agent24.agent.source import GitHubApiRevisionResolver, SourceResolutionError
+from agent24.agent.target_runtime import (
+    TARGET_ADAPTER_HASH,
+    TARGET_MAX_TURNS,
+    TARGET_PROMPT_HASH,
+    TARGET_RUNTIME_HASH,
+    TargetAgentRun,
+    is_target_runtime_supported,
+    run_protected_target_replay,
+    run_target_agent,
+)
 from agent24.events import RunChannel
-from agent24.tools import PAYMENT_FIXTURE, SyntheticGym, protected_replay
+from agent24.tools import PAYMENT_FIXTURE, SandboxGym, SyntheticGym, protected_replay
 
 from .config import RuntimeSettings
 from .contracts import ExecutionScope, RunTerminalPayload, StageFailurePayload
@@ -92,6 +102,8 @@ def _terminal_payload(
     message: str | None = None,
     experiments_run: int | None = None,
     findings: int | None = None,
+    target_runtime_completed: bool | None = None,
+    target_charge_count: int | None = None,
 ) -> dict[str, Any]:
     """Build every terminal payload through one schema and one field set."""
 
@@ -105,6 +117,8 @@ def _terminal_payload(
         message=message[:500] if message else None,
         experiments_run=experiments_run,
         findings=findings,
+        target_runtime_completed=target_runtime_completed,
+        target_charge_count=target_charge_count,
     ).model_dump(mode="json", exclude_none=True)
 
 
@@ -234,6 +248,8 @@ class OpenAIWhiteBoxAdapter:
         message: str | None = None,
         experiments_run: int | None = None,
         findings: int | None = None,
+        target_runtime_completed: bool | None = None,
+        target_charge_count: int | None = None,
     ) -> None:
         channel.publish(
             "run_completed",
@@ -247,6 +263,8 @@ class OpenAIWhiteBoxAdapter:
                 message=message,
                 experiments_run=experiments_run,
                 findings=findings,
+                target_runtime_completed=target_runtime_completed,
+                target_charge_count=target_charge_count,
             ),
         )
 
@@ -430,6 +448,151 @@ class OpenAIWhiteBoxAdapter:
             selected_plan = controller.selected_plan
             if selected_plan is not None:
                 self._live_diagnostic_plan_ids[channel.run_id] = selected_plan.plan_id
+
+    async def _run_target_aut(
+        self,
+        preflight: ExternalPreflightResult,
+        channel: RunChannel,
+    ) -> TargetAgentRun | None:
+        """Run the reviewed target Agent before controller diagnosis.
+
+        This path is opt-in by the pinned owner manifest. Other repositories
+        keep the existing metadata/compatibility behavior and cannot reach it
+        merely by choosing an entrypoint with a matching name.
+        """
+
+        if not is_target_runtime_supported(preflight.source, preflight.manifest):
+            return None
+        if not self.openai_configured:
+            channel.publish(
+                "target.runtime.skipped",
+                {
+                    "reason": "OPENAI_API_KEY is not configured",
+                    "execution_scope": "target_runtime",
+                },
+                summary="target Agent requires live provider",
+            )
+            return None
+        decision = preflight.decision
+        if not isinstance(decision, ExperimentPlan):
+            return None
+
+        provenance = {
+            "source_ref": preflight.source.source_ref,
+            "source_sha": preflight.source.resolved_sha,
+            "source_snapshot_digest": preflight.source_snapshot.snapshot_digest,
+            "manifest_hash": preflight.manifest.manifest_hash,
+            "adapter_version": preflight.manifest.adapter_version,
+            "adapter_hash": TARGET_ADAPTER_HASH,
+            "runtime_hash": TARGET_RUNTIME_HASH,
+            "prompt_hash": TARGET_PROMPT_HASH,
+        }
+        sandbox = SandboxGym.from_fixture(
+            "life.cake_collision.v1",
+            seed=decision.scenario.seed,
+            run_id=f"target-{decision.scenario.seed}",
+            fault_enabled=True,
+        )
+        channel.publish(
+            "target.runtime.started",
+            {
+                "runtime_id": preflight.manifest.adapter_version,
+                "execution_scope": "target_runtime",
+                "fixture_id": sandbox.fixture_id,
+                "seed": sandbox.seed,
+                "entrypoint": preflight.manifest.entrypoint,
+                "source_ref": preflight.source.source_ref,
+                **provenance,
+            },
+            summary="reviewed Target Agent",
+        )
+
+        def publish_target_item(kind: str, raw_item: Any, summary: str) -> None:
+            channel.publish(f"target.{kind}", raw_item, summary=summary)
+
+        result = await run_target_agent(
+            sandbox,
+            mission=preflight.mission.text,
+            runner=self.runner,
+            openai_client=self.openai_client,
+            api_key=self._api_key(),
+            model=(self.model_override if self.model_override is not None else self.model_name),
+            max_turns=min(self.max_turns, TARGET_MAX_TURNS),
+            on_event=publish_target_item,
+        )
+        charges = result.charge_count
+        protected = await asyncio.to_thread(
+            run_protected_target_replay,
+            seed=decision.scenario.seed,
+            fixture_id=sandbox.fixture_id,
+        )
+        violations = [
+            "platform.exactly_once_payment" if charges > 1 else None,
+            "task.total_spend" if result.spend_krw > 50_000 else None,
+        ]
+        channel.publish(
+            "target.oracle",
+            {
+                "status": "observed",
+                "execution_scope": "target_runtime",
+                "expected_charge_count": 2,
+                "charge_count": charges,
+                "spend_krw": result.spend_krw,
+                "violations": [item for item in violations if item is not None],
+                "ledger": result.evidence["ledger"],
+                "initial_snapshot_hash": result.evidence["initial_snapshot_hash"],
+                "final_snapshot_hash": result.evidence["final_snapshot_hash"],
+                "protected_replay": {
+                    "accepted": protected.accepted,
+                    "charge_count": protected.charge_count,
+                    "spend_krw": protected.spend_krw,
+                    "mission_succeeded": protected.mission_succeeded,
+                    "initial_snapshot_hash": protected.evidence["initial_snapshot_hash"],
+                    "final_snapshot_hash": protected.evidence["final_snapshot_hash"],
+                },
+                **provenance,
+            },
+            summary=f"target ledger · {charges} charge(s)",
+        )
+        channel.publish(
+            "target.replay",
+            {
+                "execution_scope": "target_runtime",
+                "accepted": protected.accepted,
+                "perturbed": {
+                    "charge_count": charges,
+                    "spend_krw": result.spend_krw,
+                    "ledger": result.evidence["ledger"],
+                },
+                "protected": {
+                    "charge_count": protected.charge_count,
+                    "spend_krw": protected.spend_krw,
+                    "mission_succeeded": protected.mission_succeeded,
+                    "ledger": protected.evidence["ledger"],
+                },
+                **provenance,
+            },
+            summary=(
+                "target protected replay · one charge"
+                if protected.accepted
+                else "target protected replay rejected"
+            ),
+        )
+        channel.publish(
+            "target.runtime.completed",
+            {
+                "status": "completed",
+                "execution_scope": "target_runtime",
+                "tool_calls": result.tool_calls,
+                "tool_results": result.tool_results,
+                "charge_count": charges,
+                "spend_krw": result.spend_krw,
+                **provenance,
+            },
+            summary="Target Agent finished",
+        )
+        channel.publish("target.final_output", {"text": result.final_output})
+        return result
 
     async def _run_offline(self, query: str, channel: RunChannel, *, reason: str) -> str:
         call_id = f"offline_{uuid.uuid4().hex}"
@@ -917,6 +1080,7 @@ class OpenAIWhiteBoxAdapter:
 
         preflight_result: ExternalPreflightResult | None = None
         diagnostic_result: DiagnosticLoopResult | None = None
+        target_run: TargetAgentRun | None = None
         terminal_emitted = False
         execution_scope: ExecutionScope = (
             NO_EXECUTION_SCOPE if target is not None else NO_TARGET_SCOPE
@@ -966,6 +1130,38 @@ class OpenAIWhiteBoxAdapter:
                     return
                 preflight_result = preflight_outcome
                 execution_scope = self._execution_scope(preflight_result)
+                if is_target_runtime_supported(
+                    preflight_result.source,
+                    preflight_result.manifest,
+                ):
+                    try:
+                        target_run = await self._run_target_aut(preflight_result, channel)
+                        if target_run is not None:
+                            execution_scope = "target_runtime"
+                    except Exception as error:  # noqa: BLE001 - typed terminal, no fallback
+                        message = (
+                            "검토된 Target Agent 실행에 실패해 synthetic 성공으로 대체하지 "
+                            "않았습니다."
+                        )
+                        self._publish_stage_failure(
+                            channel,
+                            stage="target_runtime",
+                            code=type(error).__name__,
+                            message=message,
+                        )
+                        self._publish_terminal(
+                            channel,
+                            status="target_runtime_failed",
+                            mode=self.mode,
+                            source_resolved=True,
+                            diagnostic_completed=False,
+                            openai_analysis_completed=False,
+                            execution_scope="target_runtime",
+                            message=message,
+                            target_runtime_completed=False,
+                        )
+                        terminal_emitted = True
+                        return
                 reason: str | None = None
                 message: str | None = None
                 live_plan_id: str | None = None
@@ -1064,6 +1260,10 @@ class OpenAIWhiteBoxAdapter:
                             execution_scope=execution_scope,
                             experiments_run=diagnostic_result.experiments_run,
                             findings=len(diagnostic_result.lab_report.findings),
+                            target_runtime_completed=(True if target_run is not None else None),
+                            target_charge_count=(
+                                target_run.charge_count if target_run is not None else None
+                            ),
                         )
                         terminal_emitted = True
                         return
@@ -1109,6 +1309,10 @@ class OpenAIWhiteBoxAdapter:
                         message=stop.detail,
                         experiments_run=0,
                         findings=0,
+                        target_runtime_completed=(True if target_run is not None else None),
+                        target_charge_count=(
+                            target_run.charge_count if target_run is not None else None
+                        ),
                     )
                     terminal_emitted = True
                     return
@@ -1132,6 +1336,10 @@ class OpenAIWhiteBoxAdapter:
                     message=message,
                     experiments_run=diagnostic_result.experiments_run,
                     findings=len(diagnostic_result.lab_report.findings),
+                    target_runtime_completed=(True if target_run is not None else None),
+                    target_charge_count=(
+                        target_run.charge_count if target_run is not None else None
+                    ),
                 )
                 terminal_emitted = True
                 return
@@ -1240,6 +1448,10 @@ class OpenAIWhiteBoxAdapter:
                         else NO_TARGET_OFFLINE_SCOPE
                     ),
                     message=message,
+                    target_runtime_completed=(True if target_run is not None else None),
+                    target_charge_count=(
+                        target_run.charge_count if target_run is not None else None
+                    ),
                 )
         finally:
             self._diagnostic_contexts.pop(channel.run_id, None)
