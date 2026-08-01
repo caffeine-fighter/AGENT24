@@ -32,7 +32,7 @@ export const test = base.extend({
           violations.console.push(message.text().slice(0, 120));
         }
       });
-      page.on("pageerror", () => {
+      page.on("pageerror", (error) => {
         violations.pageerror.push(String(error).slice(0, 120));
       });
       page.on("requestfailed", (request) => {
