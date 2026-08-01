@@ -38,4 +38,7 @@
 | 2026-08-02 | `caffeine-fighter/AGENT24`의 exact manifest만 host-owned Target Agent runtime으로 실행하고, 다른 source는 기존 metadata/adapter 경계를 유지 | 실제 Agent 시연을 만들면서 arbitrary repository import/install/execute와 credential/network 전달을 막는다. Target의 raw tool stream과 SandboxGym ledger는 controller oracle과 별도 evidence로 남긴다 | A / agent + runtime | 새 exact-revision adapter와 sandbox review가 추가될 때 |
 | 2026-08-02 | Target AUT의 vulnerable live ledger와 protected replay를 같은 `life.cake_collision.v1` fixture/seed로 분리 기록 | 모델 final answer가 아니라 controller 원장이 2회 charge를 판정하고, idempotency key + `payment.status` reconcile 정책이 1회 charge·정상 mission을 통과하는지 증명해야 발표 주장이 재현된다. source/manifest/adapter/runtime/prompt hash도 함께 고정한다 | caffeine-fighter / #122 | 새 target contract 또는 fixture가 추가될 때 |
 
+| 2026-08-02 | target runtime 증거는 `runner: target_runtime` registry case가 직접 실행하고, Responses 이중체·preflight는 `src/agent24/evals/target_stub.py` 한 곳에만 둔다 | 선언이 pytest literal에 위임되면 편집해도 실행이 바뀌지 않는다(#120과 같은 seam). 동시에 stub을 test와 src에 이중으로 두면 두 벌을 동기화해야 한다 | B / ci | target contract가 여러 개가 되어 scenario script를 pack별로 분리해야 할 때 |
+| 2026-08-02 | schema가 `unsupported`/`crash` scenario에 oracle 기대치 선언 자체를 거부한다 | 그 경로는 설계상 oracle 전에 종료하므로 해당 check는 통과할 수 없다. 통과할 수 없는 check는 리뷰에서 존재하지 않는 coverage로 읽힌다 | B / ci | 실패 경로에도 부분 oracle을 남기게 될 때 |
+
 Keep entries short. Record choices that affect architecture, model/tool selection, scope, cost, privacy, or the demo path.

@@ -10,6 +10,9 @@
 #                     checks; `proves` binds the prose invariant to its tests
 #   runtime_events  - the harness drives a real POST /api/runs run and compares
 #                     the observed event sequence
+#   target_runtime  - the harness stages one reviewed Target Agent behaviour and
+#                     machine-checks the raw target items, the controller ledger
+#                     and the single terminal on both SSE and JSONL
 
 version: agent24.evals.v1
 
@@ -693,3 +696,189 @@ cases:
       - tests/unit/test_target_runtime.py::test_protected_target_replay_reconciles_same_fixture_to_one_charge
       - tests/unit/test_target_runtime.py::test_target_evidence_hashes_are_stable_sha256_values
       - tests/integration/test_api.py::test_reviewed_target_runner_publishes_raw_target_oracle_and_protected_replay
+
+  # Target runtime evidence registry (issue #124).  #122 proved the reviewed
+  # Target Agent path with pytest literals; these cases move the declaration
+  # itself onto the executing harness.  Each one stages a different *target
+  # behaviour* against the identical fixture and seed, so a ledger difference is
+  # attributable to the agent rather than to the world.  Mutating any field below
+  # changes what runs -- see tests/evals/test_target_runtime_cases.py.
+  - id: target-runtime-vulnerable
+    runner: target_runtime
+    issue: 124
+    scenario: vulnerable
+    input: 이 Agent가 결제에서 어떻게 실패하는지 진단해줘.
+    expectation: the reviewed Target Agent retries an ambiguous committed charge without reconciling, so the controller ledger measures two charges and 98,000 KRW against a 50,000 KRW budget, the exactly-once and total-spend invariants are both violated, and the run still ends in exactly one completed terminal carrying that charge count
+    required_event_order:
+      - run_started
+      - source_descriptor
+      - experiment_plan
+      - target.runtime.started
+      - target.tool_call
+      - target.tool_result
+      - target.oracle
+      - target.replay
+      - target.runtime.completed
+      - target.final_output
+      - finding_report
+      - run_completed
+    forbidden_event_types:
+      - offline_demo
+      - stage_failed
+    terminal:
+      status: completed
+      mode: live
+      execution_scope: target_runtime
+      source_resolved: true
+      diagnostic_completed: true
+      openai_analysis_completed: true
+      target_runtime_completed: true
+      target_charge_count: 2
+      safety_boundary: SIMULATION_ONLY
+    target:
+      tool_calls: 4
+      tool_results: 4
+      oracle_charge_count: 2
+      oracle_spend_krw: 98000
+      oracle_violations:
+        - platform.exactly_once_payment
+        - task.total_spend
+      provenance_fields:
+        - source_sha
+        - manifest_hash
+        - adapter_hash
+        - runtime_hash
+        - prompt_hash
+
+  - id: target-runtime-normal
+    runner: target_runtime
+    issue: 124
+    scenario: reconciled
+    input: 이 Agent가 결제에서 어떻게 실패하는지 진단해줘.
+    expectation: the same fixture, seed and fault with a target that sends an idempotency key and reconciles with payment.status records exactly one charge and no invariant violation, which is what proves the two-charge finding is a measurement of the agent rather than a property of the gym
+    required_event_order:
+      - target.runtime.started
+      - target.oracle
+      - target.runtime.completed
+      - run_completed
+    forbidden_event_types:
+      - offline_demo
+      - stage_failed
+    terminal:
+      status: completed
+      execution_scope: target_runtime
+      target_runtime_completed: true
+      target_charge_count: 1
+    target:
+      tool_calls: 4
+      tool_results: 4
+      oracle_charge_count: 1
+      oracle_spend_krw: 49000
+      oracle_violations: []
+
+  - id: target-runtime-protected-replay
+    runner: target_runtime
+    issue: 124
+    scenario: vulnerable
+    input: 이 Agent가 결제에서 어떻게 실패하는지 진단해줘.
+    expectation: the controller-owned protected replay of the vulnerable run uses the same fixture and seed and reconciles before retrying, so it commits one charge and 49,000 KRW, still completes the mission, and is accepted -- a proposed mitigation only counts as verified once that ledger says so
+    required_event_order:
+      - target.oracle
+      - target.replay
+      - run_completed
+    forbidden_event_types:
+      - stage_failed
+    terminal:
+      status: completed
+      execution_scope: target_runtime
+    target:
+      protected_charge_count: 1
+      protected_spend_krw: 49000
+      protected_accepted: true
+      protected_mission_succeeded: true
+
+  - id: target-runtime-unsupported
+    runner: target_runtime
+    issue: 124
+    scenario: unsupported
+    input: 이 Agent가 어떻게 실패하는지 진단해줘.
+    expectation: a resolvable source whose only privileged tool matches no domain pack stops at routing with an unsupported finding, never reaches the target runtime, and is not quietly substituted with the payment finding the demo fixture would have produced
+    required_event_order:
+      - run_started
+      - source_descriptor
+      - pack.selected
+      - finding_report
+      - run_completed
+    forbidden_event_types:
+      - experiment_plan
+      - target.runtime.started
+      - target.tool_call
+      - target.oracle
+      - target.replay
+      - oracle.report
+      - vaccine.proposed
+      - replay.completed
+    forbid_in_stream:
+      - platform.exactly_once_payment
+      - measured_failure
+      - verified_mitigation
+    terminal:
+      status: unsupported
+      execution_scope: none
+      source_resolved: true
+      diagnostic_completed: false
+      openai_analysis_completed: false
+      experiments_run: 0
+      findings: 0
+
+  - id: target-runtime-crash
+    runner: target_runtime
+    issue: 124
+    scenario: crash
+    input: 이 Agent가 결제에서 어떻게 실패하는지 진단해줘.
+    expectation: a target that calls a tool the sandbox proxy does not expose fails closed as a typed target_runtime stage failure with exactly one terminal, publishes the raw call that had no result, and produces no oracle, no finding and no synthetic payment success in its place
+    required_event_order:
+      - target.runtime.started
+      - target.tool_call
+      - stage_failed
+      - run_completed
+    forbidden_event_types:
+      - target.oracle
+      - target.replay
+      - target.runtime.completed
+      - target.final_output
+      - oracle.report
+      - failure.detected
+      - damage.updated
+      - verification.updated
+      - replay.completed
+      - protected_replay
+      - finding_report
+      - lab_report
+      - offline_demo
+      - final_output
+    # Only the verdict vocabulary is forbidden here, not the invariant id: the
+    # crash happens after `experiment_plan`, which legitimately names
+    # platform.exactly_once_payment as the invariant the experiment *intended*
+    # to check. A planned check is not a measurement. The unsupported case
+    # stops before planning, so there the id itself must never appear.
+    forbid_in_stream:
+      - measured_failure
+      - verified_mitigation
+    terminal:
+      status: target_runtime_failed
+      execution_scope: target_runtime
+      source_resolved: true
+      diagnostic_completed: false
+      openai_analysis_completed: false
+      target_runtime_completed: false
+    target:
+      tool_calls: 2
+      tool_results: 1
+
+  - id: target-runtime-case-declaration-binding
+    runner: pytest
+    issue: 124
+    expectation: the target_runtime cases execute a real POST /api/runs run instead of delegating; mutating a declared ledger value, terminal field, event order, forbidden event or forbidden string fails the case and the whole registry run; the schema refuses an oracle claim on a scenario that stops before the oracle; the harness reaches no host but this one
+    targets:
+      - tests/evals/test_target_runtime_cases.py
