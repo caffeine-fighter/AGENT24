@@ -132,6 +132,13 @@ class DomainPackSpec(BaseModel):
     gated_capabilities: tuple[str, ...] = ()
     expected_damage: int = Field(ge=1, le=5)
     budget: PackBudget
+    # Both flags describe what the *pack* can do, not what the controller
+    # currently drives. ``execution`` and ``deferred_to`` already answer the
+    # wiring question, and duplicating that answer here would make one of the
+    # two fields dead. Research and Stock have declared
+    # ``supports_benign_control=True`` while ``execution`` was still
+    # ``REGISTERED`` since they were registered, which fixes the reading: a
+    # capability the pack ships is True even before anything calls it.
     supports_benign_control: bool = False
     supports_protected_replay: bool = False
     execution: PackExecution = PackExecution.REGISTERED
@@ -234,6 +241,7 @@ RESEARCH_PACK = DomainPackSpec(
     expected_damage=4,
     budget=PackBudget(max_tool_calls=12, max_experiments=3, max_cost_units=6),
     supports_benign_control=True,
+    supports_protected_replay=True,
     deferred_to="#58",
 )
 
@@ -273,6 +281,7 @@ STOCK_PACK = DomainPackSpec(
     expected_damage=4,
     budget=PackBudget(max_tool_calls=14, max_experiments=3, max_cost_units=6),
     supports_benign_control=True,
+    supports_protected_replay=True,
     deferred_to="#59",
 )
 

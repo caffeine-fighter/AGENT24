@@ -242,20 +242,72 @@ def test_ticket_spec_matches_the_ticket_pack() -> None:
     assert TICKET_PACK.budget.max_tool_calls == MAX_TICKET_TOOL_CALL_BUDGET
 
 
-def test_ticket_spec_matches_the_metadata_the_pack_publishes() -> None:
-    """``TICKET_PACK_METADATA`` was written for this registry; consume it."""
+def _packs_publishing_metadata() -> list[tuple[str, object, dict]]:
+    from agent24.tools.research_pack import RESEARCH_PACK_METADATA
+    from agent24.tools.stock_pack import STOCK_PACK_METADATA
+    from agent24.tools.ticket_pack import TICKET_PACK_METADATA
 
-    from agent24.tools.ticket_pack import TICKET_PACK_METADATA as meta
+    return [
+        ("research", RESEARCH_PACK, RESEARCH_PACK_METADATA),
+        ("stock", STOCK_PACK, STOCK_PACK_METADATA),
+        ("ticket", TICKET_PACK, TICKET_PACK_METADATA),
+    ]
 
-    assert TICKET_PACK.version == meta["version"]
-    assert TICKET_PACK.domain_kind.value == meta["domain_kind"]
-    assert {family.value for family in TICKET_PACK.mission_families} == set(
-        meta["mission_families"]
+
+@pytest.mark.parametrize("name", ["research", "stock", "ticket"])
+def test_the_registry_agrees_with_the_metadata_each_pack_publishes(name: str) -> None:
+    """Three packs now publish a ``*_PACK_METADATA`` dict describing themselves.
+
+    Comparing every shared key is what makes the registry's restatement
+    checkable rather than hopeful. ``anchor_tool_capabilities`` is compared only
+    when the pack publishes it -- Ticket does not.
+    """
+
+    spec, meta = next((s, m) for label, s, m in _packs_publishing_metadata() if label == name)
+
+    assert spec.pack_id == meta["pack_id"]
+    assert spec.version == meta["version"]
+    assert spec.domain_kind.value == meta["domain_kind"]
+    assert {family.value for family in spec.mission_families} == set(meta["mission_families"])
+    assert spec.required_tools == frozenset(meta["required_tool_capabilities"])
+    assert spec.optional_tools == frozenset(meta["optional_tool_capabilities"])
+    assert spec.budget.max_tool_calls == meta["max_tool_calls"]
+    assert spec.supports_benign_control is meta["supports_benign_control"]
+    assert spec.supports_protected_replay is meta["supports_protected_replay"]
+    if "anchor_tool_capabilities" in meta:
+        assert spec.anchor_tools == frozenset(meta["anchor_tool_capabilities"])
+
+
+def test_a_pack_that_ships_protected_replay_declares_it() -> None:
+    """The flag describes the pack, not the controller wiring.
+
+    ``supports_benign_control`` has been ``True`` for Research and Stock since
+    they were registered, while ``execution`` stayed ``REGISTERED`` -- so the
+    adjacent ``supports_protected_replay`` has to mean the same thing. Reading
+    it as "the controller drives this" would duplicate ``execution`` and make
+    one of the two fields dead.
+    """
+
+    from agent24.tools import (
+        protected_replay,
+        research_protected_replay,
+        stock_protected_replay,
+        ticket_protected_replay,
     )
-    assert TICKET_PACK.required_tools == frozenset(meta["required_tool_capabilities"])
-    assert TICKET_PACK.optional_tools == frozenset(meta["optional_tool_capabilities"])
-    assert TICKET_PACK.supports_benign_control is meta["supports_benign_control"]
-    assert TICKET_PACK.supports_protected_replay is meta["supports_protected_replay"]
+
+    shipped = {
+        LIFE_PACK.pack_id: protected_replay,
+        RESEARCH_PACK.pack_id: research_protected_replay,
+        STOCK_PACK.pack_id: stock_protected_replay,
+        TICKET_PACK.pack_id: ticket_protected_replay,
+    }
+    for spec in DOMAIN_PACKS:
+        expected = spec.pack_id in shipped
+        assert spec.supports_protected_replay is expected, (
+            f"{spec.pack_id} declares supports_protected_replay="
+            f"{spec.supports_protected_replay} but "
+            f"{'ships' if expected else 'has no'} a protected replay entry point"
+        )
 
 
 def test_a_real_ticket_agent_routes_to_the_ticket_pack() -> None:
