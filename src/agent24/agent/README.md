@@ -31,10 +31,17 @@ Lab Agent(실패 과학자)의 계약과 결정적 알고리즘이 사는 경계
 - **`DenyRule`**: 호출이 선언한 provenance와의 교집합으로 판정합니다.
   따라서 "전부 차단"하려면 `USER_INSTRUCTION`을 명시해야 합니다.
 
-## 이슈 #3 (Worker A)
+## 이슈 #3 — 실험 정책과 구조화 프롬프트
 
-- `policy.py`: 위험도 점수, 실험 랭킹, `StopConditions`, 정직한 종료
-- `prompts.py` + `prompts/*.md`: 버전이 있는 지시문과 출력 스키마 매핑
+- `profile.py`: 관찰된 `BehaviorProfile`. 근거 없는 판정은 스키마가 거부한다 (#20)
+- `planner.py`: 위험도 점수와 결정적 실험 선택 (#22)
+- `report.py`: 증거에서 유도되는 terminal state (#23)
+- `prompts.py` + `prompts/*.md`: 버전이 있는 지시문, frozen 출력 스키마 매핑,
+  turn·비용·종료 조건(`should_stop`), schema 실패 복구, untrusted fence
+
+프롬프트가 인용하는 값(예산, gym 도구, invariant id, 금지 표현)은 전부 강제하는
+코드에서 치환됩니다. 지시문과 실제 규칙이 조용히 어긋나지 않게 하려는 것이고,
+`tests/unit/test_prompts.py`가 그 일치를 검사합니다.
 
 ## 이슈 #26 one-input 조립
 

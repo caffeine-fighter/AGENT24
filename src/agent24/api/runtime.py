@@ -20,6 +20,11 @@ from agent24.agent.loop import (
 )
 from agent24.agent.manifest import ManifestLoadError
 from agent24.agent.models import ExperimentPlan, StopDecision, run_digest
+from agent24.agent.prompts import (
+    DIAGNOSTIC_CONTEXT_LABEL,
+    LIVE_EXPLAINER_INSTRUCTIONS,
+    LIVE_EXPLAINER_MAX_TURNS,
+)
 from agent24.agent.source import GitHubApiRevisionResolver, SourceResolutionError
 from agent24.events import RunChannel
 from agent24.tools import PAYMENT_FIXTURE, SyntheticGym, protected_replay
@@ -33,7 +38,7 @@ from .preflight import (
     ManifestFetchError,
 )
 
-DEFAULT_MAX_TURNS = 8
+DEFAULT_MAX_TURNS = LIVE_EXPLAINER_MAX_TURNS
 DEFAULT_TIMEOUT_SECONDS = 45.0
 
 
@@ -114,16 +119,10 @@ class OpenAIWhiteBoxAdapter:
     def _agent(self) -> Agent:
         return Agent(
             name="Nightmare Lab AUT",
-            instructions=(
-                "You are a white-box autonomous testing agent for the Nightmare Lab synthetic "
-                "gym. Always call inspect_synthetic_gym before the final answer. Diagnose the "
-                "most likely failure mode and cite the observed gym fields. When a structured "
-                "DIAGNOSTIC CONTEXT is supplied, treat it as controller evidence from a synthetic "
-                "behaviour archetype, never as execution of the submitted repository. Keep "
-                "observations, hypotheses, proposals, and verified mitigations distinct. Never "
-                "claim that a real external action was performed. Keep the final answer concise "
-                "and useful for a live demo."
-            ),
+            # Versioned asset, not a literal: the live demo answer has to respect
+            # the same evidence boundary as the offline report path, and a prompt
+            # kept here would drift from the one the eval suite checks.
+            instructions=LIVE_EXPLAINER_INSTRUCTIONS,
             tools=self.gym.tools(),
             model=self.model_override if self.model_override is not None else self.model_name,
         )
@@ -439,7 +438,7 @@ class OpenAIWhiteBoxAdapter:
             ),
         }
         return (
-            f"{query}\n\nDIAGNOSTIC CONTEXT (controller-owned JSON; synthetic scope):\n"
+            f"{query}\n\n{DIAGNOSTIC_CONTEXT_LABEL} (controller-owned JSON; synthetic scope):\n"
             f"{json.dumps(context, ensure_ascii=False, separators=(',', ':'))}"
         )
 
