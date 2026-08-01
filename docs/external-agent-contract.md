@@ -140,6 +140,16 @@ manifest가 허용한 도구명과 외부 입력 loop가 실제 재현할 수 �
 | `PROPOSED · 제안된 패치` | 아직 검증 결과가 아닌 선언형 최소 보호책 |
 | `VERIFIED · 재실행 검증` | same-seed, neighbor, benign control gate가 실제 통과한 범위만 |
 
+키가 설정된 external target의 live orchestration은 정확히 다음 순서다.
+
+`inspect_target → list_experiments → run_sandbox_experiment → inspect_evidence → verify_mitigation`
+
+각 tool은 strict schema이며 모델은 `list_experiments`가 반환한 ID만 선택한다. controller가
+소유한 evidence와 mitigation을 검사하기 전에는 final/finding을 공개하지 않는다. 모델의
+짧은 decision summary·expected evidence·budget·fallback은 감사용 결정 기록이지 hidden
+chain-of-thought가 아니다. deterministic planner는 모델 선택으로 위장하지 않고
+`planner.reference`/`planner.comparison`에 별도 기록한다.
+
 ## 상태와 정확한 사용자 문구
 
 따옴표 안 문장은 화면에서 임의로 축약하거나 더 강한 주장으로 바꾸지 않는다.
@@ -155,8 +165,8 @@ Raw API Stream에는 아래 wire code를 그대로 보존한다.
 | manifest 오류 | `ManifestResponseError` / `MalformedManifestError` / `ManifestPathError` → `source_preflight_failed` | “manifest를 읽을 수 없습니다. JSON schema, 256 KB 제한, allowlist 경로, 상대 entrypoint를 확인하세요. 외부 Agent 코드는 실행하지 않았습니다.” |
 | 실험 미지원 | `StopDecision.reason=unsupported_input`, terminal `status=unsupported` | “현재 Gym이 이 BehaviorProfile에 맞는 fault operator를 재현할 수 없습니다. 실패를 찾지 못한 것이 아니라 테스트하지 못한 상태입니다.” |
 | budget 소진 | `StopDecision.reason=budget_exhausted` | “실험 budget을 모두 사용해 탐색을 중단했습니다. 확인하지 못한 위험이 남아 있으며 이 결과는 안전 인증이 아닙니다.” |
-| target 진단 완료, OpenAI key 없음 | `stage_failed(openai_key_missing)` → terminal `openai_analysis_unavailable` | “controller 진단은 완료했지만 OPENAI_API_KEY가 없어 OpenAI 설명을 실행하지 않았습니다. controller report만 보존합니다.” |
-| target 진단 완료, OpenAI provider 실패 | `stage_failed(openai_*)` → terminal `openai_analysis_failed` | “controller 진단은 완료했지만 OpenAI 설명 요청에 실패했습니다. provider 원문 없이 controller report만 보존합니다.” |
+| target 모델 진단 시작 불가, OpenAI key 없음 | `stage_failed(openai_key_missing)` → `planner.comparison(same_target_reference)` → terminal `openai_analysis_unavailable` | “OPENAI_API_KEY가 없어 모델 주도 진단을 실행하지 않았습니다. 같은 target의 deterministic reference plan을 명시적으로 실행합니다.” |
+| target 모델 진단 timeout/provider/controller 거부 | `stage_failed(openai_*)` → `planner.comparison(same_target_reference)` → terminal `openai_analysis_failed` | “모델 주도 진단이 완주하지 못해 같은 target의 deterministic reference plan을 명시적으로 실행했습니다. provider 원문은 노출하지 않습니다.” |
 | 진단 loop 내부 실패 | `stage_failed(diagnostic_loop_failed)` → terminal `diagnostic_loop_failed` | “controller 진단을 완료하지 못했습니다. 외부 Agent 결과를 다른 fixture로 바꾸지 않았습니다.” |
 | no-target OpenAI unavailable | `offline_demo`, terminal scope `no_target_offline_demo` | “external target이 없는 generic 실행에서만 deterministic synthetic fixture로 전환했습니다.” |
 | 분류되지 않은 runtime 실패 | `stage_failed(runtime_failed)` → terminal `runtime_failed` | “실행 중 오류로 결과를 확정하지 못했습니다. 완료로 표시하지 않고 확인된 단계까지만 보존합니다.” |

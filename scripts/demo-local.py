@@ -1,7 +1,7 @@
 """Run the full NIGHTMARE LAB demo locally.
 
-By default this is the deterministic rehearsal path for the checked-out demo
-agent. ``--live-github`` switches the source boundary to the production
+By default this is the deterministic rehearsal path for the checked-in
+ExampleCakeAgent bundle. ``--live-github`` switches the source boundary to the production
 metadata/content fetchers so the browser can accept a real public GitHub path,
 including an allowlisted external Agent adapter. Neither mode imports or
 executes a submitted entrypoint.
@@ -66,7 +66,8 @@ class LocalExampleRevisionResolver(MappingRevisionResolver):
     def resolve(self, request: SourceRequest) -> str:
         if (
             request.source_kind != "local_bundle"
-            or request.source_path != str(EXAMPLE_FIXTURE_RELATIVE_ROOT)
+            or request.source_path.replace("\\", "/")
+            != EXAMPLE_FIXTURE_RELATIVE_ROOT.as_posix()
             or request.repository != EXAMPLE_REPOSITORY
         ):
             raise SourceAccessError(
@@ -138,8 +139,9 @@ def build_app(
     *,
     live_github: bool = False,
     example_agent: bool = False,
+    settings: RuntimeSettings | None = None,
 ):
-    settings = RuntimeSettings()
+    settings = settings or RuntimeSettings()
     if live_github:
         preflight = ExternalAgentPreflight(
             source_resolver=GitHubApiRevisionResolver(token=settings.github_token),
@@ -209,11 +211,17 @@ def main() -> None:
     mode.add_argument(
         "--example-agent",
         action="store_true",
-        help="use the checked-in standalone Agent bundle for the local demo",
+        help="explicitly use the default checked-in ExampleCakeAgent bundle",
+    )
+    mode.add_argument(
+        "--self-target",
+        action="store_true",
+        help="use the checked-out AGENT24 repository itself as the analyzed target",
     )
     args = parser.parse_args()
     repository_root = Path(__file__).resolve().parents[1]
-    if args.example_agent:
+    example_agent = args.example_agent or not (args.live_github or args.self_target)
+    if example_agent:
         _, _, manifest_bytes, entrypoint_bytes, bundle_sha = _example_bundle_files(repository_root)
         del manifest_bytes, entrypoint_bytes
         print(f"NIGHTMARE LAB local demo: {EXAMPLE_SOURCE_URL}@sha256:{bundle_sha}")
@@ -222,7 +230,7 @@ def main() -> None:
             "GYM: network-disabled local replacement; the bundle entrypoint is not imported "
             "or executed"
         )
-        print("BROWSER: /index.html?demo=example-agent")
+        print("BROWSER: /index.html · ExampleCakeAgent is the default form target")
     elif args.live_github:
         print("NIGHTMARE LAB local demo: public GitHub metadata/content intake")
         print(
@@ -243,7 +251,7 @@ def main() -> None:
         build_app(
             repository_root,
             live_github=args.live_github,
-            example_agent=args.example_agent,
+            example_agent=example_agent,
         ),
         host=args.host,
         port=args.port,

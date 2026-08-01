@@ -8,8 +8,8 @@
   "seq": 1,
   "timestamp": "2026-08-01T00:00:00+00:00",
   "type": "tool_call",
-  "payload": {"type": "function_call", "name": "inspect_synthetic_gym", "arguments": "..."},
-  "summary": "inspect_synthetic_gym"
+  "payload": {"type": "function_call", "name": "inspect_target", "arguments": "..."},
+  "summary": "inspect_target"
 }
 ```
 
@@ -27,6 +27,14 @@ legacy `run_failed`는 non-terminal이라서, 안전하게 분류한 실패를 �
 `source_resolved`, `diagnostic_completed`, `openai_analysis_completed`,
 `execution_scope`를 포함한다.
 
-External target의 source/diagnostic 실패 또는 OpenAI 분석 실패는 generic
-`inspect_synthetic_gym` fixture로 바꾸지 않는다. target이 없는 명시적
-`no_target_offline_demo` 실행만 synthetic fallback tool events를 만들 수 있다.
+External target의 live Raw Stream에는 다섯 Responses function item
+(`inspect_target`, `list_experiments`, `run_sandbox_experiment`, `inspect_evidence`,
+`verify_mitigation`)과 대응하는 다섯 output item이 SDK 순서 그대로 남는다. controller가
+추가하는 `diagnostic.*`, `planner.*`, `gym.*` event는 raw item을 대체하지 않는 별도
+감사 projection이다.
+
+External target의 source 실패는 실험 없이 종료한다. OpenAI key/timeout/provider/controller
+실패는 generic `inspect_synthetic_gym` fixture로 바꾸지 않고, `stage_failed`와
+`planner.comparison(fallback_policy=same_target_reference)` 뒤 같은 target의 deterministic
+reference plan만 실행한다. target이 없는 명시적 `no_target_offline_demo` 실행만 synthetic
+fallback tool events를 만들 수 있다.

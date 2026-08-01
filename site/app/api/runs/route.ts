@@ -713,9 +713,9 @@ export async function POST(request: Request) {
       return Response.json({ detail: "legacy input must be a non-empty string of at most 4000 characters" }, { status: 422 });
     }
     const expectedInput = [
-      "NIGHTMARE LAB에서 다음 GitHub 저장소의 에이전트를 가상 환경에서 안전하게 시험해 주세요.",
-      `저장소: ${repositoryUrl}`,
-      `브랜치 또는 커밋: ${requestedRef}`,
+      "NIGHTMARE LAB에서 다음 Agent source를 가상 환경에서 안전하게 시험해 주세요.",
+      `Agent source: ${repositoryUrl}`,
+      `버전: ${requestedRef}`,
       `맡길 일: ${mission}`,
       "실제 외부 서비스를 호출하거나 상태를 바꾸지 말고, 관찰한 사실·추정 원인·제안한 해결책·재검증 결과를 구분해 주세요.",
     ].join("\n");
