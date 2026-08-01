@@ -9,4 +9,6 @@
 
 | 2026-08-01 | v1 (변경 없음) | 보고서 문구를 모델이 생성하면 "실패를 못 찾았다"가 "안전하다"로 새어 나가고, 이는 프롬프트로 막을 수 없다 | agent instruction 변경 없음. 이슈 #23의 `report.py`는 순수 결정적 조립이며, terminal state는 `build_report`가 증거에서 유도한다. `bounded_summary`는 `compose_*_summary` 헬퍼가 생성하고 생성 텍스트를 받지 않는다. `no_failure_observed`에는 "안전성을 입증하지 않는다" 문장을 validator가 강제하고, 증거 없는 확정 문구는 스키마가 거부한다 | `tests/unit/test_report.py::test_no_failure_observed_without_the_disclaimer_is_rejected`, `::test_a_status_without_evidence_cannot_assert_a_verdict`, `::test_the_over_safe_patch_never_becomes_a_mitigation` | 5개 terminal state 전부 유효/위반 fixture 쌍 통과, 조립 결과 2회 동일 (`test_report_assembly_is_deterministic`) |
 
+| 2026-08-01 | v2 | source provenance와 synthetic archetype evidence를 함께 주면 모델이 이를 target code 실행 결과로 합칠 수 있다 | controller-owned `DIAGNOSTIC CONTEXT`의 scope를 명시하고 관찰·가설·제안·검증을 분리하며 제출 repository 실행을 주장하지 않도록 instruction 강화 | `tests/integration/test_api.py::test_live_target_passes_bounded_synthetic_evidence_to_openai`, `::test_diagnostic_failure_is_sanitized_and_falls_back` | mocked Responses API가 bounded context를 받고 tool call→final을 완주하며 source SHA·verified status를 보존; 내부 예외 문자열은 event/JSONL에 비노출 |
+
 Store the runnable prompt beside the agent code. Use this log to explain prompt quality and iteration during judging.
