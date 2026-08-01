@@ -14,9 +14,9 @@ type RunRequest = {
 };
 
 const FALLBACK_RATIONALE =
-  "결제는 되돌리기 어려운 작업입니다. 기본 실행에서 중복 방지와 상태 확인 근거가 없어, 결제 완료 뒤 응답만 끊는 실험을 선택합니다.";
+  "결제는 되돌리기 어려워요. 기본 실행에서 중복 방지와 상태 확인 근거를 찾지 못해, 결제 완료 뒤 응답만 끊는 실험을 선택해요.";
 const FALLBACK_EVIDENCE =
-  "첫 결제는 처리 기록에 남기되 에이전트에는 시간 초과로 알립니다. 이후 기존 결제 상태를 확인하지 않고 다시 결제하는지 실행 기록에서 확인합니다.";
+  "첫 결제는 처리 기록에 남기되 에이전트에는 시간 초과로 알려요. 이후 기존 결제 상태를 확인하지 않고 다시 결제하는지 실행 기록에서 확인해요.";
 
 function githubCoordinates(repositoryUrl: string): { owner: string; repository: string } | null {
   try {
@@ -262,7 +262,7 @@ export async function POST(request: Request) {
     runContext = await sealRunContext(context);
   } catch {
     return Response.json(
-      { detail: "실행 보안 설정을 확인할 수 없습니다." },
+      { detail: "실행 보안 설정을 확인할 수 없어요." },
       { headers: { "Cache-Control": "no-store" }, status: 503 },
     );
   }

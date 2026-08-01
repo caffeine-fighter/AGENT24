@@ -16,7 +16,7 @@ export async function GET(request: Request) {
   const contextTokens = url.searchParams.getAll("run_context");
   if (!runId || queryNames.some((name) => name !== "run_context") || contextTokens.length !== 1) {
     return Response.json(
-      { detail: "실행 정보를 확인할 수 없습니다." },
+      { detail: "실행 정보를 확인할 수 없어요." },
       { headers: { "Cache-Control": "no-store" }, status: 400 },
     );
   }

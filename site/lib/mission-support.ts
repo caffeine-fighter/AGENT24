@@ -54,7 +54,7 @@ export function classifyHostedMission(mission: string): HostedMissionSupport {
   }
   return {
     ...documented,
-    detail: "지금은 이 작업에서 생길 수 있는 문제를 재현할 실험이 없어요. 결제 실험으로 바꾸지 않고 여기서 마칠게요.",
+    detail: "지금은 이 작업에 맞는 안전 실험을 지원하지 않아요. 결제 실험으로 바꾸지 않고 여기서 마칠게요.",
     reason: "unsupported_input",
     status: "unsupported",
   };

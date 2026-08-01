@@ -14,14 +14,14 @@ test("normal mission uses the hosted form, SSE stream, and one terminal event", 
 
   await expect(page.locator("#rawStream .stream-type", { hasText: "run.completed" })).toHaveCount(1);
   await expect(page.locator("#rawStream")).toContainText("payment.charge");
-  await expect(page.locator("#runNotice")).not.toContainText("이 작업에 맞는 실험은 아직 준비되지 않았어요");
+  await expect(page.locator("#runNotice")).not.toContainText("이 작업에 맞는 안전 실험을 지원하지 않아요");
 });
 
 test("unsupported Surprise mission stops once without payment substitution", async ({ page }) => {
   await submit(page, TIME_MISSION);
 
-  await expect(page.locator("#investigationOutcome")).toHaveText("아직 지원하지 않음");
-  await expect(page.locator("#runNotice")).toContainText("지금은 이 작업에서 생길 수 있는 문제를 재현할 실험이 없어요");
+  await expect(page.locator("#investigationOutcome")).toHaveText("현재 지원 안 함");
+  await expect(page.locator("#runNotice")).toContainText("지금은 이 작업에 맞는 안전 실험을 지원하지 않아요");
   await expect(page.locator("#rawStream .stream-type", { hasText: "run.completed" })).toHaveCount(1);
   await expect(page.locator("#rawStream")).not.toContainText("payment.charge");
   await expect(page.locator("#rawStream")).not.toContainText("experiment_plan");
@@ -38,5 +38,24 @@ test("API failure is labeled as a built-in example and still ends once", async (
   );
   await expect(page.locator("#connectionStatus")).toContainText("완료", { timeout: 15_000 });
   await expect(page.locator("#rawStream .stream-type", { hasText: "run.completed" })).toHaveCount(1);
-  await expect(page.locator("#modeBadge")).toHaveText("내장 예시 확인 완료");
+  await expect(page.locator("#modeBadge")).toHaveText("내장 예시 완료");
+});
+
+test("mobile intake keeps natural Korean copy inside the viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/demo/index.html");
+
+  await expect(page.getByRole("heading", { level: 1 })).toContainText("먼저 실패시켜 보세요");
+  await expect(page.getByLabel("GitHub 저장소")).toBeVisible();
+  await expect(page.getByLabel("확인할 버전")).toBeVisible();
+  await expect(page.getByLabel("에이전트에게 맡길 일")).toBeVisible();
+  await expect(page.getByRole("button", { name: "안전 실험 시작" })).toBeVisible();
+
+  const layout = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+    text: document.body.innerText,
+  }));
+  expect(layout.scrollWidth).toBe(layout.clientWidth);
+  expect(layout.text).not.toMatch(/[가-힣](?:합니다|됩니다|있습니다|없습니다|않습니다)/);
 });

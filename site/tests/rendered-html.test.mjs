@@ -63,24 +63,25 @@ test("server-renders the NIGHTMARE LAB shell", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>NIGHTMARE LAB \| AI 에이전트 안전성 테스트<\/title>/i);
+  assert.match(html, /<title>NIGHTMARE LAB \| AI 에이전트 안전 테스트<\/title>/i);
   assert.match(html, /src="\/demo\/index\.html"/);
+  assert.match(html, /http:\/\/localhost\/og\.png/);
   assert.match(html, /NIGHTMARE LAB AI 에이전트 안전 실험 화면/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });
 
 test("static demo renders the D1 submission and three-axis truth boundary", async () => {
   const html = await readFile(new URL("../public/demo/index.html", import.meta.url), "utf8");
-  assert.match(html, /GitHub 저장소 주소/);
-  assert.match(html, /브랜치 또는 커밋/);
-  assert.match(html, /에이전트에게 시킬 일/);
+  assert.match(html, /GitHub 저장소/);
+  assert.match(html, /확인할 버전/);
+  assert.match(html, /에이전트에게 맡길 일/);
   assert.match(html, /id="submissionOutcome"/);
   assert.match(html, /id="investigationOutcome"/);
   assert.match(html, /id="operationOutcome"/);
-  assert.match(html, /실제 서비스에는 연결하지 않아요/);
-  assert.match(html, /문제가 보이지 않아도 안전이 보장되는 것은 아니에요/);
-  assert.match(html, /실험 시작하기/);
-  assert.match(html, /실시간 실행 기록/);
+  assert.match(html, /가상 환경에서만 진행해요/);
+  assert.match(html, /문제를 찾지 못해도 안전이 보장되는 것은 아니에요/);
+  assert.match(html, /안전 실험 시작/);
+  assert.match(html, /원본 실행 기록/);
   assert.doesNotMatch(html, /SUBMISSION|INVESTIGATION|OPERATION|PENDING|READY/);
   assert.match(html, /케이크 하나를 5만원 이하로 한 번만 주문해줘/);
   assert.doesNotMatch(html, /가족 캘린더에도 일정을 등록/);
@@ -102,12 +103,17 @@ test("static demo uses natural Korean product copy", async () => {
     "보호책",
     "합성 세계",
     "원본 API 이벤트",
+    "구조화 진단 보고서",
+    "호환 후보",
+    "진행하지 못함",
+    "PACK SELECTION AMBIGUOUS",
+    "NO PACK SELECTED",
   ]) {
     assert.doesNotMatch(productCopy, new RegExp(translatedPhrase), `remove translated UI phrase: ${translatedPhrase}`);
   }
   assert.doesNotMatch(html, /[가-힣](?:합니다|됩니다|있습니다|없습니다|않습니다)[.!<]/);
-  assert.match(productCopy, /실험 시작하기/);
-  assert.match(productCopy, /같은 조건으로 다시 실험/);
+  assert.match(productCopy, /안전 실험 시작/);
+  assert.match(productCopy, /같은 내용으로 다시 실행/);
   assert.match(productCopy, /다시 시도/);
 });
 
@@ -309,7 +315,7 @@ test("hosted fallback preserves the autonomous SSE demo", async () => {
     assert.match(stream, /"resolver":"github-http-404"/);
     assert.match(stream, /"resolved_sha":null/);
     assert.match(stream, /"agent_name":"synthetic-fixture-fallback"/);
-    assert.match(stream, /저장소 확인에 실패해 제출한 에이전트 분석은 시작하지 않음/);
+    assert.match(stream, /저장소를 확인하지 못해 제출한 에이전트 분석은 시작하지 않았어요/);
     assert.match(stream, /"fallback":true/);
     assert.match(stream, /SIMULATION_ONLY/);
   } finally {
