@@ -1,5 +1,4 @@
 import {
-  PHASES,
   createCakeCrashFixture,
   createInitialState,
   formatRunInput,

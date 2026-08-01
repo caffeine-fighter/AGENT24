@@ -15,12 +15,15 @@ All world changes are synthetic. Repository source and real side-effect tools ar
 ## Quick start
 
 ```bash
-npm install
+npm ci
+npm run typecheck
 npm run dev
 npm run build
 ```
 
 Open [http://localhost:3000](http://localhost:3000). Runtime variables are documented in `.env.example`; never expose them to browser code.
+
+The pinned `sharp` and `postcss` overrides keep Next's optional image path and CSS toolchain on patched releases. `node-addon-api` and `node-gyp` preserve clean installs on development hosts where `sharp` detects a system libvips and selects its source-build fallback.
 
 ## Deployment smoke
 
