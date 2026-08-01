@@ -117,7 +117,10 @@ def _sse_data(body: str) -> list[dict[str, Any]]:
 
 
 def _jsonl_events(root: Path, run_id: str) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in (root / f"{run_id}.jsonl").read_text().splitlines()]
+    return [
+        json.loads(line)
+        for line in (root / f"{run_id}.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
 
 
 def test_live_run_uses_mocked_openai_client_and_preserves_raw_tool_items(
@@ -143,6 +146,7 @@ def test_live_run_uses_mocked_openai_client_and_preserves_raw_tool_items(
 
     sse_events = _sse_data(sse_response.text)
     jsonl_events = _jsonl_events(tmp_path, run_id)
+    assert "event:" not in sse_response.text
     assert sse_events == jsonl_events
     assert [event["seq"] for event in sse_events] == list(range(len(sse_events)))
     assert {event["run_id"] for event in sse_events} == {run_id}
@@ -168,7 +172,7 @@ def test_live_run_uses_mocked_openai_client_and_preserves_raw_tool_items(
     assert _MockedOpenAIClient.last is not None
     assert _MockedOpenAIClient.last.init_kwargs["api_key"] == "test-only-key"
     assert "test-only-key" not in sse_response.text
-    assert "test-only-key" not in (tmp_path / f"{run_id}.jsonl").read_text()
+    assert "test-only-key" not in (tmp_path / f"{run_id}.jsonl").read_text(encoding="utf-8")
 
 
 def test_missing_key_is_explicit_offline_demo(monkeypatch, tmp_path: Path) -> None:

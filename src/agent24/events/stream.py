@@ -195,7 +195,13 @@ async def iter_sse_events(
 
 
 def encode_sse(event: Mapping[str, Any]) -> str:
-    """Encode one event using the conventional SSE ``event``/``data`` fields."""
+    """Encode every envelope as the default SSE message event.
+
+    The semantic type already lives inside the JSON envelope.  Omitting the
+    optional ``event:`` line lets one ``EventSource.onmessage`` handler receive
+    both known and future event types, which is required for lossless Raw Stream
+    display.
+    """
 
     data = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
-    return f"event: {event['type']}\ndata: {data}\n\n"
+    return f"data: {data}\n\n"
