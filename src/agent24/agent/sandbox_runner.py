@@ -1194,8 +1194,11 @@ class LocalSandboxRunner:
                         fail("cpu_time_exceeded", "child CPU budget exceeded")
                         break
                 selected = selector.select(min(remaining, _MEMORY_POLL_SECONDS))
-                if not selected:
-                    continue
+                # A child may exit and close both pipes between ``poll`` and
+                # ``select``.  An empty selector result must still fall
+                # through to the process-exit check below; otherwise the host
+                # waits until the wall-clock deadline and misclassifies
+                # successful exits or SIGXCPU as timeouts.
                 for key, _ in selected:
                     try:
                         chunk = (
