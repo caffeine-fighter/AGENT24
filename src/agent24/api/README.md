@@ -25,7 +25,15 @@
 
 `target`이 있으면 runtime은 public GitHub metadata만 사용해 full SHA를 고정하고,
 그 commit의 allowlisted manifest만 읽어 `source_descriptor` → `behavior_profile` →
-`experiment_plan`을 동일 SSE/JSONL run에 기록한다. source/manifest를 읽지 못하면
+`experiment_plan`을 동일 SSE/JSONL run에 기록한다. 이어서 allowlisted Life-v0
+synthetic archetype에서 baseline → fault → oracle → divergence → patch gate → protected
+replay를 실행하고 `finding_report`와 호환 `lab_report`를 발행한다. 외부 repository
+code는 import하거나 실행하지 않으며 이 제한이 두 보고서에 남는다. 결제 P0은 같은
+seed의 `SandboxGym` protected replay도 같은 run에 evidence로 기록한다.
+
+그 뒤 OpenAI Agents SDK에는 controller가 만든 bounded diagnostic context를 전달한다.
+모델은 `inspect_synthetic_gym` 도구를 호출해 결과를 설명하되 synthetic archetype
+측정을 제출 저장소 자체의 실행 결과로 표현해서는 안 된다. source/manifest를 읽지 못하면
 외부 Agent를 진단했다고 주장하지 않고 `run_failed` 뒤 명시적 `offline_demo`로 전환한다.
 
 로컬 실행:

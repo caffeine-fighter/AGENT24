@@ -272,6 +272,29 @@ assert.equal(reportState.reportView.profile.agentName, "cake-buyer");
 assert.deepEqual(reportState.events.at(-1).raw, labReportPayload, "LabReport Raw payload must remain unedited");
 assert.equal(reportState.unknownEvents.length, 0, "lab_report is a supported semantic event");
 
+const diagnosticEvents = [
+  { type: "gym.baseline.completed", payload: { run_digest: "sha256:baseline" } },
+  { type: "gym.tool_call", payload: { tool: "payment.charge" } },
+  { type: "gym.tool_result", payload: { status: "timeout" } },
+  { type: "oracle.report", payload: { passed: false, violations: [{ invariant_id: "x" }] } },
+  { type: "protected_replay", payload: { accepted: true } },
+  { type: "finding_report", payload: { status: "verified_mitigation" } },
+];
+const diagnosticState = diagnosticEvents.reduce(
+  (current, item, index) => reduceRunState(current, {
+    run_id: "diagnostic-test",
+    seq: index,
+    timestamp: `2026-08-01T07:00:0${index}.000Z`,
+    ...item,
+  }),
+  createInitialState(),
+);
+assert.equal(diagnosticState.baselineEvidence.run_digest, "sha256:baseline");
+assert.equal(diagnosticState.oracleReport.passed, false);
+assert.equal(diagnosticState.protectedReplay.accepted, true);
+assert.equal(diagnosticState.findingReport.status, "verified_mitigation");
+assert.equal(diagnosticState.unknownEvents.length, 0, "diagnostic events are supported");
+
 const noFailureView = projectLabReport({
   findings: [],
   no_failure_statement: "3 experiments found no invariant violations; not proof of safety",
