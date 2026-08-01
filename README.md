@@ -37,6 +37,31 @@ artifacts/           로컬 실행 산출물(기본적으로 Git 제외)
 slides/              최대 5장 발표 자료
 ```
 
+## 데모 실행
+
+의존성을 한 번 설치한 뒤 웹과 API를 같은 origin에서 실행합니다.
+
+```powershell
+uv sync --extra dev
+.\scripts\demo.ps1
+```
+
+<http://127.0.0.1:8000>을 열면 됩니다. 로컬 `.env`에 `OPENAI_API_KEY`가 있으면 live mode, 없으면 화면과 Raw Stream에 명시된 deterministic `offline_demo` mode로 실행됩니다.
+
+브라우저까지 자동으로 열려면 다음 옵션을 사용합니다.
+
+```powershell
+.\scripts\demo.ps1 -OpenBrowser
+```
+
+결선 Surprise Task와 같은 API 경로를 다섯 입력 family로 리허설합니다.
+
+```powershell
+uv run python scripts/surprise-smoke.py
+```
+
+판정 기준과 artifact 저장법은 [Surprise Task 리허설 문서](docs/surprise-smoke.md)에 있습니다.
+
 ## 14:00 이후 첫 시작
 
 ```powershell

@@ -10,7 +10,8 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent24.events import EventManager, JsonlEventLog, encode_sse, iter_sse_events
@@ -37,6 +38,7 @@ def create_app(
     runtime: OpenAIWhiteBoxAdapter | None = None,
     event_manager: EventManager | None = None,
     artifact_root: str | Path | None = None,
+    web_root: str | Path | None = None,
 ) -> FastAPI:
     """Create an app; dependency injection keeps the integration test offline."""
 
@@ -70,6 +72,13 @@ def create_app(
     app.state.event_manager = event_manager
     app.state.runtime = runtime
     app.state.tasks: set[asyncio.Task[Any]] = set()
+
+    resolved_web_root = (
+        Path(web_root).resolve()
+        if web_root is not None
+        else (Path(__file__).resolve().parents[3] / "web").resolve()
+    )
+    app.state.web_root = resolved_web_root
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
@@ -118,6 +127,25 @@ def create_app(
                 "X-Accel-Buffering": "no",
             },
         )
+
+    # Register the catch-all static mount last so API, health, and OpenAPI
+    # routes always win. Starlette's StaticFiles also rejects traversal outside
+    # the resolved directory.
+    if resolved_web_root.is_dir() and (resolved_web_root / "index.html").is_file():
+        app.mount(
+            "/",
+            StaticFiles(directory=str(resolved_web_root), html=True),
+            name="nightmare-web",
+        )
+    else:
+
+        @app.get("/", response_class=JSONResponse)
+        async def web_unavailable() -> dict[str, str]:
+            return {
+                "service": "AGENT:24 Nightmare Lab API",
+                "web_status": "missing",
+                "hint": "Run from the repository checkout or pass create_app(web_root=...).",
+            }
 
     return app
 
