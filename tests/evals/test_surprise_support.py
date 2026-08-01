@@ -120,6 +120,15 @@ def _event(events, kind: str) -> dict:
     return next(event for event in events if event["type"] == kind)
 
 
+def _stream(*payloads: tuple[str, dict]) -> list[dict]:
+    """A literal event stream, for gate assertions that must not depend on a run."""
+
+    return [
+        {"run_id": "r1", "seq": index, "type": kind, "payload": payload}
+        for index, (kind, payload) in enumerate(payloads)
+    ]
+
+
 # --------------------------------------------------------------------------
 # Classification
 # --------------------------------------------------------------------------
@@ -268,23 +277,24 @@ def test_an_unsupported_terminal_carries_no_payment_or_cake_evidence(
     assert "experiment_plan" not in [event["type"] for event in events]
 
 
-def test_a_surprise_mission_answered_with_a_payment_finding_fails_the_gate(
-    monkeypatch, tmp_path: Path
-) -> None:
-    """The silent substitution this issue exists for.
+def test_the_detector_reports_a_substitution_with_the_events_that_prove_it() -> None:
+    """The silent substitution this issue exists for, as a detector test.
 
-    A payment manifest plus an off-domain Surprise mission runs the full cake
-    experiment and terminates as if it had answered.  Nothing in the stream says
-    the requested domain was never tested, so the gate has to say it: the run is
-    reported as a substitution with the events that prove it, not as a pass.
-
-    This pins detection, not a fix.  Which pack runs is the router's decision
-    (#57) and D1's payment-only scope is a product decision; the eval's job is
-    to refuse to call this run an answer.
+    Built from a literal stream rather than a live run so it keeps testing the
+    detector no matter how the route below is later fixed: a substituted answer
+    is a shape, and the gate must always refuse to call that shape a pass.
     """
 
-    events = _run(monkeypatch, tmp_path, PAYMENT_SURFACE, TIME.text)
     support = classify_support(TIME, tools=_tool_names(PAYMENT_SURFACE))
+    events = _stream(
+        ("run_started", {"mode": "offline_demo"}),
+        ("pack.selected", {"selected": {"pack_id": "life-v0-sandbox.v1"}}),
+        ("experiment_plan", {"plan_id": "p-1", "scenario": {"faults": ["payment.charge"]}}),
+        ("gym.tool_call", {"tool": "payment.charge"}),
+        ("protected_replay", {"accepted": True}),
+        ("finding_report", {"status": "reproduced"}),
+        ("run_completed", {"status": "offline_demo"}),
+    )
     report = evaluate_support_run(support, events)
 
     assert support.verdict is SupportVerdict.UNSUPPORTED
@@ -294,6 +304,38 @@ def test_a_surprise_mission_answered_with_a_payment_finding_fails_the_gate(
     # Citations, not a bare boolean: every claim here can be checked by hand.
     assert any("gym.tool_call:payment.charge" in ref for ref in report.payment_citations)
     assert any("protected_replay" in ref for ref in report.payment_citations)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Routing reads manifest.mission_family, never the submitted mission text "
+        "(api/preflight.py), so an off-domain Surprise mission against a payment "
+        "manifest runs the full cake experiment and terminates as if it had "
+        "answered. @caffeine-fighter owns the form/hosted typed-unsupported fix "
+        "per issue #69. When it lands this test passes: delete this marker, "
+        "nothing else changes."
+    ),
+)
+def test_an_off_domain_mission_against_a_payment_manifest_terminates_unsupported(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The product requirement, asserted as a requirement rather than as a bug.
+
+    Written to fail today on purpose.  Pinning the current behaviour as correct
+    would mean whoever fixes the route has to invert an assertion in a file they
+    do not own; a strict xfail instead turns the fix into an unexpected pass,
+    which fails loudly and says exactly what to remove.
+    """
+
+    events = _run(monkeypatch, tmp_path, PAYMENT_SURFACE, TIME.text)
+    support = classify_support(TIME, tools=_tool_names(PAYMENT_SURFACE))
+    report = evaluate_support_run(support, events)
+
+    assert support.verdict is SupportVerdict.UNSUPPORTED
+    assert report.passed, report.errors
+    assert report.silent_substitution is False
+    assert report.terminal_status == "unsupported"
 
 
 def test_a_supported_money_mission_passes_its_gate(monkeypatch, tmp_path: Path) -> None:
@@ -316,7 +358,12 @@ def test_the_mission_text_does_not_change_the_selected_pack(
     ``preflight.py`` builds the Mission with ``family=manifest.mission_family``,
     so routing reads the submitted repository and never the sentence a judge
     typed.  Two different Surprise missions against one manifest therefore make
-    the same routing decision.
+    the same *routing* decision.
+
+    Only the routing decision is asserted, not the whole event sequence.  The
+    fix for the xfail above is expected to land as a stop *after* the router has
+    already chosen, which changes the terminal without changing this digest --
+    and an assertion that broke on the fix would be measuring the wrong thing.
     """
 
     money = _run(monkeypatch, tmp_path, PAYMENT_SURFACE, MONEY.text)
@@ -326,7 +373,6 @@ def test_the_mission_text_does_not_change_the_selected_pack(
         _event(money, "pack.selected")["payload"]["selection_digest"]
         == _event(time_domain, "pack.selected")["payload"]["selection_digest"]
     )
-    assert [event["type"] for event in money] == [event["type"] for event in time_domain]
 
 
 def test_the_same_fixture_and_seed_reproduce_the_same_terminal_digest(
@@ -343,12 +389,20 @@ def test_the_same_fixture_and_seed_reproduce_the_same_terminal_digest(
 def test_an_unsupported_route_has_its_own_stable_digest(
     monkeypatch, tmp_path: Path
 ) -> None:
+    """A route that stops before planning is reproducible and distinguishable.
+
+    Compared against the *supported* route rather than against the substituted
+    one: once the off-domain mission also terminates unsupported, its skeleton
+    converges with this one by design, and a digest that had to stay different
+    would be asserting the bug rather than determinism.
+    """
+
     first = _run(monkeypatch, tmp_path, RESEARCH_SURFACE, TIME.text)
     second = _run(monkeypatch, tmp_path, RESEARCH_SURFACE, TIME.text)
-    substituted = _run(monkeypatch, tmp_path, PAYMENT_SURFACE, TIME.text)
+    supported = _run(monkeypatch, tmp_path, PAYMENT_SURFACE, MONEY.text)
 
     assert terminal_digest(first) == terminal_digest(second)
-    assert terminal_digest(first) != terminal_digest(substituted)
+    assert terminal_digest(first) != terminal_digest(supported)
 
 
 # --------------------------------------------------------------------------
@@ -359,13 +413,6 @@ def test_an_unsupported_route_has_its_own_stable_digest(
 @pytest.fixture
 def unsupported_support():
     return classify_support(TIME, tools=_tool_names(RESEARCH_SURFACE))
-
-
-def _stream(*payloads: tuple[str, dict]) -> list[dict]:
-    return [
-        {"run_id": "r1", "seq": index, "type": kind, "payload": payload}
-        for index, (kind, payload) in enumerate(payloads)
-    ]
 
 
 def test_two_terminal_events_fail_the_gate(unsupported_support) -> None:

@@ -368,8 +368,10 @@ _DIGEST_FIELDS: tuple[str, ...] = (
     "code",
     "phase",
     "pack_id",
+    "plan_id",
     "scenario_id",
     "seed",
+    "selection_digest",
     "tool",
     "run_digest",
 )
@@ -378,6 +380,13 @@ _DIGEST_FIELDS: tuple[str, ...] = (
 ``run_id``, timestamps, and the offline path's ``uuid4`` call ids are excluded
 on purpose: they are expected to differ between two identical runs, so folding
 them in would make every digest unique and the determinism gate vacuous.
+
+``selection_digest`` and ``plan_id`` are included because without them two runs
+that took *different* routes can share a digest: the ``pack.selected`` payload
+nests its decision under ``selected``, so a top-level projection would reduce
+both to a bare ``{seq, type}``.  Both are deterministic by construction --
+``packs.selection_digest`` hashes the selection and the planner is a pure
+function -- so they discriminate routes without making reruns differ.
 """
 
 
