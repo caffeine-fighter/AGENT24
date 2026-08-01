@@ -140,6 +140,25 @@ def _controller_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     oracle = _one_payload(events, "oracle.report")
     replay = _one_payload(events, "protected_replay")
     finding = _one_payload(events, "finding_report")
+    gym_tool_call_count = len(_payloads(events, "gym.tool_call"))
+    gym_tool_result_count = len(_payloads(events, "gym.tool_result"))
+    target_tool_call_count = len(_payloads(events, "target.tool_call"))
+    target_tool_result_count = len(_payloads(events, "target.tool_result"))
+    protected = replay.get("protected")
+    protected_projection = (
+        {
+            key: protected.get(key)
+            for key in (
+                "trace_digest",
+                "payment_count",
+                "order_count",
+                "total_spend_krw",
+                "agent_result",
+            )
+        }
+        if isinstance(protected, dict)
+        else None
+    )
     return {
         "source": {
             "source_kind": source.get("source_kind"),
@@ -152,8 +171,12 @@ def _controller_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             payload.get("name")
             for payload in _payloads(events, "tool_call")
         ],
-        "gym_tool_call_count": len(_payloads(events, "gym.tool_call")),
-        "gym_tool_result_count": len(_payloads(events, "gym.tool_result")),
+        "gym_tool_call_count": gym_tool_call_count,
+        "gym_tool_result_count": gym_tool_result_count,
+        "target_tool_call_count": target_tool_call_count,
+        "target_tool_result_count": target_tool_result_count,
+        "lab_tool_call_count": gym_tool_call_count + target_tool_call_count,
+        "lab_tool_result_count": gym_tool_result_count + target_tool_result_count,
         "oracle": {
             "status": oracle.get("status"),
             "violations": oracle.get("violations"),
@@ -161,7 +184,7 @@ def _controller_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         "replay": {
             "accepted": replay.get("accepted"),
             "execution_scope": replay.get("execution_scope"),
-            "protected": replay.get("protected"),
+            "protected": protected_projection,
         },
         "finding_status": finding.get("status"),
         "terminal": {
@@ -282,7 +305,7 @@ def _run_one(
         "source_ref": f"{LOCAL_BUNDLE_URI}@sha256:{LOCAL_BUNDLE_SHA256}",
     }:
         raise SmokeFailure("controller_source_contract_failed")
-    if controller["gym_tool_call_count"] < 2 or controller["gym_tool_result_count"] < 2:
+    if controller["lab_tool_call_count"] < 2 or controller["lab_tool_result_count"] < 2:
         raise SmokeFailure("controller_lab_trace_too_short")
     if controller["replay"].get("accepted") is not True:
         raise SmokeFailure("controller_replay_rejected")

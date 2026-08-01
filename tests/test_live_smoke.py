@@ -86,3 +86,54 @@ def test_controller_projection_ignores_model_prose() -> None:
     }
 
     assert smoke._controller_projection(common) == smoke._controller_projection(changed)
+
+
+def test_controller_projection_accepts_target_sandbox_tool_events() -> None:
+    smoke = _module()
+    events = [
+        {"type": "source_descriptor", "payload": {
+            "source_kind": "local_bundle",
+            "source_path": "examples/demo-agent-repo",
+            "revision_kind": "bundle_sha256",
+            "bundle_sha256": "a" * 64,
+            "source_ref": "local://agent24/examples/demo-agent-repo@sha256:" + "a" * 64,
+        }},
+        {"type": "run_completed", "payload": {
+            "status": "completed",
+            "mode": "live",
+            "source_resolved": True,
+            "diagnostic_completed": True,
+            "openai_analysis_completed": True,
+            "execution_scope": "target_sandbox",
+        }},
+        {"type": "target.tool_call", "payload": {"tool": "payment.charge"}},
+        {"type": "target.tool_result", "payload": {"status": "ok"}},
+        {"type": "oracle.report", "payload": {"status": "observed", "violations": []}},
+        {"type": "protected_replay", "payload": {
+            "accepted": True,
+            "execution_scope": "target_sandbox",
+            "protected": {"purchase_count": 1},
+        }},
+        {"type": "finding_report", "payload": {"status": "verified_mitigation"}},
+        {"type": "final_output", "payload": {
+            "analysis_source": "openai",
+            "controller_final": {"evidence_ids": ["evidence-1"], "mitigation_id": "patch-1"},
+        }},
+    ]
+
+    projection = smoke._controller_projection(events)
+    assert projection["gym_tool_call_count"] == 0
+    assert projection["target_tool_call_count"] == 1
+    assert projection["lab_tool_call_count"] == 1
+    changed_run_id = [dict(event) for event in events]
+    changed_run_id[5] = {
+        **changed_run_id[5],
+        "payload": {
+            **changed_run_id[5]["payload"],
+            "protected": {
+                **changed_run_id[5]["payload"]["protected"],
+                "target_run_id": "different-run-id",
+            },
+        },
+    }
+    assert smoke._controller_projection(changed_run_id) == projection
