@@ -15,12 +15,26 @@ YAI × OpenAI AGENT:24 해커톤 Creative 트랙 4인 팀용 모노레포입니�
 
 공식 안내: <https://yonsei-yai-hackathon.netlify.app/>
 
+## 배포된 웹 데모
+
+- [NIGHTMARE LAB production](https://nightmare-lab-agent24.conceivability.chatgpt.site) — 현재 owner-only Sites 링크
+- 한 입력으로 GitHub ref 확인 → OpenAI 실험 근거 생성 → `CLONE → CRASH → AUTOPSY → VACCINE → REPLAY`를 SSE Raw Stream으로 표시
+- hosted secret이 없거나 외부 호출이 실패하면 화면에 `offline_demo`를 명시하고 동일한 합성 fallback으로 완주
+- 운영 체크리스트: [#50 A/배포: NIGHTMARE LAB 웹 데모 링크 운영](https://github.com/caffeine-fighter/AGENT24/issues/50)
+
 ## Product concept
 
 - [NIGHTMARE LAB — Agent Failure Scientist](docs/nightmare-lab-concept.md): 다른 에이전트를 sandbox gym에서 자율적으로 실험해 최소 실패 조건을 진단하고 안전 패치를 재검증하는 제품 제안
 - [Sandbox Gym implementation spec](docs/gym.md): 생일 케이크 결제에서 시작하는 deterministic Life Gym, 단계별 Nightmare 확장, 구현 백로그와 완료 기준
 - [Real-world Shopping Agent test cases](docs/real-world-shopping-agent-cases.md): 공개 GitHub 구매 Agent를 pinned source와 local Gym adapter로 검증하는 후보·시나리오 카탈로그
 - [외부 Agent source·manifest 계약](docs/source-manifest-contract.md): GitHub commit provenance와 실행하지 않는 P0 manifest 입력 경계
+- [외부 Agent 제품 계약](docs/external-agent-contract.md): one-input form, P0 지원 범위, BehaviorProfile 용어와 정확한 terminal 문구
+- [케이크 충돌 제품 계약](docs/cake-collision-product-contract.md): 2개·₩98,000 → 1개·₩49,000 fixture, UI copy와 block-all 거부 gate
+- [7분 데모 runbook](docs/demo-runbook.md): 5장·120초 slide, 3분 live, 2분 Surprise와 실제 rehearsal 기록
+- [2분 제출 영상](docs/video-script.md): 정확히 120초인 대본과 shot list
+- [Surprise missions](docs/surprise-missions.md): 돈·커뮤니케이션·시간·데이터 입력과 deterministic HTTP/SSE 판정
+- [심사 Q&A](docs/judging-checklist.md): fixed runner, 승인, LLM judge, sandbox fidelity, overblocking 답변
+- [5장 발표 원고](slides/deck.md): 최종 slide copy와 120초 발표자 노트
 
 ## 권장 시작점
 
