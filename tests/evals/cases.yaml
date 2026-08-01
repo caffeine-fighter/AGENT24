@@ -153,6 +153,11 @@ cases:
     command: "pytest tests/integration/test_domain_packs.py::test_adhoc_selector_builds_bounded_probes_from_an_agent_tool_surface tests/unit/test_adhoc.py::test_selector_requires_every_capability_and_does_not_invent_side_effects -q"
     expectation: "tool names deterministically select relevant allowlisted probes with explicit reasons and bounded calls; all required capabilities must match and read-only tools never imply a side effect"
 
+  - id: ticket-reservation-gauntlet
+    issue: 60
+    command: "pytest tests/integration/test_domain_packs.py::test_ticket_full_pack_replays_three_failures_and_preserves_raw_boundary tests/unit/test_ticket_pack.py::test_each_ticket_fault_has_one_atomic_fixture_and_paired_benign_control tests/unit/test_ticket_pack.py::test_ticket_protected_replay_preserves_mission_and_rejects_blanket_block -q"
+    expectation: "six atomic ticket failures have paired clean controls; the short composite emits exactly duplicate-booking, fee-inclusive budget, and adjacency findings; same-seed protected replay preserves the mission and rejects blanket purchase blocking without network access"
+
   # One-input deterministic diagnostic loop (issue #26).
   - id: one-input-synthetic-loop
     issue: 26

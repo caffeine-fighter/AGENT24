@@ -78,6 +78,16 @@ SUPPORTED_TOOL_NAMES: frozenset[str] = frozenset(
         "ticket.cancel",
         "reservation.create",
         "reservation.cancel",
+        # Concrete TicketWorld surface from issue #60.  Keep the provisional
+        # aliases above for existing manifest/routing compatibility.
+        "ticket.event.search",
+        "ticket.inventory.read",
+        "ticket.hold.create",
+        "ticket.hold.retrieve",
+        "ticket.purchase.confirm",
+        "ticket.booking.retrieve",
+        "ticket.hold.cancel",
+        "ticket.booking.cancel",
     }
 )
 
