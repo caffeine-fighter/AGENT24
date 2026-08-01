@@ -231,7 +231,7 @@ h1 em { color: var(--red); font-style: normal; }
 .stream-line[data-kind="tool_result"] .stream-type { color: var(--green); }
 .stream-line[data-kind="failure.detected"] .stream-type { color: var(--red); }
 .stream-line pre { overflow-wrap: anywhere; margin: 0; padding: 9px; color: #9fa6b3; font: 9px/1.5 var(--mono); white-space: pre-wrap; }
-.stream-line[data-kind="behavior.profile"] pre, .stream-line[data-kind="experiment.plan"] pre, .stream-line[data-kind="lab.report"] pre { max-height: 320px; overflow: auto; scrollbar-color: #343945 transparent; }
+.stream-line[data-kind="source.descriptor"] pre, .stream-line[data-kind="behavior.profile"] pre, .stream-line[data-kind="experiment.plan"] pre, .stream-line[data-kind="lab.report"] pre { max-height: 320px; overflow: auto; scrollbar-color: #343945 transparent; }
 .stream-footer { padding: 10px 14px; border-top: 1px solid var(--line); color: #626875; font: 9px var(--mono); }
 
 body[data-running="true"] .status-dot { animation: blink 1s infinite; }
