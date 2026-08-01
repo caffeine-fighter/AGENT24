@@ -1,5 +1,10 @@
 # API boundary
 
+> Implementation snapshot: the ratified D3 replacement contract is
+> [`web/event-contract.md`](../../../web/event-contract.md). The required legacy
+> `input`, optional `target`, `{detail}` errors, and multi-terminal fallback described
+> below are migration drift until A4 lands; they are not alternate product choices.
+
 현재 구현은 한 번의 입력을 `Runner.run_streamed`에 넘기는 얇은 FastAPI 경계다.
 
 - `POST /api/runs` — `input`과 선택적 structured `target`을 한 번에 받아 `202`와 `run_id`/`events_url`을 반환한다.

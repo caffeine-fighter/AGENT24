@@ -4,8 +4,8 @@
 
 This contract fixes the material frontend journey for NIGHTMARE LAB. D0 owns the
 signature payment truth, D1 owns the external-Agent product meanings, and this
-document decides how those meanings are understood on screen. D3 may encode these
-states but must not redefine them.
+document decides how those meanings are understood on screen. The ratified D3 wire
+in `web/event-contract.md` encodes these states without redefining them.
 
 The accepted reference is the isolated R1–R4 review deck in
 `web/d2-review.html` at commit `4b00ad0`. Its navigation and “review prototype”
@@ -151,6 +151,6 @@ is respected. Meaningful content must not depend on animation timing.
 | D2.7 Fallback | Fixture evidence is operationally separate and never impersonates submitted-target analysis | Preserve explicit fixture source and unrelated-target warning |
 | D2.8 Visual and interaction | Accepted forensic-dossier character, evidence colors, rectilinear hierarchy, responsive R1/R3, and deterministic content | Incidental CSS/DOM work remains autonomous |
 
-Changing a material row requires a D2 amendment. D3 chooses exact request, event,
-error, and terminal wire representation; fixture-only values, review navigation,
-and incidental layout mechanics are not backend requirements.
+Changing a material row requires a D2 amendment. The D3 contract owns exact request,
+event, error, terminal, reconnect, and migration representation; fixture-only values,
+review navigation, and incidental layout mechanics are not backend requirements.

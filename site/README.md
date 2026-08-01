@@ -1,5 +1,9 @@
 # NIGHTMARE LAB hosted demo
 
+> Implementation snapshot: the ratified D3 request, event-origin, terminal, and
+> reconnect replacement is [`../web/event-contract.md`](../web/event-contract.md).
+> The hosted shapes below remain A4 migration evidence, not a second contract.
+
 This directory packages the existing NIGHTMARE LAB interface for Sites. It keeps the browser experience intact and adds a Cloudflare Worker-compatible API surface:
 
 - `POST /api/runs` resolves a requested public GitHub ref and asks the OpenAI Responses API for a bounded experiment rationale.

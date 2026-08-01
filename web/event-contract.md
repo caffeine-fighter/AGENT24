@@ -1,201 +1,418 @@
-# NIGHTMARE 프론트엔드 이벤트 계약
+# NIGHTMARE shared run and event contract
 
-이 문서는 런타임과 웹이 공유하는 wire contract의 단일 기준입니다. 런타임 envelope를 그대로 보존하고, 웹 수신 경계에서만 화면 상태용 형태로 정규화합니다.
+> Status: D3.1–D3.8 ratified by Rekhet · 2026-08-01
 
-## API
+This document is the single source of truth for the HTTP, JSON, SSE, terminal,
+error, reconnect, and compatibility boundary shared by the local FastAPI runtime,
+the hosted route, and every first-party frontend. D1 owns product meaning and D2
+owns presentation; this contract encodes those decisions without redefining them.
 
-### 실행 시작
+The machine-readable examples live in `fixtures/event-contract.v1.json`. A4 migrates
+producers and consumers to those examples. Current implementation differences are
+drift, not alternate contracts.
+
+## Contract principles
+
+- One canonical structured request replaces duplicate external-run strings.
+- Boundary validation happens before a run exists and always has one typed error shape.
+- An accepted run emits an ordered, versioned, provenance-bearing event stream.
+- Only published OpenAI SDK tool items are called Raw API items.
+- Every accepted run has exactly one semantic terminal outcome.
+- New event types and additive fields remain forward-compatible and raw-visible.
+- Legacy paths receive an advisory adapter and no new features; removal follows zero first-party use.
+
+## Start a run
+
+### Canonical request
+
+New first-party clients send this exact top-level shape:
 
 ```http
 POST /api/runs
 Content-Type: application/json
 
 {
-  "input": "엄마 생일 케이크 하나를 5만원 이하로 주문해줘.",
+  "schema_version": "external_target.v1",
   "target": {
     "repository_url": "https://github.com/owner/agent",
     "requested_ref": "main",
-    "mission": "엄마 생일 케이크 하나를 5만원 이하로 주문해줘."
+    "mission": "5만원 이하의 생일 케이크를 정확히 하나 주문한다"
   }
 }
 ```
 
-정상 응답은 `202 Accepted`이며 다음 필드를 포함합니다.
+| Field | Requirement |
+|---|---|
+| `schema_version` | Required literal `external_target.v1` |
+| `target.repository_url` | Required canonical public `https://github.com/{owner}/{repo}` URL, at most 500 characters |
+| `target.requested_ref` | Required branch, tag, or full SHA, at most 200 characters |
+| `target.mission` | Required goal and constraints, at most 2,000 characters |
 
-`target`은 선택 필드라 기존 generic text 호출도 유지됩니다. 웹 form은 repository/ref/mission을
-한 번 제출하며, 서버는 target이 있을 때만 immutable source preflight를 수행합니다.
+Objects are strict: unknown top-level or target fields are rejected. Credentials,
+manifest paths, entrypoints, mode selection, and experiment selection are not user
+input. If a supported URL form also encodes a ref, it must resolve to the same
+effective value as `requested_ref`; disagreement is `conflicting_input`.
+
+Syntactically unsupported source shapes, including non-GitHub hosts, local paths,
+ZIP files, embedded credentials, query strings, and fragments, are rejected before
+run creation. A canonical public-GitHub shape that later resolves as inaccessible,
+private, missing, or invalid becomes an audited after-202 operational outcome.
+
+### Boundary errors
+
+Invalid JSON and all semantic validation failures return `422 Unprocessable Entity`.
+No `run_id` is allocated and no fixture starts.
 
 ```json
 {
-  "run_id": "run_01H...",
-  "status": "queued",
-  "mode": "live",
-  "events_url": "/api/runs/run_01H.../events"
+  "error": {
+    "code": "invalid_submission",
+    "message": "입력 계약을 확인하세요.",
+    "fields": [
+      {
+        "path": "target.requested_ref",
+        "code": "required",
+        "message": "Ref 또는 commit은 필수입니다."
+      }
+    ]
+  }
 }
 ```
 
-웹과 API가 다른 origin이면 웹 URL의 `api` 쿼리로 API origin을 지정합니다.
+The error object is the only HTTP error shape for this endpoint.
 
-```text
-http://localhost:5173/?api=http://localhost:8000
+| Field | Requirement |
+|---|---|
+| `error.code` | Stable machine code: `invalid_submission` or `conflicting_input` |
+| `error.message` | Safe Korean fallback sentence; never an exception string |
+| `error.fields` | Optional bounded list of `{path, code, message}` entries |
+
+`conflicting_input` covers URL/ref disagreement and a legacy `input` whose trimmed
+value differs from `target.mission`. Field paths and codes are canonical English;
+the frontend maps them to the ratified visible copy.
+
+### Accepted response
+
+A valid request returns `202 Accepted`:
+
+```json
+{
+  "schema_version": "run.accepted.v1",
+  "run_id": "run_01H...",
+  "status": "queued",
+  "events_url": "/api/runs/run_01H.../events",
+  "mode": "live",
+  "deprecations": []
+}
 ```
 
-### 이벤트 구독
+`schema_version`, `run_id`, `status`, `events_url`, and `deprecations` are required.
+`status` is `queued`; later truth belongs to the event stream. `mode` remains an
+optional advisory compatibility field during A4 because local and hosted producers
+currently use different values. New clients must not derive terminal or evidence
+meaning from it.
+
+## Legacy request adapter
+
+The replacement exists now, so legacy support is advisory and bounded.
+
+| Incoming shape | Bridge behavior |
+|---|---|
+| Canonical `external_target.v1` | Preferred; `deprecations` is empty |
+| Unversioned `{"input":"..."}` | Label internally as `legacy_prompt.v0`; do not infer repository, ref, or mission; response includes a deprecation entry |
+| Unversioned mixed `input` + `target` | Accept only when trimmed `input` equals trimmed `target.mission`; normalize to `external_target.v1`; otherwise typed `422 conflicting_input` |
+| Versioned request with `input` | Reject as `invalid_submission`; canonical clients do not duplicate mission text |
+
+Legacy responses include:
+
+```json
+{
+  "deprecations": [
+    {
+      "code": "legacy_prompt.v0",
+      "replacement": "external_target.v1"
+    }
+  ]
+}
+```
+
+No new feature is added to `legacy_prompt.v0`. A4 removes the adapter only after
+the web app, hosted route, smoke scripts, fixtures, and tests have zero external-run
+dependence on `input`.
+
+## Subscribe to events
 
 ```http
 GET /api/runs/{run_id}/events
 Accept: text/event-stream
+Last-Event-ID: 1
 ```
 
-모든 이벤트는 기본 SSE `message`의 `data:`에 들어갑니다. 별도 `event:` 라인을 사용하지 않으므로 웹의 단일 `EventSource.onmessage`가 아직 모르는 타입도 놓치지 않습니다.
+Events use the default SSE `message`; there is no `event:` line. The SSE `id` is
+the decimal event sequence and the JSON envelope remains inside `data`:
+
+```text
+id: 2
+data: {"schema_version":"event.envelope.v1","run_id":"run_01H...","seq":2,"timestamp":"2026-08-01T07:03:02.120+00:00","type":"tool_result","origin":"openai_sdk","payload":{"type":"function_call_output","call_id":"call_01H...","output":"{\"scenario_id\":\"life.payment_intent_timeout.v1\"}"},"summary":"call_01H..."}
+
+```
+
+## Event envelope v1
 
 ```json
 {
+  "schema_version": "event.envelope.v1",
   "run_id": "run_01H...",
   "seq": 2,
   "timestamp": "2026-08-01T07:03:02.120+00:00",
   "type": "tool_result",
-  "payload": {
-    "type": "function_call_output",
-    "call_id": "call_01H...",
-    "output": "{\"scenario_id\":\"life.payment_intent_timeout.v1\"}"
-  },
-  "summary": "call_01H..."
+  "origin": "openai_sdk",
+  "payload": {},
+  "summary": "optional safe display summary"
 }
 ```
 
-## Wire contract
-
-- `run_id`, `seq`, `timestamp`, `type`, `payload`는 필수입니다.
-- `seq`는 run마다 0부터 단조 증가하며 SSE와 JSONL의 순서가 같습니다.
-- `tool_call`과 `tool_result`의 `payload`는 OpenAI Agents SDK raw item을 요약·재작성하지 않은 JSON입니다.
-- 표시용 설명은 선택 필드 `summary`에만 둡니다.
-- API key, 개인정보, 실제 외부 계정 데이터는 envelope에 넣지 않습니다.
-- 연결이 끊겨도 웹은 이미 받은 이벤트를 삭제하지 않습니다.
-
-현재 런타임 타입은 다음과 같습니다.
-
-| wire `type` | 의미 |
+| Field | Requirement |
 |---|---|
-| `run_started` | 실행 시작과 mode |
-| `tool_call` | OpenAI raw function call |
-| `tool_result` | OpenAI raw function result |
-| `final_output` | 최종 진단문 |
-| `offline_demo` | 실제 API를 쓸 수 없어 합성 fallback으로 전환 |
-| `run_failed` | live 실행 실패 후 안전 fallback |
-| `run_completed` | 실행 종료 |
+| `schema_version` | Required literal `event.envelope.v1` |
+| `run_id` | Required identity matching the accepted response |
+| `seq` | Required zero-based integer, strictly increasing by one per run |
+| `timestamp` | Required timezone-bearing ISO 8601 publication time |
+| `type` | Required canonical English event type |
+| `origin` | Required `openai_sdk`, `controller`, `fixture`, or `system` |
+| `payload` | Required JSON value whose meaning is fixed by `type` and `origin` |
+| `summary` | Optional safe derived text; never replaces payload |
 
-Lab Agent가 내보내는 아래 의미 이벤트도 같은 envelope를 사용합니다.
+The exact envelope dictionary is appended once to JSONL, sent through SSE, and
+retained by the reducer. Transport layers do not reconstruct it.
 
-| `type` | 화면 효과 |
-|---|---|
-| `phase.changed` | CLONE / CRASH / AUTOPSY / VACCINE / REPLAY 단계 이동 |
-| `world.snapshot` | 보호 전·후 합성 세계 갱신 |
-| `damage.updated` | 피해 상태와 구체적 결과 표시 |
-| `failure.detected` | 보호 전 실패 표시 |
-| `autopsy.ready` | 최초 divergence 타임라인 |
-| `vaccine.proposed` | 최소 안전 패치 표시 |
-| `verification.updated` | 검증 조건 부분 갱신 |
-| `replay.completed` | 보호 후 상태와 목표 성공 여부 표시 |
-| `source_descriptor` | immutable `SourceDescriptor` provenance와 live resolved SHA 표시 |
-| `behavior_profile` | `profile.BehaviorProfile`의 다섯 판정과 evidence/unknown reason 표시 |
-| `pack.selected` | 어떤 domain Gym을 고를지에 대한 결정적 routing 판단과 그 근거 표시 |
-| `experiment_plan` | typed `ExperimentPlan`의 선택 fault·근거·기대 evidence·budget 표시 |
-| `gym.baseline.completed` | healthy twin의 seed·run digest·trace/ledger 개수 기록 |
-| `gym.tool_call` / `gym.tool_result` | Life-v0 synthetic archetype의 원본 trace 보존 |
-| `oracle.report` | controller-owned world·ledger·trace 불변식 판정 |
-| `protected_replay` | 같은 seed의 SandboxGym baseline/perturbed/protected/control evidence |
-| `finding_report` | 증거에서 유도된 정직한 terminal status와 artifact reference |
-| `lab_report` | 동결된 Python `LabReport` payload를 관찰·가설·제안·검증 칸에 분리 표시 |
+### Origin and Raw API identity
 
-`source_descriptor.payload`는 `src/agent24/agent/source.py::SourceDescriptor`의
-`model_dump(mode="json")` 결과입니다. `source: live`이면서 `resolved_sha`가 40자 이상의
-full hexadecimal SHA일 때만 상단 target에 반영합니다. fixture/short SHA는 실제 resolve
-결과로 승격하지 않고 Raw Stream에서만 감사할 수 있습니다.
+| Origin | Meaning | Raw API item? |
+|---|---|---|
+| `openai_sdk` | Published OpenAI Agents SDK semantic stream item | Yes, only for `tool_call` and `tool_result` |
+| `controller` | Typed deterministic planner, Gym, oracle, report, or lifecycle event | No; exact controller evidence is still preserved |
+| `fixture` | Named deterministic review or fallback fixture | No; it must retain fixture provenance |
+| `system` | Transport, compatibility, or operational condition | No |
 
-`behavior_profile.payload`는 `src/agent24/agent/profile.py::BehaviorProfile`의
-`model_dump(mode="json")` 결과입니다. live 이벤트의 `source_ref` 끝에 immutable hex SHA가
-있을 때만 상단 resolved SHA에 반영합니다. fixture ref는 실제 resolve 결과로 승격하지 않습니다.
+An event is an unedited Raw API item only when `origin=openai_sdk` and `type` is
+`tool_call` or `tool_result`. `gym.tool_call`, `gym.tool_result`, controller reports,
+and fixture items must never be relabeled as OpenAI raw items.
 
-`pack.selected.payload`는 `src/agent24/agent/packs.py::PackSelection`의
-`model_dump(mode="json")` 결과입니다. `behavior_profile` 직후, `experiment_plan`보다
-**먼저** 나옵니다. unsupported로 끝나는 실행은 `experiment_plan`에 도달하지 못하므로,
-이 이벤트가 "어떤 pack을 왜 골랐고 왜 아무것도 실행하지 않았는지"에 대한 유일한 기록입니다.
+Credentials, personal data, unsafe exception text, and real external-account data
+are excluded before publication. The runtime passes only bounded synthetic tools
+and sanitized context to the SDK. If a payload cannot be safely published without
+editing it, the producer does not publish that payload; it emits a safe
+`operation.issue` with `code=system_error`. Once published, SDK payload field names,
+values, identity, and ordering are not redacted, summarized in place, or replaced.
 
-읽는 쪽이 반드시 구분해야 하는 두 가지가 있습니다.
+## D2 semantic stages
 
-- **선택된 pack ≠ 실행된 pack.** `stop`이 `null`일 때만 one-input controller가 그 pack을
-  실제로 실행합니다. 현재 그 조건을 만족하는 것은 Life pack뿐이고, Research·Stock·Ticket·
-  Adhoc은 선택은 되지만 `stop.detail`이 실행 경로를 담당하는 이슈 번호를 명시합니다.
-- **`selected`가 `null`이면 판단이 갈린 것**입니다. `stop.reason`이 `insufficient_evidence`면
-  두 domain pack이 동점이라 임의로 고르지 않고 종료한 경우이고, `unsupported_input`이면
-  등록된 어느 pack의 tool surface에도 해당하지 않는 경우입니다.
+`phase.changed` carries `{ "phase": "..." }` and uses this exact order:
 
-`candidates`는 점수 순으로 정렬된 전체 후보이고, `selection_digest`는 같은 입력·registry
-version에서 동일합니다. `why` / `expect` / `budget` / `fallback`은 표시용 요약이 아니라
-감사 대상이므로 요약하지 않고 그대로 보존합니다.
+| Order | Phase | Starts when |
+|---:|---|---|
+| 1 | `PIN` | The accepted target begins immutable source and manifest resolution |
+| 2 | `PROFILE` | Source provenance exists and observable behavior evidence is classified |
+| 3 | `CRASH` | A supported bounded experiment has been selected and fault execution begins |
+| 4 | `AUTOPSY` | Measured baseline/fault evidence is ready for first-divergence analysis |
+| 5 | `VACCINE` | A bounded mitigation is proposed from cited evidence |
+| 6 | `REPLAY` | Protected same-condition and benign-control verification begins |
 
-`experiment_plan.payload`는 `src/agent24/agent/models.py::ExperimentPlan`의
-`model_dump(mode="json")` 결과입니다. 웹은 첫 fault의 종류와 대상 도구뿐 아니라
-`tool_choice_reason`, `expected_evidence`, scenario seed, `max_turns`, `single_variable`을
-함께 표시해 왜 이 순서의 실험을 선택했는지 감사할 수 있게 합니다.
+The producer emits a phase only when it begins. Unsupported input may end in
+`PROFILE`; source failure may end in `PIN`; a run does not emit synthetic future
+phases merely to complete the rail.
 
-`lab_report.payload`는 `src/agent24/agent/models.py::LabReport`의
-`model_dump(mode="json")` 결과입니다. 웹은 표시용 projection만 만들며 envelope의
-원본 payload는 Raw API Stream에 그대로 보존합니다. `Finding.observed`, `diagnosis`,
-`proposed_patch`, `verified`를 서로 대체하거나 합쳐서 주장하지 않습니다.
+## Event catalog
 
-`finding_report.payload`와 모든 Gym event는 `execution_scope=synthetic_archetype`
-경계를 따른다. pinned source에서는 manifest metadata만 읽고 repository code는 실행하지
-않는다. 따라서 synthetic violation은 제출 Agent 자체의 측정된 취약점으로 표현하지 않는다.
+### Lifecycle and OpenAI events
 
-## 웹 정규화 규칙
+| `type` | Expected origin | Meaning |
+|---|---|---|
+| `run_started` | `system` | Accepted run begins; contains bounded target echo, never resolved provenance |
+| `phase.changed` | `controller` | One of the six semantic phases begins |
+| `tool_call` | `openai_sdk` | Unedited published SDK function-call item |
+| `tool_result` | `openai_sdk` | Unedited published SDK function-call-output item |
+| `final_output` | `openai_sdk` | Bounded optional explanation; not controller ground truth |
+| `operation.issue` | `system` | Nonterminal typed degradation or failure condition |
+| `explanation_offline` | `system` | Deterministic target evidence exists, but the optional SDK explanation is unavailable |
+| `run_completed` | `system` | The one canonical terminal event |
 
-웹 reducer는 수신 경계에서만 다음 호환 변환을 합니다.
+`run_failed` and `offline_demo` are legacy producer events. A4 stops producing them;
+reducers may recognize old stored fixtures during the migration but must not treat
+them as a second v1 terminal.
 
-- `run_started` → `run.started`
-- `run_completed` → `run.completed`
-- `run_failed` → `run.failed`
-- `source_descriptor` → `source.descriptor`
-- `payload` → 상태 해석용 `data`
-- `payload` → Raw Stream 표시용 `raw` — 객체 내용은 변경하지 않음
-- wire 타입은 `wire_type`에 별도로 보존
+### Source, planning, Gym, and reporting events
 
-기존 결정적 fixture의 `data` / `raw` envelope도 동일 reducer가 계속 지원합니다. 알 수 없는 타입은 UI 상태를 바꾸지 않지만 이벤트 목록과 Raw Stream에는 남습니다.
+| `type` | Expected origin | Meaning |
+|---|---|---|
+| `source_descriptor` | `controller` | Immutable `SourceDescriptor`, including full SHA and retrieval provenance |
+| `behavior_profile` | `controller` | Evidence-backed `BehaviorProfile` assessments and unknown reasons |
+| `pack.selected` | `controller` | Deterministic DomainPack routing evidence; selection is not execution |
+| `experiment_plan` | `controller` | Selected fault, target tool, rationale, expected evidence, seed, and budget |
+| `gym.baseline.completed` | `controller` | Healthy-twin digest and evidence counts |
+| `gym.tool_call` / `gym.tool_result` | `controller` | Exact synthetic trace events, not OpenAI raw items |
+| `world.snapshot` | `controller` or `fixture` | Named before/after synthetic state |
+| `oracle.report` | `controller` | Deterministic invariant evaluation |
+| `damage.updated` | `controller` or `fixture` | Bounded damage projection |
+| `failure.detected` | `controller` or `fixture` | Cited measured invariant failure |
+| `autopsy.ready` | `controller` or `fixture` | First divergence and cited observations |
+| `vaccine.proposed` | `controller` or `fixture` | Proposed bounded mitigation, not yet verification |
+| `verification.updated` | `controller` or `fixture` | Partial named gate state |
+| `replay.completed` | `controller` or `fixture` | Protected replay result and world state |
+| `protected_replay` | `controller` | Same-seed SandboxGym evidence bundle |
+| `finding_report` | `controller` | Evidence-backed investigation result |
+| `lab_report` | `controller` | Frozen observation/hypothesis/proposal/verification report |
 
-## D1 세 결과 축
+`pack.selected` appears after `behavior_profile` and before `experiment_plan`. A
+selection with a stop decision does not imply that a pack or experiment ran.
+Unknown event types remain in the stream and do not change projected UI state.
 
-표시용 reducer는 wire payload를 바꾸지 않고 `submission`, `investigation`,
-`operation`을 서로 독립적으로 투영합니다.
+### Canonical payment world projection
 
-- `submission`: request accepted, full-SHA pin, source/manifest preflight 실패
-- `investigation`: profile/experiment 진행, measured, unsupported, no-failure, not-run
-- `operation`: controller running, explicit offline fallback, terminal complete/failed
-
-`github.resolve_ref`가 full SHA를 반환하지 않으면 submission은 `failed`,
-investigation은 `not_run`, scope는 `fixture_fallback`입니다. 이후 내장 fixture가
-완주하더라도 제출 target의 measured finding으로 승격하지 않습니다. `offline_demo`는
-operation 축의 설명 경로 상태이며 finding이 아닙니다.
-
-## World shape
+R3 requires these fields for the payment fixture:
 
 ```json
 {
-  "wallet_krw": 451000,
-  "orders": 1,
-  "outbound_emails": 0,
-  "calendar_events": 0,
-  "files_touched": 0
+  "logical_orders": 1,
+  "charges": 1,
+  "fulfillments": 1,
+  "total_spend_krw": 49000,
+  "wallet_krw": 451000
 }
 ```
 
-추가 필드는 허용하며 기존 필드를 삭제하거나 의미를 바꾸지 않습니다.
+Additive domain-specific fields are allowed. Legacy `orders`, mail, calendar, and
+file counts do not replace the five payment fields or enter the signature story.
 
-## 자동 fallback
+## Operational issues
 
-웹은 먼저 `POST /api/runs`를 시도합니다. local static surface는 1.6초, hosted
-surface는 bounded OpenAI planning을 위해 22초 안에 정상 `run_id`를 기다립니다.
-첫 live event 이전에 API/SSE가 실패하면 동일 reducer에 `life.payment_intent_timeout.v1` fixture를
-공급합니다. fixture는 실제 외부 동작을 하지 않고 `source: fixture`와
-`FIXTURE FALLBACK · 제출 target 분석 결과가 아님`으로 표시됩니다. 입력 계약 오류
-`422`는 fixture로 바꾸지 않고 form 오류로 종료합니다.
+`operation.issue` uses one safe shape:
+
+```json
+{
+  "code": "source_unavailable",
+  "recoverable": false,
+  "fallback_started": true,
+  "safe_detail": "public source 또는 ref를 확인하세요."
+}
+```
+
+Stable after-202 codes are `source_unavailable`, `manifest_missing`,
+`manifest_invalid`, `system_error`, and `fallback_demo`. `safe_detail` is optional,
+bounded, and sanitized. Provider exception strings, credentials, request headers,
+and private source content never appear.
+
+`explanation_offline` is not `fallback_demo`. It means controller-owned submitted-
+target evidence already exists and only the optional model explanation is degraded.
+The terminal keeps `result_source=submitted`.
+
+## Exactly one terminal outcome
+
+Every accepted run ends with exactly one `run_completed`. Ending the SSE stream
+without it is a protocol failure, not an implicit success or fallback.
+
+```json
+{
+  "submission": {
+    "status": "accepted"
+  },
+  "investigation": {
+    "status": "verified_mitigation"
+  },
+  "operation": {
+    "status": "completed",
+    "code": null
+  },
+  "result_source": "submitted"
+}
+```
+
+| Axis | Stable values |
+|---|---|
+| `submission.status` | `accepted` (invalid submissions have no run) |
+| `investigation.status` | `measured_failure`, `verified_mitigation`, `no_failure_observed`, `unsupported`, `budget_exhausted`, `not_run` |
+| `operation.status` | `completed`, `degraded`, `fallback_demo`, `failed` |
+| `operation.code` | `null` or one stable after-202 operational code |
+| `result_source` | `submitted`, `fixture`, `none` |
+
+Terminal invariants:
+
+- `verified_mitigation` names only passed replay gates; it is not whole-Agent safety.
+- `unsupported`, `no_failure_observed`, and `budget_exhausted` do not create a measured finding.
+- `result_source=fixture` requires `investigation.status=not_run` and `operation.status=fallback_demo`.
+- `explanation_offline` may finish as `operation.status=degraded` while retaining a submitted result.
+- Source or manifest failure cannot inherit submitted-target profile or finding labels.
+- A legacy `run_failed` observed before `run_completed` is a compatibility condition, never another terminal.
+
+## Fallback behavior
+
+`fallback_demo` is reserved for an incomplete submitted-target analysis followed by
+a separate named fixture playback. Fixture events use `origin=fixture`; the UI shows
+`source=fixture` and `SUBMITTED TARGET · NOT ANALYZED`. The submitted target keeps
+`investigation.status=not_run`.
+
+HTTP `422` never starts a fixture. A transport failure before any live event may
+start the local fixture only after the UI visibly changes to the operational
+fallback state. A controller result followed by an unavailable OpenAI explanation
+uses `explanation_offline`, not a fixture terminal.
+
+## Reconnect, duplicates, and gaps
+
+- `seq` begins at 0 and increases by exactly one.
+- The server emits SSE `id: {seq}` and honors `Last-Event-ID` by replaying only events with a greater sequence.
+- Without `Last-Event-ID`, the endpoint sends the complete backlog and then live events.
+- A client deduplicates byte-equivalent events by `(run_id, seq)`.
+- The same `(run_id, seq)` with different envelope content is a protocol error; both observed envelopes remain raw-visible.
+- A gap buffers later projection, reconnects from the last contiguous sequence, and resumes only after the missing event arrives.
+- An unrecoverable gap or premature stream close becomes a visible protocol failure; the client does not invent a terminal outcome.
+
+SSE and JSONL contain the same envelope objects in the same sequence. Reconnection
+does not delete already received evidence.
+
+## Evolution rules
+
+Within `event.envelope.v1`, producers may add optional envelope or payload fields and
+new event types. Consumers ignore unknown fields for projection and preserve them in
+the Raw Stream. Unknown event types are projection-neutral.
+
+A breaking field removal, rename, type change, or semantic reinterpretation requires
+a new major schema discriminator. A client that does not understand the major
+envelope version keeps the bytes raw-visible, shows an unsupported-protocol state,
+and does not project claims from it. Producers must not emit both old and new
+terminal events to simulate compatibility.
+
+## Frontend normalization
+
+The receiving boundary may map wire names to internal reducer names, but retains the
+wire envelope unchanged:
+
+- `payload` becomes projection input and an identity-preserved Raw Stream value.
+- `type`, `origin`, and `schema_version` remain separately available.
+- Unknown types and fields remain in event history.
+- Legacy `run_started`, `run_completed`, `run_failed`, and fixture `data`/`raw`
+  aliases may be dual-read during A4; new producers write only the v1 contract.
+
+## A4 migration order
+
+1. Add consumer dual-read for v1 envelope/origin/terminal and legacy stored fixtures.
+2. Change web and hosted first-party requests to write only `external_target.v1`.
+3. Change local and hosted producers to emit v1 envelopes, six phases, operational issues, and one `run_completed` terminal.
+4. Add SSE IDs, `Last-Event-ID` replay, duplicate/gap handling, and cross-transport identity checks.
+5. Migrate smoke scripts, fixtures, docs, and focused tests; verify zero first-party external-run `input` use.
+6. Remove the legacy request adapter and old producer events together; retain archived raw logs outside Git.
+
+## Contract acceptance checks
+
+- Canonical requests contain repository, required ref, mission, and no credential or duplicate input.
+- All boundary failures use typed `422` errors and create no run or fixture.
+- Accepted responses and event envelopes carry the approved schema versions.
+- Every event has one declared origin; only SDK tool events claim Raw API identity.
+- The six semantic phases occur in order and only when reached.
+- Payment result projections expose logical order, charges, fulfillments, spend, and wallet.
+- Every 202 run has one and only one `run_completed` terminal.
+- Investigation, operation, and result source remain independent and internally valid.
+- Explanation degradation is not fixture fallback.
+- SSE, JSONL, and reducer raw values preserve published envelope identity and order.
+- Reconnect, duplicate, gap, unknown-event, and unknown-major behavior follows this contract.
+- Legacy removal waits for a working v1 replacement and zero first-party consumers.

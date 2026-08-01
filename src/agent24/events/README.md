@@ -1,5 +1,9 @@
 # Raw event boundary
 
+> Implementation snapshot: the ratified D3 envelope, origin, single-terminal, and
+> reconnect contract is [`web/event-contract.md`](../../../web/event-contract.md).
+> The unversioned envelope below remains migration evidence until A4 lands.
+
 `EventManager`가 한 번 만든 envelope를 그대로 JSONL에 append하고 SSE queue로 fan-out한다. 따라서 두 경로의 `run_id`, `seq`, 순서가 같다.
 
 ```json

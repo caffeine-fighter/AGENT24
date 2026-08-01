@@ -4,8 +4,9 @@
 
 이 문서는 NIGHTMARE LAB의 외부 Agent 입력 의미, P0 지원 범위, provenance,
 실행 경계, 결과 의미, 정확한 사용자 문구, legacy migration을 고정한다. D2는 이
-의미를 화면에 배치하고, D3는 exact JSON·event wire를 정한다. 구현이 이 문서와
-다르면 구현 drift이며 새로운 제품 결정이 아니다.
+의미를 화면에 배치하고, ratified D3는 `web/event-contract.md`에서 exact
+JSON·event wire를 정한다. 구현이 이 문서와 다르면 구현 drift이며 새로운 제품
+결정이 아니다.
 
 > **SYNTHETIC ARCHETYPE — 제출 repository code를 실행하지 않습니다.** P0는
 > public GitHub source의 고정된 metadata와 allowlist manifest를 읽고, 그 증거로
@@ -213,12 +214,14 @@ Structured external target이 canonical replacement다. String-only path는 advi
 | A2 bridge | New first-party clients submit the structured external target |
 | Legacy-only request | Label `legacy_prompt.v0`; never parse it into repository/ref/mission |
 | Current mixed request bridge | Trimmed legacy `input` must equal `target.mission`; otherwise `422 conflicting_input` |
-| D3 | Freeze the discriminated final request wire and deprecation signal |
+| D3 ratified | New clients send `schema_version=external_target.v1` and `target` without duplicate `input`; 202 responses identify `run.accepted.v1`; legacy responses carry a `legacy_prompt.v0` deprecation entry |
 | A4 | Migrate every first-party consumer and its tests |
 | Removal | Delete redundant external-run string only after zero first-party consumers remain |
 
-Legacy-only support가 unique product value를 계속 제공한다면 D3에서 별도 mode로 명시한다.
-그렇지 않으면 migration 완료 뒤 관련 code, tests, examples, notice를 함께 제거한다.
+Legacy-only support에는 unique external-Agent product value가 없으므로 새 기능을 추가하지
+않는다. A4가 first-party consumer를 모두 이동하고 zero-use를 확인한 뒤 관련 code, tests,
+examples, notice를 함께 제거한다. Exact error, event, terminal, and reconnect behavior는
+[`web/event-contract.md`](../web/event-contract.md)를 따른다.
 
 ## Integration fixture
 
@@ -255,4 +258,5 @@ manifest, payment replay checks를 처음 모두 통과한 commit으로 정한�
 
 Low-level source/manifest mechanics remain in
 [`source-manifest-contract.md`](source-manifest-contract.md). Exact HTTP, JSON, SSE, terminal,
-and compatibility wire belongs to [`../web/event-contract.md`](../web/event-contract.md) after D3.
+reconnect, and compatibility wire is ratified in
+[`../web/event-contract.md`](../web/event-contract.md).

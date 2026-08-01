@@ -22,5 +22,6 @@
 | 2026-08-01 | domain은 `MissionFamily`가 아니라 별도 `DomainKind`로 분리하고, pack 판별의 1차 기준은 tool surface | Stock에는 대응하는 mission family가 없고, frozen `MissionFamily`에 값을 추가하면 "사용자가 요청한 것"과 "어떤 gym이 재현할 수 있는가"라는 두 의미가 한 enum에 겹침 | B / agent | Ticket·K-Skill이 mission family까지 필요로 할 때 |
 | 2026-08-01 | pack 점수 동점은 `insufficient_evidence`로 종료하고 보고서에서는 기존 `UNSUPPORTED`로 매핑 | 사전순으로 하나를 고르면 동전 던지기가 판단으로 보임. 다만 web #25가 소비하는 5개 terminal status 계약을 깨면서까지 6번째 상태를 만들 이유는 없음 | B / agent | ambiguous를 UI에서 unsupported와 다르게 보여줘야 할 때 |
 | 2026-08-01 | Ticket pack은 잠정 tool 어휘와 함께 등록하되 fixture·fault family는 비워 둠 | 라우팅 규칙을 지금 테스트할 수 있게 하면서, 없는 fixture를 선언해 "fixture가 존재한다"와 "실패를 측정했다"를 섞지 않기 위함 | B / agent | #60이 실제 Ticket Gym과 확정 어휘를 제공할 때 |
+| 2026-08-01 | 외부 run은 `external_target.v1` request와 `event.envelope.v1` stream을 canonical로 삼고, event origin·단일 `run_completed` terminal·SSE sequence resume를 명시함 | local/hosted/frontend의 세 request 의미와 raw/fixture 혼동, 중복 terminal, reconnect drift를 한 additive contract로 제거하면서 legacy consumer를 단계적으로 이동 | D / shared interface | 모든 first-party consumer migration이 끝나 legacy adapter를 제거하거나 breaking v2가 필요할 때 |
 
 Keep entries short. Record choices that affect architecture, model/tool selection, scope, cost, privacy, or the demo path.

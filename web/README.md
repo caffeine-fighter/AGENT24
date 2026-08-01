@@ -1,5 +1,10 @@
 # NIGHTMARE LAB Demo UI
 
+> Implementation snapshot: the ratified D2 journey is
+> [`../docs/frontend-journey-contract.md`](../docs/frontend-journey-contract.md) and
+> the ratified D3 replacement wire is [`event-contract.md`](event-contract.md).
+> The current production screen and request path below remain A4 migration evidence.
+
 빌드 과정과 외부 자산이 없는 정적 데모 UI입니다. 브라우저에서 `index.html`을 열면 백엔드 연결을 먼저 시도하고, 사용할 수 없으면 결정적인 합성 케이크 사고 fixture로 자동 전환합니다.
 
 ## 실행

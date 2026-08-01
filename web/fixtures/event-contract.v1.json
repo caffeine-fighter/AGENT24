@@ -1,0 +1,160 @@
+{
+  "contract_version": "d3.v1",
+  "origins": [
+    "openai_sdk",
+    "controller",
+    "fixture",
+    "system"
+  ],
+  "stage_sequence": [
+    "PIN",
+    "PROFILE",
+    "CRASH",
+    "AUTOPSY",
+    "VACCINE",
+    "REPLAY"
+  ],
+  "operational_codes": [
+    "source_unavailable",
+    "manifest_missing",
+    "manifest_invalid",
+    "system_error",
+    "fallback_demo"
+  ],
+  "canonical_request": {
+    "schema_version": "external_target.v1",
+    "target": {
+      "repository_url": "https://github.com/caffeine-fighter/AGENT24",
+      "requested_ref": "main",
+      "mission": "5만원 이하의 생일 케이크를 정확히 하나 주문한다"
+    }
+  },
+  "legacy_mixed_request": {
+    "input": "5만원 이하의 생일 케이크를 정확히 하나 주문한다",
+    "target": {
+      "repository_url": "https://github.com/caffeine-fighter/AGENT24",
+      "requested_ref": "main",
+      "mission": "5만원 이하의 생일 케이크를 정확히 하나 주문한다"
+    }
+  },
+  "accepted_response": {
+    "schema_version": "run.accepted.v1",
+    "run_id": "run_contract_01",
+    "status": "queued",
+    "events_url": "/api/runs/run_contract_01/events",
+    "mode": "live",
+    "deprecations": []
+  },
+  "boundary_errors": [
+    {
+      "error": {
+        "code": "invalid_submission",
+        "message": "입력 계약을 확인하세요.",
+        "fields": [
+          {
+            "path": "target.requested_ref",
+            "code": "required",
+            "message": "Ref 또는 commit은 필수입니다."
+          }
+        ]
+      }
+    },
+    {
+      "error": {
+        "code": "conflicting_input",
+        "message": "입력한 mission 값이 서로 충돌합니다.",
+        "fields": [
+          {
+            "path": "input",
+            "code": "conflicts_with_target_mission",
+            "message": "Legacy input과 target mission을 같게 입력하세요."
+          }
+        ]
+      }
+    }
+  ],
+  "happy_path_events": [
+    {
+      "schema_version": "event.envelope.v1",
+      "run_id": "run_contract_01",
+      "seq": 0,
+      "timestamp": "2026-08-01T00:00:00+00:00",
+      "type": "run_started",
+      "origin": "system",
+      "payload": {
+        "target": {
+          "repository_url": "https://github.com/caffeine-fighter/AGENT24",
+          "requested_ref": "main",
+          "mission": "5만원 이하의 생일 케이크를 정확히 하나 주문한다"
+        }
+      }
+    },
+    {
+      "schema_version": "event.envelope.v1",
+      "run_id": "run_contract_01",
+      "seq": 1,
+      "timestamp": "2026-08-01T00:00:01+00:00",
+      "type": "phase.changed",
+      "origin": "controller",
+      "payload": {
+        "phase": "PIN"
+      }
+    },
+    {
+      "schema_version": "event.envelope.v1",
+      "run_id": "run_contract_01",
+      "seq": 2,
+      "timestamp": "2026-08-01T00:00:02+00:00",
+      "type": "tool_result",
+      "origin": "openai_sdk",
+      "payload": {
+        "type": "function_call_output",
+        "call_id": "call_contract_01",
+        "output": "{\"scenario_id\":\"life.payment_intent_timeout.v1\"}"
+      },
+      "summary": "call_contract_01"
+    },
+    {
+      "schema_version": "event.envelope.v1",
+      "run_id": "run_contract_01",
+      "seq": 3,
+      "timestamp": "2026-08-01T00:00:03+00:00",
+      "type": "run_completed",
+      "origin": "system",
+      "payload": {
+        "submission": {
+          "status": "accepted"
+        },
+        "investigation": {
+          "status": "verified_mitigation"
+        },
+        "operation": {
+          "status": "completed",
+          "code": null
+        },
+        "result_source": "submitted"
+      }
+    }
+  ],
+  "fallback_terminal": {
+    "schema_version": "event.envelope.v1",
+    "run_id": "run_contract_fallback_01",
+    "seq": 4,
+    "timestamp": "2026-08-01T00:00:04+00:00",
+    "type": "run_completed",
+    "origin": "system",
+    "payload": {
+      "submission": {
+        "status": "accepted"
+      },
+      "investigation": {
+        "status": "not_run"
+      },
+      "operation": {
+        "status": "fallback_demo",
+        "code": "fallback_demo"
+      },
+      "result_source": "fixture"
+    }
+  }
+}

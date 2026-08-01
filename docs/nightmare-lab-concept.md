@@ -1,6 +1,6 @@
 # NIGHTMARE LAB — Agent Failure Scientist
 
-> Status: D0 product truth, D1 external-Agent contract, and D2 frontend journey ratified · 2026-08-01 · D3–D6 remain open or deferred.
+> Status: D0 product truth, D1 external-Agent contract, D2 frontend journey, and D3 shared interface ratified · 2026-08-01 · D4–D6 remain open or deferred.
 
 ## Ratification status
 
@@ -8,16 +8,19 @@ This document is the canonical home for the accepted signature product truth. Th
 ratified external-Agent boundary lives in
 [`external-agent-contract.md`](external-agent-contract.md), and the ratified material
 frontend journey lives in
-[`frontend-journey-contract.md`](frontend-journey-contract.md). Sections outside those
+[`frontend-journey-contract.md`](frontend-journey-contract.md). The ratified shared
+HTTP, event, terminal, and migration wire lives in
+[`../web/event-contract.md`](../web/event-contract.md). Sections outside those
 boundaries describe system capabilities or future design space; they do not silently
-decide the open D3–D6 gates.
+decide the open D4–D6 gates.
 
 | Gate | Status | Authority of this document |
 |---|---|---|
 | D0 · Signature product truth | **Ratified** | The promise, scenario, evidence language, valid-mitigation rule, P0 breadth, preliminary acceptance, and language policy below are binding |
 | D1 · External-Agent product contract | **Ratified** | Input, support, provenance, execution, outcome, evidence, experiment, fallback, and compatibility meanings are binding through the external-Agent contract |
 | D2 · Frontend journey | **Ratified** | R1–R4 journey, hierarchy, visible states, fallback separation, and material visual character are binding through the frontend journey contract |
-| D3–D4 · Wire and integration acceptance | Open | Relevant sections are context or proposals until Rekhet ratifies the corresponding gate |
+| D3 · Shared interface | **Ratified** | Versioned request/response/error/event envelopes, origin semantics, one terminal, reconnect behavior, and legacy migration are binding through the event contract |
+| D4 · Integration acceptance | Open | Relevant sections are context or proposals until Rekhet ratifies the integrated-slice gate |
 | D5–D6 · Detailed testing and presentation | Deferred | Exact matrices, repetitions, thresholds, and presentation artifacts are intentionally not fixed here |
 
 ## 한 문장 제품 약속
@@ -547,9 +550,9 @@ changing their D0/D1 meanings.
 | Honest non-result | Unsupported, no-failure-observed, budget-exhausted, and operational fixture fallback stay distinct |
 | Raw API Stream | Separate evidence surface with published tool payload identity and ordering unedited |
 
-The accepted review deck is fixture evidence, not the production wire. D3 still owns
-exact request, event, error, and terminal representation. The obsolete unrequested
-schedule/calendar step remains excluded from the signature journey.
+The accepted review deck is fixture evidence, not the production wire. D3's exact
+request, event, error, terminal, reconnect, and compatibility representation is
+ratified in `web/event-contract.md`.
 
 ## 팀 분담 제안
 
