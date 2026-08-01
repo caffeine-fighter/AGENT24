@@ -106,7 +106,10 @@ class GitHubContentsManifestFetcher:
             encoded = payload["content"]
             if payload.get("encoding") != "base64" or not isinstance(encoded, str):
                 raise ValueError("unexpected contents encoding")
-            manifest_bytes = base64.b64decode(encoded, validate=True)
+            # GitHub line-wraps base64 content. Remove JSON-string whitespace,
+            # then keep strict alphabet/padding validation for the actual data.
+            normalized_encoded = "".join(encoded.split())
+            manifest_bytes = base64.b64decode(normalized_encoded, validate=True)
         except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
             raise ManifestResponseError("GitHub manifest response is malformed") from error
         if len(manifest_bytes) > MAX_MANIFEST_BYTES:
