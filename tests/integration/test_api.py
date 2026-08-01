@@ -30,6 +30,7 @@ from agent24.api import (
     RuntimeSettings,
     create_app,
 )
+from agent24.evals.live_stub import StubOpenAIClient
 
 PINNED_SHA = "0123456789abcdef0123456789abcdef01234567"
 
@@ -391,7 +392,7 @@ def test_live_run_uses_mocked_openai_client_and_preserves_raw_tool_items(
     # constructor is replaced, so the test never makes a network request.
     import agents.models.openai_provider as provider_module
 
-    monkeypatch.setattr(provider_module, "AsyncOpenAI", _MockedOpenAIClient)
+    monkeypatch.setattr(provider_module, "AsyncOpenAI", StubOpenAIClient)
     app = create_app(artifact_root=tmp_path)
 
     with TestClient(app) as client:
@@ -428,8 +429,8 @@ def test_live_run_uses_mocked_openai_client_and_preserves_raw_tool_items(
     }
     assert sse_events[2]["payload"]["type"] == "function_call_output"
     assert sse_events[3]["payload"] == {"text": "Mock final diagnosis"}
-    assert _MockedOpenAIClient.last is not None
-    assert _MockedOpenAIClient.last.init_kwargs["api_key"] == "test-only-key"
+    assert StubOpenAIClient.last is not None
+    assert StubOpenAIClient.last.init_kwargs["api_key"] == "test-only-key"
     assert "test-only-key" not in sse_response.text
     assert "test-only-key" not in (tmp_path / f"{run_id}.jsonl").read_text(encoding="utf-8")
 

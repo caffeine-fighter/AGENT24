@@ -14,6 +14,10 @@ dependencies = [
   # Imported directly by agent24.agent; JsonValue needs >= 2.5.
   "pydantic>=2.7",
   "pydantic-settings",
+  # agent24.evals.registry parses tests/evals/cases.yaml, which the canonical
+  # verifier runs. It was already installed transitively; relying on that would
+  # make the eval gate break whenever an unrelated dependency dropped it.
+  "pyyaml",
   "uvicorn[standard]",
 ]
 
