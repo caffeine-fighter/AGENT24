@@ -80,7 +80,10 @@ test("static demo renders the D1 submission and three-axis truth boundary", asyn
   assert.match(html, /id="operationOutcome"/);
   assert.match(html, /가상 환경에서만 진행해요/);
   assert.match(html, /문제를 찾지 못해도 안전이 보장되는 것은 아니에요/);
-  assert.match(html, /안전 실험 시작/);
+  assert.match(html, /실험 시작하기/);
+  assert.match(html, /id="resultSurface" class="result-surface" hidden/);
+  assert.match(html, /id="runNotice"[^>]+role="status"[^>]+aria-atomic="true"/);
+  assert.match(html, /id="rawStream"[^>]+tabindex="0"/);
   assert.match(html, /원본 실행 기록/);
   assert.doesNotMatch(html, /SUBMISSION|INVESTIGATION|OPERATION|PENDING|READY/);
   assert.match(html, /케이크 하나를 5만원 이하로 한 번만 주문해줘/);
@@ -112,7 +115,7 @@ test("static demo uses natural Korean product copy", async () => {
     assert.doesNotMatch(productCopy, new RegExp(translatedPhrase), `remove translated UI phrase: ${translatedPhrase}`);
   }
   assert.doesNotMatch(html, /[가-힣](?:합니다|됩니다|있습니다|없습니다|않습니다)[.!<]/);
-  assert.match(productCopy, /안전 실험 시작/);
+  assert.match(productCopy, /실험 시작하기/);
   assert.match(productCopy, /같은 내용으로 다시 실행/);
   assert.match(productCopy, /다시 시도/);
 });

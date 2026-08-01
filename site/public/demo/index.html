@@ -86,11 +86,11 @@
             <textarea id="missionInput" name="mission" rows="3" maxlength="2000" aria-describedby="missionHint" required>엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문해줘.</textarea>
             <div class="mission-actions">
               <button id="runButton" class="primary-button" type="submit">
-                <span>안전 실험 시작</span>
+                <span>실험 시작하기</span>
                 <span aria-hidden="true">↗</span>
               </button>
-              <button id="resetButton" class="ghost-button" type="button">결과 지우기</button>
-              <button id="replayButton" class="ghost-button" type="button" disabled>같은 내용으로 다시 실행</button>
+              <button id="resetButton" class="ghost-button run-secondary" type="button" hidden>결과 지우기</button>
+              <button id="replayButton" class="ghost-button run-secondary" type="button" hidden disabled>같은 내용으로 다시 실행</button>
             </div>
             <p id="missionHint" class="form-hint">
               공개된 GitHub 저장소만 확인해요. 코드는 실행하지 않고 실제 서비스와 계정은 건드리지 않아요.
@@ -101,10 +101,11 @@
               <div><dt>확인할 버전</dt><dd id="targetRef">—</dd></div>
               <div><dt>확인한 커밋</dt><dd id="targetSha">—</dd></div>
             </dl>
-            <p id="runNotice" class="run-notice" role="status" hidden></p>
+            <p id="runNotice" class="run-notice" role="status" aria-live="polite" aria-atomic="true" hidden></p>
           </form>
         </section>
 
+        <div id="resultSurface" class="result-surface" hidden>
         <section class="outcome-panel panel" aria-label="실행 결과">
           <p id="scopeNotice" class="scope-notice" data-scope="synthetic_archetype">
             <strong>가상 환경에서만 진행해요.</strong> 저장소와 허용된 설정만 읽고 에이전트의 동작을 재현해요. 문제를 찾지 못해도 안전이 보장되는 것은 아니에요.
@@ -122,7 +123,7 @@
           </div>
         </section>
 
-        <nav class="phase-rail panel" aria-label="실행 단계">
+        <nav class="phase-rail panel" aria-label="실행 단계" tabindex="0">
           <ol id="phaseRail">
             <li data-phase="CLONE"><span>01</span><strong>환경 준비</strong><small>저장소 확인</small></li>
             <li data-phase="CRASH"><span>02</span><strong>실패 재현</strong><small>오류 하나만 주입</small></li>
@@ -184,7 +185,7 @@
           <p id="reportResidualRisk" class="residual-risk">—</p>
         </section>
 
-        <section class="world-grid">
+        <section id="worldGrid" class="world-grid" hidden>
           <article class="world-card panel" data-world="before">
             <header>
               <div>
@@ -262,7 +263,7 @@
           </article>
         </section>
 
-        <section class="evidence-grid">
+        <section id="evidenceGrid" class="evidence-grid" hidden>
           <article class="panel autopsy-panel">
             <header class="section-heading">
               <div><p class="eyebrow">최초 실패 지점</p><h2>문제가 시작된 순간부터 되짚어 봐요</h2></div>
@@ -286,6 +287,7 @@
             </div>
           </article>
         </section>
+        </div>
       </section>
 
       <aside class="stream-column panel" aria-label="실시간 실행 기록">
@@ -302,7 +304,7 @@
         <p class="stream-note">
           서버에서 받은 이벤트를 그대로, 시간순으로 보여드려요. 새 이벤트 유형도 생략하지 않아요.
         </p>
-        <div id="rawStream" class="raw-stream" role="log" aria-live="polite">
+        <div id="rawStream" class="raw-stream" role="log" aria-label="원본 실행 기록 목록" tabindex="0">
           <div class="stream-empty">실험을 시작하면 실시간 기록이 여기에 쌓여요.</div>
         </div>
         <footer class="stream-footer">
