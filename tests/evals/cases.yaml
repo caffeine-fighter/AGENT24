@@ -70,3 +70,15 @@ cases:
     issue: 4
     command: "pytest tests/integration/test_full_loop.py::test_bounded_retry_end_to_end -q"
     expectation: "repeat-bound violation; patch bounds retries without killing recovery"
+  - id: source-branch-resolves-to-immutable-sha
+    issue: 16
+    command: "pytest tests/unit/test_source_manifest.py::test_resolve_source_records_immutable_sha_and_is_byte_stable -q"
+    expectation: "repository/ref provenance contains a full resolved commit SHA and stable serialization"
+  - id: manifest-unsupported-tool-is-honest
+    issue: 18
+    command: "pytest tests/unit/test_source_manifest.py::test_manifest_loader_reads_only_allowlisted_json_and_never_runs_entrypoint -q"
+    expectation: "allowlisted manifest loads without execution; unsupported and duplicate tools remain explicit"
+  - id: payment-protected-replay
+    issue: 24
+    command: "pytest tests/integration/test_life_replay.py::test_life_v0_protected_replay_keeps_same_seed_and_one_charge -q"
+    expectation: "same-seed protected replay reconciles the original intent, keeps one charge, and passes benign control"

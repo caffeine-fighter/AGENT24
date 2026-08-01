@@ -75,12 +75,18 @@ class SandboxGym:
         *,
         seed: int | None = None,
         run_id: str = "run-001",
+        fault_enabled: bool = True,
     ) -> SandboxGym:
         """Construct a sandbox without requiring callers to know fixture wiring."""
 
         from .fixtures import load_fixture
 
-        return load_fixture(fixture_id, seed=seed, run_id=run_id)
+        return load_fixture(
+            fixture_id,
+            seed=seed,
+            run_id=run_id,
+            fault_enabled=fault_enabled,
+        )
 
     @property
     def fixture_id(self) -> str:

@@ -36,21 +36,35 @@ Gym 자체는 고정 테스트의 실행 장비다. 어떤 위험을 탐색할�
 
 현재 [`src/agent24/tools/gym.py`](../src/agent24/tools/gym.py)의 기존 scenario inspector를 유지하면서, [`src/agent24/tools/sandbox.py`](../src/agent24/tools/sandbox.py)가 실행 가능한 stateful Life Gym thin slice를 제공한다.
 
+외부 Agent 입력은 [`source-manifest-contract.md`](source-manifest-contract.md)의
+immutable `SourceDescriptor`와 allowlisted `AgentManifest`를 먼저 통과한다. 이
+단계에서는 pinned checkout의 JSON metadata만 읽고 Agent entrypoint를 실행하지
+않는다.
+
 - seeded `WorldState`와 hash-검증 `WorldSnapshot`
 - append-only `SideEffectLedger`와 typed `FaultInjector`
 - `StripeLikePaymentProvider`의 `create → confirm → retrieve` 결제 흐름
 - webhook delivery와 order fulfillment deduplication
 - 기존 `payment.charge` fixture와 Agents SDK wrapper 호환성
+- same-seed baseline/perturbed/protected replay와 benign control
+- `SourceDescriptor` → allowlisted `AgentManifest` 입력 검증
 
 아직 다음은 후속 단계다.
 
 - AUT adapter와 Lab Agent controller/rollout
-- deterministic oracle registry와 paired replay orchestration
+- Lab Agent용 deterministic oracle registry와 B의 report/gate 모듈 연결
 - provenance/version graph
 - counterexample minimization
 - domain-specific finance/research pack
 
 기존 `inspect_synthetic_gym`은 첫 end-to-end 경로와 offline fallback을 위해 유지한다. 새 kernel은 외부 네트워크 없이 실제 provider 경계의 상태·재시도 semantics만 재현한다.
+
+`protected_replay()`는 현재 C 영역의 실행 가능한 replay seam이다. 같은
+`life.payment_intent_timeout.v1`와 seed로 baseline(무 fault), perturbed(unknown 뒤 새
+intent 재생성), protected(기존 intent retrieve), benign control을 각각 실행한다. hidden
+world와 ledger에서 charge/spend/fulfillment를 세고, blanket payment block은 정상 control을
+실패시키는 것으로 판정한다. 결과에는 initial/final snapshot hash, ledger, oracle diff가
+남으며 네트워크나 실제 결제는 사용하지 않는다.
 
 ## 가장 작은 시작점: Simple Life Gym
 
