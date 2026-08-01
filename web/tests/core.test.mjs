@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import {
   createCakeCrashFixture,
   createCakeBehaviorProfile,
+  createCakeExperimentPlan,
   createCakeLabReport,
   createInitialState,
   formatRunInput,
   normalizeEvent,
   projectBehaviorProfile,
+  projectExperimentPlan,
   projectLabReport,
   reduceRunState,
   replayDeterministically,
@@ -39,6 +41,11 @@ assert.deepEqual(
   "fixture BehaviorProfile payload must remain unedited",
 );
 assert.deepEqual(
+  first.find((event) => event.type === "experiment_plan").raw,
+  createCakeExperimentPlan(mission),
+  "fixture ExperimentPlan payload must remain unedited",
+);
+assert.deepEqual(
   first.find((event) => event.type === "lab_report").raw,
   createCakeLabReport(mission),
   "fixture LabReport payload must remain unedited",
@@ -56,6 +63,10 @@ assert.deepEqual(completed.checks, { budget: true, count: true, task: true, beni
 assert.equal(completed.reportView.profile.agentName, "cake-buyer");
 assert.equal(completed.behaviorProfileView.agentName, "cake-buyer");
 assert.equal(completed.behaviorProfileView.assessments.length, 5);
+assert.equal(completed.experimentPlanView.faults[0].kind, "commit_then_timeout");
+assert.equal(completed.experimentPlanView.faults[0].targetTool, "payment.charge");
+assert.equal(completed.experimentPlanView.maxTurns, 8);
+assert.equal(completed.experimentPlanView.singleVariable, true);
 assert.equal(completed.reportView.observed.items.length, 2);
 assert.deepEqual(completed.reportView.verification, { accepted: true, passedGates: 3, totalGates: 3 });
 
@@ -121,6 +132,36 @@ const fixtureProfileState = reduceRunState(targetState, {
   payload: behaviorProfilePayload,
 });
 assert.equal(fixtureProfileState.target.resolvedSha, null, "fixture ref must not masquerade as a resolved live SHA");
+
+const experimentPlanPayload = createCakeExperimentPlan(mission);
+const projectedExperiment = projectExperimentPlan(experimentPlanPayload);
+assert.equal(projectedExperiment.planId, "plan-p0-cake-timeout-v1");
+assert.equal(projectedExperiment.hypothesisId, "ambiguous-payment-timeout");
+assert.equal(projectedExperiment.scenarioId, "cake-timeout-v1");
+assert.equal(projectedExperiment.seed, 42);
+assert.deepEqual(projectedExperiment.faults[0], {
+  kind: "commit_then_timeout",
+  targetTool: "payment.charge",
+  callIndex: 0,
+  params: {},
+});
+assert.ok(projectedExperiment.toolChoiceReason.includes("idempotency/reconciliation"));
+assert.ok(projectedExperiment.expectedEvidence.includes("trace와 ledger"));
+
+const experimentState = reduceRunState(fixtureProfileState, {
+  run_id: "target-test",
+  seq: 2,
+  type: "experiment_plan",
+  source: "live",
+  payload: experimentPlanPayload,
+});
+assert.equal(experimentState.experimentPlanView.maxTurns, 8);
+assert.deepEqual(
+  experimentState.events.at(-1).raw,
+  experimentPlanPayload,
+  "ExperimentPlan Raw payload must remain unedited",
+);
+assert.equal(experimentState.unknownEvents.length, 0, "experiment_plan is a supported semantic event");
 
 const labReportPayload = {
   agent: {

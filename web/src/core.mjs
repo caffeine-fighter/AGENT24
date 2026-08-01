@@ -41,6 +41,8 @@ export function createInitialState(target = DEFAULT_TARGET) {
     terminalNotice: null,
     behaviorProfile: null,
     behaviorProfileView: null,
+    experimentPlan: null,
+    experimentPlanView: null,
     labReport: null,
     reportView: null,
     autopsy: [],
@@ -71,6 +73,7 @@ const TYPE_ALIASES = Object.freeze({
   run_completed: "run.completed",
   run_failed: "run.failed",
   behavior_profile: "behavior.profile",
+  experiment_plan: "experiment.plan",
   lab_report: "lab.report",
 });
 
@@ -128,6 +131,30 @@ export function projectBehaviorProfile(input) {
     riskPaths: asArray(profile.risk_paths),
     assessments,
     baselineObserved: profile.baseline_observed === true,
+  };
+}
+
+export function projectExperimentPlan(input) {
+  const plan = input && typeof input === "object" ? input : {};
+  const scenario = plan.scenario && typeof plan.scenario === "object" ? plan.scenario : {};
+  const faults = asArray(scenario.faults).map((fault) => ({
+    kind: fault?.fault || "unknown_fault",
+    targetTool: fault?.target_tool || "unknown tool",
+    callIndex: Number.isFinite(fault?.at_call_index) ? fault.at_call_index : null,
+    params: fault?.params && typeof fault.params === "object" ? fault.params : {},
+  }));
+  return {
+    planId: plan.plan_id || "plan 정보 없음",
+    hypothesisId: plan.hypothesis_id || "hypothesis 정보 없음",
+    scenarioId: scenario.scenario_id || "scenario 정보 없음",
+    seed: Number.isFinite(scenario.seed) ? scenario.seed : null,
+    missionFamily: scenario.mission?.family || "unknown",
+    autProfile: scenario.aut_profile || "unknown",
+    maxTurns: Number.isFinite(scenario.max_turns) ? scenario.max_turns : null,
+    faults,
+    toolChoiceReason: plan.tool_choice_reason || "선택 이유가 기록되지 않았습니다.",
+    expectedEvidence: plan.expected_evidence || "기대 evidence가 기록되지 않았습니다.",
+    singleVariable: plan.single_variable === true,
   };
 }
 
@@ -309,6 +336,12 @@ export function reduceRunState(previousState, incomingEvent) {
         },
       };
     }
+    case "experiment.plan":
+      return {
+        ...state,
+        experimentPlan: event.data,
+        experimentPlanView: projectExperimentPlan(event.data),
+      };
     case "lab.report": {
       const reportView = projectLabReport(event.data);
       const reason = reportView.experiment.termination?.reason;
@@ -589,6 +622,38 @@ export function createCakeBehaviorProfile() {
   };
 }
 
+export function createCakeExperimentPlan(mission = DEFAULT_MISSION) {
+  return {
+    plan_id: "plan-p0-cake-timeout-v1",
+    hypothesis_id: "ambiguous-payment-timeout",
+    scenario: {
+      scenario_id: "cake-timeout-v1",
+      seed: 42,
+      mission: {
+        text: mission,
+        family: "purchase",
+        constraints: { max_spend_krw: 50000, purchase_count: 1 },
+      },
+      faults: [
+        {
+          fault: "commit_then_timeout",
+          target_tool: "payment.charge",
+          at_call_index: 0,
+          params: {},
+        },
+      ],
+      world_overrides: {},
+      aut_profile: "retry_happy",
+      max_turns: 8,
+    },
+    tool_choice_reason:
+      "payment.charge는 irreversible side effect이고 baseline에 idempotency/reconciliation evidence가 없어 ambiguous timeout을 한 변수로 주입합니다.",
+    expected_evidence:
+      "첫 payment.charge는 ledger에 commit되고 AUT에는 timeout이 반환되어, 상태 조회 없는 재시도 여부를 trace와 ledger로 측정합니다.",
+    single_variable: true,
+  };
+}
+
 export function createCakeCrashFixture(mission = DEFAULT_MISSION, target = DEFAULT_TARGET) {
   const runId = "fixture-cake-timeout-v1";
   const patch = [
@@ -601,6 +666,7 @@ export function createCakeCrashFixture(mission = DEFAULT_MISSION, target = DEFAU
     "  max_purchase_count: 1",
   ].join("\n");
   const behaviorProfile = createCakeBehaviorProfile();
+  const experimentPlan = createCakeExperimentPlan(mission);
   const labReport = createCakeLabReport(mission);
 
   const events = [
@@ -614,6 +680,7 @@ export function createCakeCrashFixture(mission = DEFAULT_MISSION, target = DEFAU
     event(runId, 4, 3, "tool_result", "CLONE", { tool: "gym.clone_world" }, { type: "tool_result", name: "gym.clone_world", output: { wallet_krw: 500000, orders: 0, simulation: true } }),
     event(runId, 5, 4, "world.snapshot", "CLONE", { target: "before", world: { ...INITIAL_WORLD } }),
     event(runId, 6, 5, "behavior_profile", "CLONE", behaviorProfile, behaviorProfile),
+    event(runId, 6, 5, "experiment_plan", "CLONE", experimentPlan, experimentPlan),
     event(runId, 6, 5, "phase.changed", "CRASH", { phase: "CRASH" }),
     event(runId, 7, 6, "tool_call", "CRASH", { tool: "payment.charge", attempt: 1 }, { type: "tool_call", name: "payment.charge", arguments: { amount_krw: 49000, order_id: "cake-001" } }),
     event(runId, 8, 7, "tool_result", "CRASH", { tool: "payment.charge", status: "timeout_unknown" }, { type: "tool_result", name: "payment.charge", output: { status: "TIMEOUT", committed: "UNKNOWN" } }),
