@@ -1,4 +1,5 @@
 import type { HostedPlan, HostedRunContext } from "@/lib/hosted-lab";
+import { classifyHostedMission } from "@/lib/mission-support";
 import { sealRunContext } from "@/lib/run-context";
 
 export const runtime = "edge";
@@ -223,9 +224,19 @@ export async function POST(request: Request) {
       return Response.json({ detail: "legacy input conflicts with canonical target fields" }, { status: 422 });
     }
   }
+  const support = classifyHostedMission(mission);
+  const fallbackPlan: HostedPlan = {
+    expectedEvidence: FALLBACK_EVIDENCE,
+    model: process.env.OPENAI_MODEL?.trim() || "gpt-5.6-terra",
+    rationale: support.detail,
+    responseId: null,
+    usedOpenAI: false,
+  };
   const [source, plan] = await Promise.all([
     resolveGitHubRef(repositoryUrl, requestedRef),
-    planWithOpenAI(mission, repositoryUrl),
+    support.status === "unsupported"
+      ? Promise.resolve(fallbackPlan)
+      : planWithOpenAI(mission, repositoryUrl),
   ]);
   const runId = crypto.randomUUID();
   const context: HostedRunContext = {
@@ -240,6 +251,11 @@ export async function POST(request: Request) {
     resolvedSha: source.resolvedSha,
     runId,
     sourceResolver: source.resolver,
+    supportDetail: support.detail,
+    supportDomain: support.domain,
+    supportMissionId: support.missionId,
+    supportReason: support.reason,
+    supportStatus: support.status,
   };
   let runContext: string;
   try {

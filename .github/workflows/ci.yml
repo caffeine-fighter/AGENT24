@@ -48,3 +48,7 @@ jobs:
         run: npm run build
       - name: Hosted route tests
         run: node --test tests/rendered-html.test.mjs
+      - name: Install browser
+        run: npx playwright install --with-deps chromium
+      - name: Browser mission flows
+        run: npm run test:browser
