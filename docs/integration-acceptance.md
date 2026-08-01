@@ -102,7 +102,9 @@ comparisons are circular evidence and cannot pass D4.
 A5 is autonomous evidence collection after all three conditions exist:
 
 1. A4 has migrated the normal caller, producer, transport, and reducer to D3.
-2. D5a has ratified the non-leaky case, held-out, environment, and evidence design.
+2. D5a has ratified the non-leaky case, held-out, environment, and evidence design in
+   [`test-plan.md`](test-plan.md); that design has been implemented without consuming
+   the final set.
 3. Independent source and outcome references have been recorded before execution.
 
 A5 passes only when one production-path audit satisfies I1–I4 without a contract
@@ -113,7 +115,7 @@ returns to Rekhet as a D0–D4 amendment.
 ## Current implementation delta
 
 This snapshot is coordination evidence, not part of the accepted meaning. At
-`origin/main` commit `808e9aa`, the candidate path still has the following D3 drift:
+`origin/main` commit `f9f6dd8`, the candidate path still has the following D3 drift:
 
 - local and hosted start requests do not use the canonical request version;
 - event envelopes do not consistently carry D3 version and origin;

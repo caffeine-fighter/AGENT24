@@ -1,6 +1,6 @@
 # NIGHTMARE LAB — Agent Failure Scientist
 
-> Status: D0 product truth, D1 external-Agent contract, D2 frontend journey, D3 shared interface, and D4 integration acceptance ratified · 2026-08-01 · D5–D6 remain open or deferred.
+> Status: D0–D3 ratified · D4 integration acceptance ratified · D5a non-leaky test design ratified · 2026-08-01 · D5b and D6 remain open or deferred.
 
 ## Ratification status
 
@@ -23,7 +23,8 @@ decide the open D5–D6 gates.
 | D2 · Frontend journey | **Ratified** | R1–R4 journey, hierarchy, visible states, fallback separation, and material visual character are binding through the frontend journey contract |
 | D3 · Shared interface | **Ratified** | Versioned request/response/error/event envelopes, origin semantics, one terminal, reconnect behavior, and legacy migration are binding through the event contract |
 | D4 · Integration acceptance | **Ratified** | Same-origin production slice, successful evidence chain, honest boundaries, and independent-proof policy are binding through the integration-acceptance contract |
-| D5–D6 · Detailed testing and presentation | Deferred | Exact matrices, repetitions, thresholds, and presentation artifacts are intentionally not fixed here |
+| D5a · Test design | **Ratified** | Coverage, held-out construction, environment, evidence, and leakage controls are binding through [`test-plan.md`](test-plan.md) |
+| D5b and D6 · Thresholds and presentation | Deferred | Repetitions, thresholds, completion, and presentation artifacts remain intentionally unfixed |
 
 ## 한 문장 제품 약속
 
