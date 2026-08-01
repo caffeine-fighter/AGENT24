@@ -563,6 +563,51 @@ cases:
       - tests/unit/test_k_skill_intake.py::test_snapshot_builder_rejects_an_unrelated_commit_and_tree
       - tests/unit/test_k_skill_intake.py::test_snapshot_builder_never_carries_classifications_to_a_new_commit
 
+  # Reviewed K-Skill synthetic promotion and Ticket probes (issue #115).
+  - id: k-skill-mapping-coverage
+    runner: pytest
+    issue: 115
+    expectation: the exact catalog digest accounts for every declared hypothesis across all 13 profiles; five distinct Ticket defaults reference real replay fixtures, while every uncovered hypothesis keeps a specific typed unsupported disposition
+    targets:
+      - tests/unit/test_k_skill_mapping.py::test_registry_accounts_for_every_declared_hypothesis_for_all_13_profiles
+      - tests/unit/test_k_skill_mapping.py::test_five_ticket_defaults_are_distinct_reviewed_executable_archetypes
+      - tests/unit/test_k_skill_mapping.py::test_approval_archetype_cannot_omit_its_scope_fault_contract
+      - tests/unit/test_k_skill_mapping.py::test_executable_entries_reference_real_pack_fixtures_and_declared_faults
+      - tests/unit/test_k_skill_mapping.py::test_read_only_profiles_are_explicitly_unsupported_without_mutating_fallback
+      - tests/unit/test_k_skill_mapping.py::test_self_consistent_changed_catalog_cannot_reuse_the_reviewed_mapping
+      - tests/unit/test_k_skill_mapping.py::test_profile_with_no_default_returns_every_concrete_unsupported_disposition
+
+  - id: k-skill-mapping-integrity-boundary
+    runner: pytest
+    issue: 115
+    expectation: a changed source remains intake-unsupported and a profile or metadata snapshot rebound after intake fails closed before any synthetic archetype is selected
+    targets:
+      - tests/unit/test_k_skill_mapping.py::test_profile_rebinding_stops_before_an_archetype_is_selected
+      - tests/unit/test_k_skill_mapping.py::test_nested_snapshot_claim_boundary_cannot_be_rebound_before_selection
+      - tests/unit/test_k_skill_mapping.py::test_changed_source_stays_typed_unsupported_without_mapping_lookup
+      - tests/unit/test_k_skill_probes.py::test_unsupported_mapping_cannot_reach_the_probe_dispatcher
+
+  - id: k-skill-ticket-protected-probes
+    runner: pytest
+    issue: 115
+    expectation: five reviewed Ticket archetypes each produce the expected first synthetic divergence, then pass protected, benign, mission-preservation, and blanket-block gates with byte-identical same-seed reports
+    targets:
+      - tests/unit/test_k_skill_probes.py::test_each_default_runs_vulnerable_protected_benign_and_blanket_controls
+      - tests/unit/test_k_skill_probes.py::test_same_mapping_and_seed_produce_byte_identical_probe_reports_three_times
+
+  - id: k-skill-approval-and-raw-boundary
+    runner: pytest
+    issue: 115
+    expectation: approval evidence binds the grant window plus each call's own virtual time, action, target, amount, and currency; exact Ticket call arguments/results remain structured raw events with no secret-like values, and the report labels target execution as not_executed
+    targets:
+      - tests/unit/test_k_skill_probes.py::test_approval_is_bound_to_action_target_amount_currency_and_freshness
+      - tests/unit/test_k_skill_probes.py::test_approval_archetypes_run_all_scope_controls_before_acceptance
+      - tests/unit/test_k_skill_probes.py::test_approval_scope_uses_actual_vulnerable_and_protected_booking_values
+      - tests/unit/test_k_skill_probes.py::test_approval_report_digest_and_decisions_bind_the_grant_window
+      - tests/unit/test_k_skill_probes.py::test_ticket_approval_guard_denies_before_the_purchase_side_effect
+      - tests/unit/test_k_skill_probes.py::test_raw_events_preserve_ticket_call_arguments_and_results_without_secret_values
+      - tests/unit/test_ticket_pack.py::test_ticket_tool_trace_records_each_calls_own_virtual_time
+
   # Pinned participant-repository intake (issue #62).
   - id: participant-pinned-static-profiles
     runner: pytest

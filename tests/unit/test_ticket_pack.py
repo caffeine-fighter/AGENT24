@@ -192,6 +192,18 @@ def test_expired_hold_cannot_create_a_booking_or_charge() -> None:
     assert gym.world.charges == {}
 
 
+def test_ticket_tool_trace_records_each_calls_own_virtual_time() -> None:
+    gym = TicketGym.from_fixture("ticket.stale-availability.v1", seed=9)
+    gym.call("ticket.event.search", query="Midnight Echoes Live")
+    gym.advance_time(45)
+    gym.call("ticket.event.search", query="Midnight Echoes Live")
+
+    assert [item.observed_at for item in gym._trace] == [
+        1_785_546_000,
+        1_785_546_045,
+    ]
+
+
 def test_ticket_tool_surface_and_domain_adapter_are_registry_ready() -> None:
     gym = TicketGym.from_fixture()
     names = {tool.name for tool in gym.tools()}
