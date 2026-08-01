@@ -125,15 +125,15 @@ export async function openRunContext(
   expectedRunId: string,
   now = Date.now(),
 ): Promise<RunContextResult> {
-  if (!token) return { detail: "실행 정보를 찾을 수 없습니다.", ok: false, status: 404 };
+  if (!token) return { detail: "실행 정보를 찾을 수 없어요.", ok: false, status: 404 };
   const parts = token.split(".");
   if (parts.length !== 3 || parts[0] !== `v${CONTEXT_VERSION}`) {
-    return { detail: "실행 정보를 확인할 수 없습니다.", ok: false, status: 400 };
+    return { detail: "실행 정보를 확인할 수 없어요.", ok: false, status: 400 };
   }
   const iv = decodeBase64Url(parts[1]);
   const ciphertext = decodeBase64Url(parts[2]);
   if (!iv || iv.length !== 12 || !ciphertext || ciphertext.length <= 16) {
-    return { detail: "실행 정보를 확인할 수 없습니다.", ok: false, status: 400 };
+    return { detail: "실행 정보를 확인할 수 없어요.", ok: false, status: 400 };
   }
 
   let envelope: Partial<RunContextEnvelope>;
@@ -150,14 +150,14 @@ export async function openRunContext(
     );
     envelope = JSON.parse(new TextDecoder().decode(plaintext)) as Partial<RunContextEnvelope>;
   } catch {
-    return { detail: "실행 정보를 확인할 수 없습니다.", ok: false, status: 401 };
+    return { detail: "실행 정보를 확인할 수 없어요.", ok: false, status: 401 };
   }
   if (
     envelope.version !== CONTEXT_VERSION
     || envelope.run_id !== expectedRunId
     || envelope.context?.runId !== expectedRunId
   ) {
-    return { detail: "실행 정보를 찾을 수 없습니다.", ok: false, status: 404 };
+    return { detail: "실행 정보를 찾을 수 없어요.", ok: false, status: 404 };
   }
   if (
     !Number.isInteger(envelope.issued_at)
@@ -165,13 +165,13 @@ export async function openRunContext(
     || Number(envelope.expires_at) <= Number(envelope.issued_at)
     || Number(envelope.expires_at) - Number(envelope.issued_at) > MAX_TTL_MS
   ) {
-    return { detail: "실행 정보를 확인할 수 없습니다.", ok: false, status: 400 };
+    return { detail: "실행 정보를 확인할 수 없어요.", ok: false, status: 400 };
   }
   if (now >= Number(envelope.expires_at)) {
-    return { detail: "실행 정보가 만료됐습니다. 새 실험을 시작해 주세요.", ok: false, status: 410 };
+    return { detail: "실행 정보가 만료됐어요. 새 실험을 시작해 주세요.", ok: false, status: 410 };
   }
   if (!validContext(envelope.context, expectedRunId)) {
-    return { detail: "실행 정보를 확인할 수 없습니다.", ok: false, status: 400 };
+    return { detail: "실행 정보를 확인할 수 없어요.", ok: false, status: 400 };
   }
   return { context: envelope.context, ok: true };
 }
