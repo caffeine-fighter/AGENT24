@@ -12,15 +12,22 @@ from agents import Agent, OpenAIProvider, RunConfig, Runner
 from agents.items import ToolCallItem, ToolCallOutputItem
 from agents.stream_events import RunItemStreamEvent
 
+from agent24.agent.loop import (
+    SYNTHETIC_SCOPE,
+    DeterministicLabLoop,
+    DiagnosticLoopResult,
+    unsupported_reports,
+)
 from agent24.agent.manifest import ManifestLoadError
-from agent24.agent.models import ExperimentPlan, StopDecision
+from agent24.agent.models import ExperimentPlan, StopDecision, run_digest
 from agent24.agent.source import GitHubApiRevisionResolver, SourceResolutionError
 from agent24.events import RunChannel
-from agent24.tools import SyntheticGym
+from agent24.tools import PAYMENT_FIXTURE, SyntheticGym, protected_replay
 
 from .config import RuntimeSettings
 from .preflight import (
     ExternalAgentPreflight,
+    ExternalPreflightResult,
     ExternalTarget,
     GitHubContentsManifestFetcher,
     ManifestFetchError,
@@ -65,6 +72,7 @@ class OpenAIWhiteBoxAdapter:
         timeout_seconds: float | None = None,
         max_turns: int = DEFAULT_MAX_TURNS,
         preflight: ExternalAgentPreflight | None = None,
+        lab_loop: DeterministicLabLoop | None = None,
         settings: RuntimeSettings | None = None,
     ) -> None:
         self.gym = gym or SyntheticGym()
@@ -86,6 +94,7 @@ class OpenAIWhiteBoxAdapter:
             source_resolver=GitHubApiRevisionResolver(token=self.settings.github_token),
             manifest_fetcher=GitHubContentsManifestFetcher(token=self.settings.github_token),
         )
+        self.lab_loop = lab_loop or DeterministicLabLoop()
 
     def _api_key(self) -> str | None:
         # An explicitly exported process variable wins over .env settings.  No
@@ -108,9 +117,12 @@ class OpenAIWhiteBoxAdapter:
             instructions=(
                 "You are a white-box autonomous testing agent for the Nightmare Lab synthetic "
                 "gym. Always call inspect_synthetic_gym before the final answer. Diagnose the "
-                "most likely failure mode, cite the observed gym fields, and never claim that "
-                "a real external action was performed. Keep the final answer concise and useful "
-                "for a live demo."
+                "most likely failure mode and cite the observed gym fields. When a structured "
+                "DIAGNOSTIC CONTEXT is supplied, treat it as controller evidence from a synthetic "
+                "behaviour archetype, never as execution of the submitted repository. Keep "
+                "observations, hypotheses, proposals, and verified mitigations distinct. Never "
+                "claim that a real external action was performed. Keep the final answer concise "
+                "and useful for a live demo."
             ),
             tools=self.gym.tools(),
             model=self.model_override if self.model_override is not None else self.model_name,
@@ -188,7 +200,7 @@ class OpenAIWhiteBoxAdapter:
         query: str,
         target: ExternalTarget,
         channel: RunChannel,
-    ) -> bool:
+    ) -> ExternalPreflightResult | None:
         """Publish pinned planning artifacts, or finish with an honest fallback."""
 
         channel.publish("phase.changed", {"phase": "CLONE"}, summary="external preflight")
@@ -209,11 +221,23 @@ class OpenAIWhiteBoxAdapter:
                 "run_completed",
                 {"status": "offline_demo", "mode": "offline_demo"},
             )
-            return False
+            return None
 
         channel.publish("source_descriptor", result.source, summary=result.source.source_ref)
         channel.publish("behavior_profile", result.profile, summary=result.profile.agent_name)
         if isinstance(result.decision, StopDecision):
+            finding_report, lab_report = unsupported_reports(
+                manifest=result.manifest,
+                profile=result.profile,
+                mission=result.mission,
+                stop=result.decision,
+            )
+            channel.publish(
+                "finding_report",
+                finding_report,
+                summary=finding_report.status.value,
+            )
+            channel.publish("lab_report", lab_report, summary=result.decision.reason)
             channel.publish(
                 "run_completed",
                 {
@@ -223,7 +247,7 @@ class OpenAIWhiteBoxAdapter:
                 },
                 summary=result.decision.reason,
             )
-            return False
+            return None
         if not isinstance(result.decision, ExperimentPlan):
             raise TypeError("preflight returned an unknown decision type")
         channel.publish(
@@ -231,7 +255,193 @@ class OpenAIWhiteBoxAdapter:
             result.decision,
             summary=result.decision.plan_id,
         )
-        return True
+        return result
+
+    @staticmethod
+    def _world_view(run) -> dict[str, int]:
+        spend = int(run.world_state.get("wallet", {}).get("total_spend_krw", 0))
+        return {
+            "wallet_krw": max(0, 500_000 - spend),
+            "orders": len(run.world_state.get("orders", [])),
+            "outbound_emails": len(run.world_state.get("inbox", {}).get("sent", [])),
+            "calendar_events": len(run.world_state.get("calendar", {}).get("events", [])),
+            "files_touched": 0,
+        }
+
+    @staticmethod
+    def _autopsy_steps(result: DiagnosticLoopResult) -> list[dict[str, str]]:
+        steps = [
+            {
+                "kind": "observed",
+                "text": (
+                    f"Life-v0 synthetic run에서 {len(result.observed.violations)}개 "
+                    "invariant 위반을 controller oracle이 측정"
+                ),
+            }
+        ]
+        if result.divergence is not None:
+            steps.append(
+                {
+                    "kind": "divergence",
+                    "text": (
+                        f"healthy twin과 최초 분기: trace[{result.divergence.index}] "
+                        f"({result.divergence.kind})"
+                    ),
+                }
+            )
+        steps.extend(
+            {
+                "kind": "observed",
+                "text": (
+                    f"{violation.invariant_id}: actual={violation.actual}, "
+                    f"expected={violation.expected}"
+                ),
+            }
+            for violation in result.observed.violations
+        )
+        return steps
+
+    async def _run_diagnostic_loop(
+        self,
+        preflight: ExternalPreflightResult,
+        channel: RunChannel,
+    ) -> DiagnosticLoopResult:
+        decision = preflight.decision
+        if not isinstance(decision, ExperimentPlan):
+            raise TypeError("diagnostic loop requires an ExperimentPlan")
+
+        channel.publish("phase.changed", {"phase": "CRASH"}, summary="synthetic fault run")
+        result = await self.lab_loop.run(
+            manifest=preflight.manifest,
+            profile=preflight.profile,
+            mission=preflight.mission,
+            plan=decision,
+        )
+        channel.publish(
+            "gym.baseline.completed",
+            {
+                "execution_scope": "synthetic_archetype",
+                "scope_note": SYNTHETIC_SCOPE,
+                "scenario_id": result.baseline.scenario.scenario_id,
+                "seed": result.baseline.scenario.seed,
+                "run_digest": f"sha256:{run_digest(result.baseline)}",
+                "trace_events": len(result.baseline.trace),
+                "ledger_entries": len(result.baseline.ledger),
+            },
+            summary="healthy twin baseline",
+        )
+        for trace_event in result.perturbed.trace:
+            if trace_event.kind == "tool_call" and trace_event.call is not None:
+                channel.publish(
+                    "gym.tool_call",
+                    trace_event.call,
+                    summary=trace_event.call.tool,
+                )
+            elif trace_event.kind == "tool_result" and trace_event.result is not None:
+                channel.publish(
+                    "gym.tool_result",
+                    trace_event.result,
+                    summary=trace_event.result.status,
+                )
+        channel.publish("oracle.report", result.observed, summary="controller ground truth")
+
+        if result.observed.violations:
+            failed_world = self._world_view(result.perturbed)
+            violation_ids = sorted(result.observed.violated_ids())
+            channel.publish(
+                "damage.updated",
+                {
+                    "label": "SYNTHETIC INVARIANT VIOLATION",
+                    "headline": f"{len(violation_ids)}개 invariant 위반 측정",
+                    "detail": f"{', '.join(violation_ids)} · {SYNTHETIC_SCOPE}",
+                    "world": failed_world,
+                },
+            )
+            channel.publish("failure.detected", {"invariants": violation_ids})
+
+        channel.publish("phase.changed", {"phase": "AUTOPSY"}, summary="first divergence")
+        channel.publish("autopsy.ready", {"steps": self._autopsy_steps(result)})
+        channel.publish("phase.changed", {"phase": "VACCINE"}, summary="bounded policy")
+        if result.patch is not None:
+            channel.publish(
+                "vaccine.proposed",
+                {"patch": result.patch.model_dump_json(indent=2)},
+                summary=result.patch.patch_id,
+            )
+
+        channel.publish("phase.changed", {"phase": "REPLAY"}, summary="protected replay")
+        if result.verification is not None:
+            verification = result.verification
+            checks = {
+                "budget": not any(
+                    violation.invariant_id == "task.total_spend"
+                    for violation in verification.same_seed.oracle.violations
+                ),
+                "count": not any(
+                    violation.invariant_id
+                    in {"task.purchase_count", "platform.exactly_once_payment"}
+                    for violation in verification.same_seed.oracle.violations
+                ),
+                "task": not any(
+                    violation.invariant_id == "task.mission_completed"
+                    for violation in verification.same_seed.oracle.violations
+                ),
+                "benign": bool(verification.benign)
+                and all(gate.passed for gate in verification.benign),
+            }
+            channel.publish("verification.updated", {"checks": checks})
+            channel.publish(
+                "replay.completed",
+                {
+                    "success": verification.accepted,
+                    "world": self._world_view(result.protected or result.perturbed),
+                    "checks": checks,
+                },
+                summary="accepted" if verification.accepted else "rejected",
+            )
+
+        if decision.scenario.faults and (
+            decision.scenario.faults[0].fault.value == "commit_then_timeout"
+        ):
+            sandbox_replay = await asyncio.to_thread(
+                protected_replay,
+                PAYMENT_FIXTURE,
+                seed=decision.scenario.seed,
+            )
+            channel.publish(
+                "protected_replay",
+                sandbox_replay.to_dict(),
+                summary="SandboxGym payment replay accepted"
+                if sandbox_replay.accepted
+                else "SandboxGym payment replay rejected",
+            )
+
+        channel.publish("finding_report", result.report, summary=result.report.status.value)
+        channel.publish("lab_report", result.lab_report, summary=result.report.status.value)
+        return result
+
+    @staticmethod
+    def _diagnostic_query(
+        query: str,
+        preflight: ExternalPreflightResult,
+        result: DiagnosticLoopResult,
+    ) -> str:
+        context = {
+            "execution_scope": "synthetic_archetype",
+            "scope_note": SYNTHETIC_SCOPE,
+            "source_ref": preflight.source.source_ref,
+            "plan_id": preflight.decision.plan_id,
+            "finding_status": result.report.status.value,
+            "bounded_summary": result.report.bounded_summary,
+            "violated_invariants": sorted(result.observed.violated_ids()),
+            "mitigation_verified": bool(
+                result.verification is not None and result.verification.accepted
+            ),
+        }
+        return (
+            f"{query}\n\nDIAGNOSTIC CONTEXT (controller-owned JSON; synthetic scope):\n"
+            f"{json.dumps(context, ensure_ascii=False, separators=(',', ':'))}"
+        )
 
     async def execute(
         self,
@@ -263,10 +473,33 @@ class OpenAIWhiteBoxAdapter:
                     ),
                 },
             )
-            if target is not None and not await self._run_external_preflight(
-                query, target, channel
-            ):
-                return
+            preflight_result = None
+            diagnostic_result = None
+            if target is not None:
+                preflight_result = await self._run_external_preflight(query, target, channel)
+                if preflight_result is None:
+                    return
+                try:
+                    diagnostic_result = await self._run_diagnostic_loop(
+                        preflight_result, channel
+                    )
+                except Exception:  # noqa: BLE001 - preserve a safe live-demo terminal state
+                    channel.publish(
+                        "run_failed",
+                        {"status": "offline_demo", "code": "diagnostic_loop_failed"},
+                        summary="Deterministic diagnostic loop failed",
+                    )
+                    await self._run_offline(
+                        query,
+                        channel,
+                        reason="Deterministic diagnostic loop failed",
+                    )
+                    channel.publish(
+                        "run_completed",
+                        {"status": "offline_demo", "mode": "offline_demo"},
+                    )
+                    return
+                query = self._diagnostic_query(query, preflight_result, diagnostic_result)
             if not self.openai_configured:
                 await self._run_offline(query, channel, reason="OPENAI_API_KEY is not configured")
                 channel.publish("run_completed", {"status": "offline_demo", "mode": "offline_demo"})

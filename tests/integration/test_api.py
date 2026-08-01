@@ -313,28 +313,94 @@ def test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl(
 
     assert events == _jsonl_events(tmp_path, metadata["run_id"])
     assert [event["seq"] for event in events] == list(range(len(events)))
-    assert [event["type"] for event in events] == [
+    event_types = [event["type"] for event in events]
+    assert event_types == [
         "run_started",
         "phase.changed",
         "source_descriptor",
         "behavior_profile",
         "experiment_plan",
+        "phase.changed",
+        "gym.baseline.completed",
+        "gym.tool_call",
+        "gym.tool_result",
+        "gym.tool_call",
+        "gym.tool_result",
+        "gym.tool_call",
+        "gym.tool_result",
+        "gym.tool_call",
+        "gym.tool_result",
+        "oracle.report",
+        "damage.updated",
+        "failure.detected",
+        "phase.changed",
+        "autopsy.ready",
+        "phase.changed",
+        "vaccine.proposed",
+        "phase.changed",
+        "verification.updated",
+        "replay.completed",
+        "protected_replay",
+        "finding_report",
+        "lab_report",
         "offline_demo",
         "tool_call",
         "tool_result",
         "final_output",
         "run_completed",
     ]
-    source = events[2]["payload"]
-    profile = events[3]["payload"]
-    plan = events[4]["payload"]
+    source = next(event["payload"] for event in events if event["type"] == "source_descriptor")
+    profile = next(event["payload"] for event in events if event["type"] == "behavior_profile")
+    plan = next(event["payload"] for event in events if event["type"] == "experiment_plan")
     assert source["resolved_sha"] == PINNED_SHA
     assert source["requested_ref"] == "main"
     assert profile["source_ref"] == f"example/cake-agent@{PINNED_SHA}"
     assert profile["baseline_observed"] is False
     assert plan["scenario"]["faults"][0]["fault"] == "commit_then_timeout"
     assert plan["scenario"]["faults"][0]["target_tool"] == "payment.charge"
+    finding = next(event["payload"] for event in events if event["type"] == "finding_report")
+    lab_report = next(event["payload"] for event in events if event["type"] == "lab_report")
+    sandbox_replay = next(
+        event["payload"] for event in events if event["type"] == "protected_replay"
+    )
+    assert finding["status"] == "verified_mitigation"
+    assert finding["reproduction_count"] == finding["reproduction_total"] == 3
+    assert finding["evidence"]
+    assert "외부 저장소 코드는 실행하지 않았으며" in finding["residual_risk"][0]
+    assert lab_report["findings"][0]["verified"]["accepted"] is True
+    assert lab_report["termination"]["reason"] == "coverage_complete"
+    assert sandbox_replay["accepted"] is True
+    assert sandbox_replay["perturbed"]["charge_count"] == 2
+    assert sandbox_replay["protected"]["charge_count"] == 1
     assert events[-1]["payload"]["mode"] == "offline_demo"
+
+
+def test_live_target_passes_bounded_synthetic_evidence_to_openai(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-only-key")
+    import agents.models.openai_provider as provider_module
+
+    monkeypatch.setattr(provider_module, "AsyncOpenAI", _MockedOpenAIClient)
+    runtime = OpenAIWhiteBoxAdapter(preflight=_external_preflight())
+    app = create_app(runtime=runtime, artifact_root=tmp_path)
+
+    with TestClient(app) as client:
+        accepted = client.post(
+            "/api/runs",
+            json={"input": "one input", "target": _target_payload()},
+        )
+        events = _sse_data(client.get(accepted.json()["events_url"]).text)
+
+    assert events[-1]["payload"] == {"status": "completed", "mode": "live"}
+    assert _MockedOpenAIClient.last is not None
+    first_request = _MockedOpenAIClient.last.requests[0]
+    model_input = first_request["input"][0]["content"]
+    assert "DIAGNOSTIC CONTEXT" in model_input
+    assert '"execution_scope":"synthetic_archetype"' in model_input
+    assert f"example/cake-agent@{PINNED_SHA}" in model_input
+    assert '"finding_status":"verified_mitigation"' in model_input
+    assert "test-only-key" not in model_input
 
 
 def test_source_preflight_failure_falls_back_without_target_claims(
@@ -371,6 +437,37 @@ def test_source_preflight_failure_falls_back_without_target_claims(
     assert events[-1]["payload"] == {"status": "offline_demo", "mode": "offline_demo"}
 
 
+class _FailingLabLoop:
+    async def run(self, **_kwargs):
+        raise RuntimeError("provider-secret-must-not-leak")
+
+
+def test_diagnostic_failure_is_sanitized_and_falls_back(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    runtime = OpenAIWhiteBoxAdapter(
+        preflight=_external_preflight(),
+        lab_loop=_FailingLabLoop(),
+        settings=RuntimeSettings(openai_api_key=None),
+    )
+    app = create_app(runtime=runtime, artifact_root=tmp_path)
+
+    with TestClient(app) as client:
+        accepted = client.post(
+            "/api/runs",
+            json={"input": "one input", "target": _target_payload()},
+        )
+        events = _sse_data(client.get(accepted.json()["events_url"]).text)
+
+    failure = next(event for event in events if event["type"] == "run_failed")
+    assert failure["payload"] == {
+        "status": "offline_demo",
+        "code": "diagnostic_loop_failed",
+    }
+    rendered = json.dumps(events, ensure_ascii=False)
+    assert "provider-secret-must-not-leak" not in rendered
+    assert events[-1]["payload"] == {"status": "offline_demo", "mode": "offline_demo"}
+
+
 def test_unsupported_manifest_stops_without_inventing_an_experiment(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -393,8 +490,16 @@ def test_unsupported_manifest_stops_without_inventing_an_experiment(
         "phase.changed",
         "source_descriptor",
         "behavior_profile",
+        "finding_report",
+        "lab_report",
         "run_completed",
     ]
+    finding = next(event["payload"] for event in events if event["type"] == "finding_report")
+    lab_report = next(event["payload"] for event in events if event["type"] == "lab_report")
+    assert finding["status"] == "unsupported"
+    assert finding["unsupported_scope"] == ["unsupported:vendor.transfer"]
+    assert lab_report["findings"] == []
+    assert lab_report["termination"]["reason"] == "unsupported_input"
     assert events[-1]["payload"]["status"] == "unsupported"
     assert "gym 어휘 밖" in events[-1]["payload"]["message"]
 
