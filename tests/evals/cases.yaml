@@ -11,18 +11,18 @@ cases:
   # Lab Agent cases (issues #3 and #4).  These drive pytest directly rather than
   # the event stream, so they carry `issue` / `command` / `expectation` instead
   # of the runtime cases' `input` / `expected_event_types` keys above.
-  - id: policy-normal-purchase
-    issue: 3
-    command: "pytest tests/integration/test_policy_pipeline.py::test_normal_mission_yields_valid_ranked_plans -q"
-    expectation: "schema-valid plans; every plan has reason + expected evidence"
-  - id: policy-ambiguous-mission
-    issue: 3
-    command: "pytest tests/integration/test_policy_pipeline.py::test_ambiguous_mission_flags_inferred_invariants -q"
-    expectation: "inferred invariants marked inferred=true; no fabricated constraints"
-  - id: policy-unsupported-family
-    issue: 3
-    command: "pytest tests/integration/test_policy_pipeline.py::test_unsupported_family_terminates_honestly -q"
-    expectation: "stop reason unsupported_input; findings empty; unsupported_scope populated"
+  - id: planner-normal
+    issue: 22
+    command: "pytest tests/integration/test_planner_pipeline.py::test_normal_profile_selects_commit_then_timeout_and_reproduces_it -q"
+    expectation: "observed idempotency_usage=absent drives commit_then_timeout on payment.charge; the plan reproduces a duplicate charge in the ledger"
+  - id: planner-ambiguous
+    issue: 22
+    command: "pytest tests/integration/test_planner_pipeline.py::test_ambiguous_profile_still_plans_and_names_its_unknown_basis -q"
+    expectation: "unknown capabilities still yield a plan, and the reason states the basis is an unobserved gap rather than a confirmed weakness"
+  - id: planner-unsupported
+    issue: 22
+    command: "pytest tests/integration/test_planner_pipeline.py::test_unsupported_tooling_terminates_without_inventing_an_experiment -q"
+    expectation: "tools outside the gym vocabulary stop with reason unsupported_input; no substitute experiment and no fabricated finding"
   - id: oracle-duplicate-payment
     issue: 4
     command: "pytest tests/integration/test_full_loop.py::test_duplicate_payment_end_to_end -q"
