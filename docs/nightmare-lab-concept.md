@@ -1,6 +1,6 @@
 # NIGHTMARE LAB — Agent Failure Scientist
 
-> Status: D0 product truth, D1 external-Agent contract, D2 frontend journey, and D3 shared interface ratified · 2026-08-01 · D4–D6 remain open or deferred.
+> Status: D0 product truth, D1 external-Agent contract, D2 frontend journey, D3 shared interface, and D4 integration acceptance ratified · 2026-08-01 · D5–D6 remain open or deferred.
 
 ## Ratification status
 
@@ -10,9 +10,11 @@ ratified external-Agent boundary lives in
 frontend journey lives in
 [`frontend-journey-contract.md`](frontend-journey-contract.md). The ratified shared
 HTTP, event, terminal, and migration wire lives in
-[`../web/event-contract.md`](../web/event-contract.md). Sections outside those
+[`../web/event-contract.md`](../web/event-contract.md), and the ratified integrated
+slice acceptance lives in
+[`integration-acceptance.md`](integration-acceptance.md). Sections outside those
 boundaries describe system capabilities or future design space; they do not silently
-decide the open D4–D6 gates.
+decide the open D5–D6 gates.
 
 | Gate | Status | Authority of this document |
 |---|---|---|
@@ -20,7 +22,7 @@ decide the open D4–D6 gates.
 | D1 · External-Agent product contract | **Ratified** | Input, support, provenance, execution, outcome, evidence, experiment, fallback, and compatibility meanings are binding through the external-Agent contract |
 | D2 · Frontend journey | **Ratified** | R1–R4 journey, hierarchy, visible states, fallback separation, and material visual character are binding through the frontend journey contract |
 | D3 · Shared interface | **Ratified** | Versioned request/response/error/event envelopes, origin semantics, one terminal, reconnect behavior, and legacy migration are binding through the event contract |
-| D4 · Integration acceptance | Open | Relevant sections are context or proposals until Rekhet ratifies the integrated-slice gate |
+| D4 · Integration acceptance | **Ratified** | Same-origin production slice, successful evidence chain, honest boundaries, and independent-proof policy are binding through the integration-acceptance contract |
 | D5–D6 · Detailed testing and presentation | Deferred | Exact matrices, repetitions, thresholds, and presentation artifacts are intentionally not fixed here |
 
 ## 한 문장 제품 약속

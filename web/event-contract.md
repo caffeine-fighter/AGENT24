@@ -410,6 +410,10 @@ wire envelope unchanged:
 
 ## Contract acceptance checks
 
+The D3 wire checks below are necessary but not sufficient for the ratified D4
+integrated-slice acceptance in
+[`../docs/integration-acceptance.md`](../docs/integration-acceptance.md).
+
 - Canonical requests contain repository, required ref, mission, and no credential or duplicate input.
 - All boundary failures use typed `422` errors and create no run or fixture.
 - Accepted responses and event envelopes carry the approved schema versions.

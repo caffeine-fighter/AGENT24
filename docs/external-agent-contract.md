@@ -250,6 +250,10 @@ manifest, payment replay checks를 처음 모두 통과한 commit으로 정한�
 
 ## Implementation acceptance
 
+The exact D4 integrated-slice pass meaning is ratified in
+[`integration-acceptance.md`](integration-acceptance.md). The checklist below remains
+the D1 product-boundary input to that audit.
+
 - [ ] One submission contains repository, effective ref, mission and no credential.
 - [ ] Private repositories remain unsupported even when server credentials could access them.
 - [ ] Ref is resolved once and full provenance is retained.
