@@ -4,7 +4,7 @@ export default function Home() {
       <iframe
         className="demo-frame"
         src="/demo/index.html"
-        title="NIGHTMARE LAB live agent crash-test console"
+        title="NIGHTMARE LAB AI 에이전트 안전 실험 화면"
       />
     </main>
   );
