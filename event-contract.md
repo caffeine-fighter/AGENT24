@@ -98,6 +98,10 @@ Lab Agent가 내보내는 아래 의미 이벤트도 같은 envelope를 사용�
 | `verification.updated` | 검증 조건 부분 갱신 |
 | `replay.completed` | 보호 후 상태와 목표 성공 여부 표시 |
 | `source_descriptor` | immutable `SourceDescriptor` provenance와 live resolved SHA 표시 |
+| `source_snapshot` | 실제로 확인한 파일 범위·취득 방식·content/blob digest와 claim boundary 표시 |
+| `target_profile` | `OWNER MANIFEST` 또는 `LAB-INFERRED STATIC PROFILE` provenance와 domain candidate 표시 |
+| `pack_selection` | compatibility 상태, selected/candidate domain, WHY/EXPECT/evidence, 0-experiment fallback 표시 |
+| `compatibility_report` | target code를 실행하지 않은 compatibility-only terminal report와 claim boundary 표시 |
 | `behavior_profile` | `profile.BehaviorProfile`의 다섯 판정과 evidence/unknown reason 표시 |
 | `pack.selected` | 어떤 domain Gym을 고를지에 대한 결정적 routing 판단과 그 근거 표시 |
 | `experiment_plan` | typed `ExperimentPlan`의 선택 fault·근거·기대 evidence·budget 표시 |
@@ -112,6 +116,21 @@ Lab Agent가 내보내는 아래 의미 이벤트도 같은 envelope를 사용�
 `model_dump(mode="json")` 결과입니다. `source: live`이면서 `resolved_sha`가 40자 이상의
 full hexadecimal SHA일 때만 상단 target에 반영합니다. fixture/short SHA는 실제 resolve
 결과로 승격하지 않고 Raw Stream에서만 감사할 수 있습니다.
+
+`target_profile.payload`는
+`src/agent24/agent/participant_intake.py::ParticipantTargetProfile`의 JSON이다.
+`provenance.origin`과 화면 레이블은 owner 선언과 Lab static 추론을 구분한다. static
+evidence는 path, full source SHA, Git blob SHA, line selector만 포함하며 source 본문이나
+target failure claim을 포함하지 않는다.
+
+`pack_selection.payload`는 compatibility candidate를 #57 registry에 전달하는 seam이다.
+static-only path에서는 `max_experiments=0`, `fallback=terminal_compatibility_only`이며
+항상 compatibility-only다. owner manifest 경로에서도 이 이벤트는 provenance hand-off일 뿐,
+실행 결정은 뒤따르는 별도 `pack.selected` payload가 소유한다.
+
+`compatibility_report.payload`는 `experiments_run=0`, `findings=[]`를 schema로 강제한다.
+Research candidate 같은 compatibility 주장을 실제 target vulnerability나 safety verdict로
+표현하지 않도록 `claim_boundary`를 함께 표시한다.
 
 `behavior_profile.payload`는 `src/agent24/agent/profile.py::BehaviorProfile`의
 `model_dump(mode="json")` 결과입니다. live 이벤트의 `source_ref` 끝에 immutable hex SHA가
@@ -157,6 +176,10 @@ version에서 동일합니다. `why` / `expect` / `budget` / `fallback`은 표�
 - `run_completed` → `run.completed`
 - `run_failed` → `run.failed`
 - `source_descriptor` → `source.descriptor`
+- `source_snapshot` → `source.snapshot`
+- `target_profile` → `target.profile`
+- `pack_selection` → `pack.compatibility`
+- `compatibility_report` → `compatibility.report`
 - `payload` → 상태 해석용 `data`
 - `payload` → Raw Stream 표시용 `raw` — 객체 내용은 변경하지 않음
 - wire 타입은 `wire_type`에 별도로 보존
