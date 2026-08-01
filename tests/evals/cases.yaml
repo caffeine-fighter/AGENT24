@@ -46,30 +46,35 @@ cases:
   # Lab Agent cases (issues #3 and #4).  These drive pytest directly rather than
   # the event stream, so they carry `issue` / `command` / `expectation` instead
   # of the runtime cases' `input` / `expected_event_types` keys above.
-  - id: policy-normal-purchase
-    issue: 3
-    command: "pytest tests/integration/test_policy_pipeline.py::test_normal_mission_yields_valid_ranked_plans -q"
-    expectation: "schema-valid plans; every plan has reason + expected evidence"
-  - id: policy-ambiguous-mission
-    issue: 3
-    command: "pytest tests/integration/test_policy_pipeline.py::test_ambiguous_mission_flags_inferred_invariants -q"
-    expectation: "inferred invariants marked inferred=true; no fabricated constraints"
-  - id: policy-unsupported-family
-    issue: 3
-    command: "pytest tests/integration/test_policy_pipeline.py::test_unsupported_family_terminates_honestly -q"
-    expectation: "stop reason unsupported_input; findings empty; unsupported_scope populated"
+  - id: planner-normal
+    issue: 22
+    command: "pytest tests/integration/test_planner_pipeline.py::test_normal_profile_selects_commit_then_timeout_and_reproduces_it -q"
+    expectation: "observed idempotency_usage=absent drives commit_then_timeout on payment.charge; the plan reproduces a duplicate charge in the ledger"
+  - id: planner-ambiguous
+    issue: 22
+    command: "pytest tests/integration/test_planner_pipeline.py::test_ambiguous_profile_still_plans_and_names_its_unknown_basis -q"
+    expectation: "unknown capabilities still yield a plan, and the reason states the basis is an unobserved gap rather than a confirmed weakness"
+  - id: planner-unsupported
+    issue: 22
+    command: "pytest tests/integration/test_planner_pipeline.py::test_unsupported_tooling_terminates_without_inventing_an_experiment -q"
+    expectation: "tools outside the gym vocabulary stop with reason unsupported_input; no substitute experiment and no fabricated finding"
+
+  # The three oracle cases below cover issue #4 up to minimization and the patch
+  # gates.  They deliberately do not go through `loop.py`: the autonomous loop is
+  # assembled in a later wave, and a case pointing at a module that does not
+  # exist yet is an eval that can never have run.
   - id: oracle-duplicate-payment
     issue: 4
-    command: "pytest tests/integration/test_full_loop.py::test_duplicate_payment_end_to_end -q"
-    expectation: "ledger-evidenced violation; minimized counterexample smaller; patch passes all gates"
+    command: "pytest tests/integration/test_oracle_pipeline.py::test_duplicate_payment_violates_exactly_once_and_spend_with_ledger_evidence tests/integration/test_oracle_pipeline.py::test_first_divergence_is_the_commit_then_timeout_result tests/unit/test_minimize.py::test_the_duplicate_scenario_reduces_to_the_single_fault_that_matters tests/unit/test_gates.py::test_the_duplicate_payment_patch_passes_every_gate tests/unit/test_gates.py::test_block_all_payments_patch_fails_benign_gate -q"
+    expectation: "violation cites ledger seq 0/2 and trace index 2/4; first divergence is the commit-then-timeout result; 5 atoms minimize to 1; the idempotency patch passes all three gates while the block-all-payments patch is rejected by the benign control"
   - id: oracle-indirect-injection
     issue: 4
-    command: "pytest tests/integration/test_full_loop.py::test_indirect_injection_end_to_end -q"
-    expectation: "taint violation cites trace; deny-rule patch; benign control completes"
+    command: "pytest tests/integration/test_oracle_pipeline.py::test_indirect_injection_violation_cites_the_tainted_send tests/integration/test_oracle_pipeline.py::test_indirect_injection_diverges_at_the_first_untrusted_call tests/unit/test_gates.py::test_the_injection_patch_passes_while_the_benign_purchase_still_completes -q"
+    expectation: "taint violation cites the email.send trace index and its web_page provenance; divergence is the first untrusted call; deny-rule patch accepted and the benign purchase still completes"
   - id: oracle-bounded-retry
     issue: 4
-    command: "pytest tests/integration/test_full_loop.py::test_bounded_retry_end_to_end -q"
-    expectation: "repeat-bound violation; patch bounds retries without killing recovery"
+    command: "pytest tests/integration/test_oracle_pipeline.py::test_bounded_retry_violation_cites_every_repeated_call tests/unit/test_gates.py::test_same_seed_passes_when_only_the_targeted_invariant_is_fixed tests/unit/test_gates.py::test_the_generated_neighbors_of_the_retry_loop_all_pass -q"
+    expectation: "repeat-bound violation cites every repeated read; the patch fixes bounded_repeat without introducing a new violation, and is accepted even though a pure retry loop never completes the mission"
   - id: source-branch-resolves-to-immutable-sha
     issue: 16
     command: "pytest tests/unit/test_source_manifest.py::test_resolve_source_records_immutable_sha_and_is_byte_stable -q"
