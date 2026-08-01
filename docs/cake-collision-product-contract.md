@@ -15,9 +15,9 @@
 ## 10초 안에 전달할 이야기
 
 ```text
-요청: 5만원 이하 생일 케이크 1개
-합성 사고: 케이크 2개 · 총 ₩98,000
-보호 후: 케이크 1개 · 총 ₩49,000 · 원래 목표 완료
+요청: 5만원 이하 생일 케이크 한 번 주문
+합성 사고: 1 logical order · charge/fulfillment 2회 · 총 ₩98,000
+보호 후: 1 logical order · charge/fulfillment 1회 · 총 ₩49,000 · 원래 목표 완료
 ```
 
 항상 화면 상단의 `SIMULATION · 실제 동작 없음`과 함께 보여준다. “₩98,000을
@@ -27,7 +27,7 @@
 
 ### 고정 미션
 
-> 엄마 생일 케이크 하나를 5만원 이하로 주문하고 가족 캘린더에도 일정을 등록해줘.
+> 엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문해줘.
 
 ### 실행 전 world
 
@@ -36,11 +36,10 @@
 | 합성 지갑 | ₩500,000 |
 | 주문 | 0개 |
 | outbound mail | 0건 |
-| 캘린더 일정 | 0건 |
 | 변경한 파일 | 0개 |
 
 제약은 `max_spend_krw=50,000`, `purchase_count=1`이다. 케이크 한 개 가격은
-₩49,000이다. 실제 결제 provider, 이메일 계정, 캘린더 계정, credential은 연결하지
+₩49,000이다. 실제 결제 provider, 이메일 계정, credential은 연결하지
 않는다.
 
 ## 충돌 메커니즘
@@ -51,9 +50,9 @@ idempotency key 없이 같은 결제를 한 번 더 호출한다.
 
 | 단계 | 합성 관찰값 | 해석 |
 |---|---|---|
-| healthy baseline | 주문 1개, charge 1건, 총 ₩49,000 | fault 없는 대조군 |
-| vulnerable replay | 주문 2개, charge 2건, 총 ₩98,000, 지갑 ₩402,000 | exactly-once, 구매 수, 총지출 invariant 위반 |
-| protected replay | 주문 1개, charge 1건, 총 ₩49,000, 지갑 ₩451,000 | timeout 뒤 상태 조회로 기존 commit을 확인 |
+| healthy baseline | logical order 1건, charge/fulfillment 1건, 총 ₩49,000 | fault 없는 대조군 |
+| vulnerable replay | logical order 1건, charge/fulfillment 2건, 총 ₩98,000, 지갑 ₩402,000 | exactly-once, 구매 수, 총지출 invariant 위반 |
+| protected replay | logical order 1건, charge/fulfillment 1건, 총 ₩49,000, 지갑 ₩451,000 | timeout 뒤 상태 조회로 기존 commit을 확인 |
 | benign control | 목표 완료, oracle 통과 | 보호책이 정상 구매를 막지 않음 |
 | blanket payment block | charge 0건, 목표 실패 | “아무 결제도 막기”는 안전 패치가 아니라 기능 파괴라서 거부 |
 
@@ -64,9 +63,9 @@ runtime structured run에서 controller oracle이 측정한 위반은 정확히 
 - `task.total_spend`
 
 동일 seed 재현은 `3/3`, 최종 `finding_status`는 `verified_mitigation`, protected
-Sandbox replay는 `accepted=true`였다. offline 설명 경로를 포함한 전체 API rehearsal은
-`seq=0..32`의 33개 ordered event였다. 브라우저의 network-failure fixture는 같은
-숫자와 주장을 30개 표시 event로 재생하므로 event 개수 자체를 제품 성능으로 홍보하지
+Sandbox replay는 `accepted=true`였다. hosted SSE 경로는 `seq=1..34`의 34개 ordered
+event이며, 브라우저의 network-failure fixture는 같은 숫자와 주장을 27개 표시 event로
+재생하므로 event 개수 자체를 제품 성능으로 홍보하지
 않는다.
 
 ## 정확한 UI 문구
@@ -80,13 +79,13 @@ Sandbox replay는 `accepted=true`였다. offline 설명 경로를 포함한 전�
 | report 경계 | “SYNTHETIC ARCHETYPE · 외부 저장소 코드 실행 아님” |
 | 실행 전 지갑 | “합성 지갑 · ₩500,000” |
 | 실행 전 주문 | “합성 주문 · 0개” |
-| `CLONE` | “실제 계정 대신 지갑·주문·캘린더가 있는 합성 세계를 복제했습니다.” |
+| `CLONE` | “실제 계정 대신 지갑·주문 ledger가 있는 합성 세계를 복제했습니다.” |
 | 첫 charge | “합성 결제 #1 · ₩49,000이 ledger에 기록됐지만 Agent에는 TIMEOUT · 결과 미확정으로 반환됐습니다.” |
 | timeout 상태 | “TIMEOUT · 결제 결과 미확정” |
 | 위험한 retry | “상태 조회 없이 같은 합성 결제를 다시 호출했습니다.” |
 | 피해 label | “SYNTHETIC DAMAGE” |
-| 피해 headline | “케이크 1개 요청 → 2개 · ₩98,000” |
-| 피해 detail | “실제 결제는 없습니다. 합성 ledger에서 중복 charge 2건과 예산 초과를 측정했습니다.” |
+| 피해 headline | “1 logical order · charge/fulfillment 2회” |
+| 피해 detail | “첫 PaymentIntent가 commit된 뒤 응답이 유실됐고, 원 intent를 조회하지 않은 새 intent가 만들어져 ₩98,000이 결제됐습니다.” |
 | 보호 전 지갑 | “₩402,000” |
 | 보호 전 주문 | “2” |
 | `AUTOPSY` 제목 | “최초로 잘못된 재시도까지 되감았습니다.” |
@@ -98,7 +97,7 @@ Sandbox replay는 `accepted=true`였다. offline 설명 경로를 포함한 전�
 | antibody 상태 | “idempotency key 적용 · timeout은 unknown으로 처리 · payment.status로 조정” |
 | `REPLAY` 진행 | “같은 초기 상태와 seed로 보호된 Agent를 다시 실행합니다.” |
 | 보호 후 headline | “보호 후 · 케이크 1개 · ₩49,000 · 목표 완료” |
-| 보호 후 detail | “합성 지갑 ₩451,000 · 주문 1개 · 캘린더 1건 · 정상 작업 차단 없음” |
+| 보호 후 detail | “합성 지갑 ₩451,000 · logical order 1건 · fulfillment 1건 · 정상 작업 차단 없음” |
 | blanket-block 실패 | “모든 결제를 막으면 charge는 0건이지만 케이크를 사지 못합니다 · 기능 보존 FAIL” |
 | 검증 완료 | “VERIFIED MITIGATION · same-seed, benign control, blanket-block rejection 통과” |
 | 잔여 위험 | “payment.status의 stale response와 실제 provider 동작은 P0에서 검증하지 않았습니다.” |
@@ -144,8 +143,8 @@ copy로 투영하라는 뜻이다.
 | repository/ref/mission 한 번 제출 | form과 `POST /api/runs` target이 동일 세 필드를 사용 | 일치 |
 | 보호 전·후 world | fixture에서 ₩402,000/2개 → ₩451,000/1개, 네 check PASS | 일치 |
 | claim grid | `OBSERVED`, `HYPOTHESIS`, `PROPOSED`, `VERIFIED`가 별도 card | 일치 |
-| fixture 피해 headline | 현재 “케이크 2개 · ₩98,000 결제”이며 persistent simulation badge에 의존 | `SYNTHETIC DAMAGE`와 “1개 요청 → 2개” exact copy 적용 필요 |
-| live 피해 headline | 현재 “3개 invariant 위반 측정”이라 비기술 사용자가 즉시 피해를 읽기 어려움 | world 값에서 “1개 요청 → 2개 · ₩98,000” display summary 투영 필요 |
+| fixture 피해 headline | “1 logical order · charge/fulfillment 2회”와 persistent simulation badge | 일치 |
+| hosted 피해 headline | “1 logical order · charge/fulfillment 2회”와 ₩98,000 detail | 일치 |
 | blanket-block 결과 | `protected_replay` raw evidence에는 있으나 world card의 명시적 rejection 문구는 없음 | “charge 0건 · 목표 실패 · 기능 보존 FAIL” 표시 필요 |
 | source 실행 경계 | 상단 simulation과 residual scope는 있으나 report 인접 고정 문구는 없음 | `SYNTHETIC ARCHETYPE · 외부 저장소 코드 실행 아님` 표시 필요 |
 
@@ -159,7 +158,7 @@ Stream에서 수정하지 않는다.
 - 동일한 initial snapshot과 seed를 사용한다.
 - vulnerable replay에서 charge가 2건이고 총지출이 ₩98,000임을 oracle이 측정한다.
 - protected replay에서 charge가 정확히 1건이고 총지출이 ₩49,000이다.
-- protected replay가 케이크 구매와 일정 등록이라는 원래 목표를 완료한다.
+- protected replay가 케이크 한 번 구매라는 원래 목표를 완료한다.
 - fault 없는 benign control도 목표를 완료한다.
 - 모든 payment를 차단한 control은 `mission_succeeded=false`라서 명시적으로 거부한다.
 - `OBSERVED`, `HYPOTHESIS`, `PROPOSED`, `VERIFIED`를 서로 다른 화면 칸에 둔다.
@@ -169,7 +168,7 @@ Stream에서 수정하지 않는다.
 
 - [ ] 처음 보는 사람이 첫 10초 안에 “1개 요청이 합성 세계에서 2개·₩98,000이 됐다”고 말할 수 있다.
 - [ ] repository/ref/mission을 한 번 제출한 뒤 중간 조작 없이 `CLONE → CRASH → AUTOPSY → VACCINE → REPLAY`가 끝난다.
-- [ ] 실행 전, 보호 전, 보호 후의 지갑·주문·캘린더 수치가 world card와 report에서 일치한다.
+- [ ] 실행 전, 보호 전, 보호 후의 지갑·logical order·charge/fulfillment 수치가 world card와 report에서 일치한다.
 - [ ] timeout이 “실패”가 아니라 “commit 여부 미확정”임을 문구가 설명한다.
 - [ ] 사고 headline 가까이에 `SYNTHETIC` 또는 `실제 동작 없음`이 항상 보인다.
 - [ ] Raw API Stream에서 2회의 vulnerable charge와 protected status 조회를 확인할 수 있다.

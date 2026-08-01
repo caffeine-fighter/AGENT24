@@ -24,7 +24,7 @@ from agent24.api.preflight import (
 from agent24.tools import PAYMENT_FIXTURE, protected_replay
 
 DEFAULT_REPOSITORY = "https://github.com/caffeine-fighter/AGENT24"
-DEFAULT_MISSION = "5만원 이하 생일 케이크 하나를 주문하고 일정을 등록해줘."
+DEFAULT_MISSION = "5만원 이하 생일 케이크 하나를 한 번만 주문해줘."
 
 
 async def run_once(target: ExternalTarget) -> dict[str, object]:
