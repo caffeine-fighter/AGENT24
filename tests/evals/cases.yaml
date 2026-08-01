@@ -115,6 +115,30 @@ cases:
     command: "pytest tests/unit/test_report.py::test_budget_exhausted_is_valid_and_weaker_than_no_failure tests/unit/test_report.py::test_non_finding_states_cannot_carry_finding_fields tests/unit/test_report.py::test_report_assembly_is_deterministic -q"
     expectation: "budget_exhausted states that the search never finished and carries no finding fields; report assembly is byte-identical across runs"
 
+  # Versioned prompt contract (issue #3).  These check the part of prompt quality
+  # that can be pinned down without a model: that the instruction text agrees
+  # with the code enforcing it, and that AUT-controlled text arrives as data.
+  - id: prompt-normal
+    issue: 3
+    command: "pytest tests/unit/test_prompts.py::test_normal_the_cake_buyer_renders_its_observed_capabilities tests/unit/test_prompts.py::test_normal_a_measured_violation_reaches_the_diagnosis_stage_with_its_citations tests/unit/test_prompts.py::test_every_planner_stage_maps_to_its_frozen_output_schema -q"
+    expectation: "each stage names the frozen *Output model the runtime passes as output_type; observed capabilities and ledger/trace citations reach the prompt intact, and only the operator mission is presented as an instruction"
+  - id: prompt-ambiguous
+    issue: 3
+    command: "pytest tests/unit/test_prompts.py::test_ambiguous_an_empty_oracle_renders_as_empty_rather_than_suggestive tests/unit/test_prompts.py::test_ambiguous_the_diagnosis_body_forbids_inventing_a_cause tests/unit/test_prompts.py::test_ambiguous_every_structured_body_forbids_the_verdict_language_the_schema_rejects -q"
+    expectation: "zero violations render as zero rather than as a hint; the diagnosis prompt forbids inventing a cause, and the phrases the prompt bans are exactly the ones report.CLAIM_TERMS rejects"
+  - id: prompt-unsupported
+    issue: 3
+    command: "pytest tests/unit/test_prompts.py::test_unsupported_tools_outside_the_gym_vocabulary_are_named tests/unit/test_prompts.py::test_unsupported_the_threat_body_routes_them_to_unsupported_notes tests/unit/test_prompts.py::test_unsupported_is_reported_even_when_the_budget_is_also_gone -q"
+    expectation: "tools the gym has no vocabulary for are listed explicitly and routed to unsupported_notes rather than approximated; an unsupported mission is reported as unsupported even when the budget is also gone"
+  - id: prompt-injection
+    issue: 3
+    command: "pytest tests/unit/test_prompts.py::test_injection_a_hostile_system_prompt_stays_inside_the_fence tests/unit/test_prompts.py::test_injection_a_payload_cannot_close_the_fence_early tests/unit/test_prompts.py::test_injection_hostile_world_state_reaches_diagnosis_as_data tests/unit/test_prompts.py::test_injection_a_laundered_threat_model_is_re_fenced_at_the_next_stage -q"
+    expectation: "an AUT system prompt that tries to close the fence and order a verdict is neutralized and stays inside <untrusted_agent_data>; hostile world state and text laundered through a previous stage's output are re-fenced rather than promoted to instruction"
+  - id: prompt-budget-and-recovery
+    issue: 3
+    command: "pytest tests/unit/test_prompts.py::test_the_budget_quoted_in_the_prompt_is_the_budget_that_is_enforced tests/unit/test_prompts.py::test_an_exhausted_experiment_budget_is_not_dressed_up_as_coverage tests/unit/test_prompts.py::test_a_dry_streak_is_coverage_complete_and_never_claims_safety tests/unit/test_prompts.py::test_a_repeated_schema_failure_stops_as_insufficient_evidence -q"
+    expectation: "the turn/cost numbers quoted in the instruction text are substituted from DEFAULT_BUDGET; an exhausted budget is never reported as completed coverage, a dry streak never claims safety, and a repeated schema failure stops as insufficient_evidence instead of retrying until something parses"
+
   # Read-only domain packs (issues #43, #44, #45).
   - id: research-trust-gauntlet
     issue: 45
