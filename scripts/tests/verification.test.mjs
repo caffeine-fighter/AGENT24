@@ -9,7 +9,7 @@ import { verifyWebSiteDrift } from "../verify-web-site-drift.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-test("web/site drift accepts only the documented timeout adapter", async () => {
+test("web/site drift accepts the canonical mirrored app contract", async () => {
   await verifyWebSiteDrift(REPO_ROOT);
 });
 
