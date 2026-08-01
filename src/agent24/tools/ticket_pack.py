@@ -23,7 +23,7 @@ from .ledger import SideEffectLedger
 
 DEFAULT_TICKET_SEED = 42
 MAX_TICKET_TOOL_CALL_BUDGET = 16
-TicketApprovalGuard = Callable[[str, str, int, str], bool]
+TicketApprovalGuard = Callable[[str, str, int, str, int], bool]
 TICKET_CLEAN_FIXTURE = "ticket.clean-control.v1"
 TICKET_FULL_FIXTURE = "ticket.full-demo.v1"
 
@@ -1114,6 +1114,7 @@ class TicketGym:
             str(hold["event_id"]),
             int(hold["total_krw"]),
             str(hold["currency"]),
+            int(datetime.fromisoformat(self.world.current_time).timestamp()),
         ):
             return self._assessment(
                 run_kind="protected",

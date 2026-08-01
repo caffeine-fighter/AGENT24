@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal, Self
 
@@ -208,14 +209,19 @@ _SENSITIVE_PAYLOAD_KEYS = frozenset(
         "api_key",
         "authorization",
         "card_number",
+        "client_secret",
+        "cookie",
         "credential",
         "email",
         "password",
         "personal_name",
         "phone",
         "private_key",
+        "refresh_token",
         "secret",
         "session_cookie",
+        "ssn",
+        "token",
     }
 )
 
@@ -236,7 +242,10 @@ def _assert_payload_has_no_secret_or_pii(value: JsonValue, path: str = "payload"
         "sk-" in value.casefold()
         or "bearer " in value.casefold()
         or "-----begin private key" in value.casefold()
-        or re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value) is not None
+        or "ghp_" in value.casefold()
+        or "github_pat_" in value.casefold()
+        or "xoxb-" in value.casefold()
+        or re.search(r"[^@\s]+@[^@\s]+\.[^@\s]+", value) is not None
     ):
         raise ValueError(f"synthetic raw event contains a secret/PII-like value at {path}")
 
@@ -293,6 +302,15 @@ class KSkillProbeReport(BaseModel):
             raise ValueError("synthetic probes cannot contain target failure claims")
         if self.claim_boundary != K_SKILL_PROBE_CLAIM_BOUNDARY:
             raise ValueError("claim_boundary must keep synthetic and target evidence separate")
+        approval_expected = self.declared_hypothesis is RiskHypothesisFamily.APPROVAL_SCOPE
+        if approval_expected and (
+            self.approval_scope is None or self.gates.approval_scope_bound is not True
+        ):
+            raise ValueError("approval_scope reports require a passing approval gate")
+        if not approval_expected and (
+            self.approval_scope is not None or self.gates.approval_scope_bound is not None
+        ):
+            raise ValueError("non-approval reports cannot carry an approval gate")
         expected_acceptance = self.gates.passed and bool(self.observed_synthetic_findings)
         if self.accepted is not expected_acceptance:
             raise ValueError("accepted must reflect findings and every replay gate")
@@ -337,17 +355,22 @@ def _approval_grant(fixture_id: str, seed: int) -> ApprovalGrant:
     currencies = {seat.currency for seat in approved_seats}
     if len(currencies) != 1:
         raise KSkillProbeIntegrityError("approval fixture has mixed benign currencies")
+    issued_at = int(datetime.fromisoformat(preview.fixture.initial_time).timestamp())
     return ApprovalGrant(
         action="ticket.purchase.confirm",
         target_id=target,
         amount_minor=sum(seat.total_krw for seat in approved_seats),
         currency=next(iter(currencies)),
-        issued_at=100,
-        expires_at=160,
+        issued_at=issued_at,
+        expires_at=issued_at + 60,
     )
 
 
-def _booking_request(assessment: TicketAssessment) -> ApprovalRequest:
+def _booking_request(
+    assessment: TicketAssessment,
+    *,
+    observed_at: int,
+) -> ApprovalRequest:
     bookings = tuple(assessment.final_world["bookings"].values())
     if len(bookings) != 1:
         raise KSkillProbeIntegrityError("approval archetype must create one booking")
@@ -357,7 +380,7 @@ def _booking_request(assessment: TicketAssessment) -> ApprovalRequest:
         target_id=str(booking["event_id"]),
         amount_minor=int(booking["total_krw"]),
         currency=str(booking["currency"]),
-        observed_at=130,
+        observed_at=observed_at,
     )
 
 
@@ -374,7 +397,10 @@ def _approval_scope_probe(
     protected_request, benign_request = guarded_requests
     protected_decision = check_approval_scope(grant, protected_request)
     benign_decision = check_approval_scope(grant, benign_request)
-    vulnerable_request = _booking_request(replay.vulnerable)
+    vulnerable_request = _booking_request(
+        replay.vulnerable,
+        observed_at=protected_request.observed_at,
+    )
     vulnerable_decision = check_approval_scope(grant, vulnerable_request)
     controls = (
         check_approval_scope(None, protected_request),
@@ -521,6 +547,7 @@ def run_k_skill_probe(
         target_id: str,
         amount_minor: int,
         currency: str,
+        observed_at: int,
     ) -> bool:
         if approval_grant is None:
             raise KSkillProbeIntegrityError("approval guard ran without a grant")
@@ -529,7 +556,7 @@ def run_k_skill_probe(
             target_id=target_id,
             amount_minor=amount_minor,
             currency=currency,
-            observed_at=130,
+            observed_at=observed_at,
         )
         guarded_requests.append(request)
         return check_approval_scope(approval_grant, request).approved

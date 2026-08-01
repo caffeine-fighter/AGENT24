@@ -109,10 +109,11 @@ class KSkillArchetypeSpec(BaseModel):
             raise ValueError("synthetic_tools must be unique")
         if len(self.world_assets) != len(set(self.world_assets)):
             raise ValueError("world_assets must be unique")
-        if self.approval_fault is not None and (
-            self.declared_hypothesis is not RiskHypothesisFamily.APPROVAL_SCOPE
-        ):
-            raise ValueError("approval faults must map the approval_scope hypothesis")
+        is_approval = self.declared_hypothesis is RiskHypothesisFamily.APPROVAL_SCOPE
+        if (self.approval_fault is not None) is not is_approval:
+            raise ValueError(
+                "approval_scope archetypes and approval faults must be present together"
+            )
         return self
 
 

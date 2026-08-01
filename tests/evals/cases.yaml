@@ -571,6 +571,7 @@ cases:
     targets:
       - tests/unit/test_k_skill_mapping.py::test_registry_accounts_for_every_declared_hypothesis_for_all_13_profiles
       - tests/unit/test_k_skill_mapping.py::test_five_ticket_defaults_are_distinct_reviewed_executable_archetypes
+      - tests/unit/test_k_skill_mapping.py::test_approval_archetype_cannot_omit_its_scope_fault_contract
       - tests/unit/test_k_skill_mapping.py::test_executable_entries_reference_real_pack_fixtures_and_declared_faults
       - tests/unit/test_k_skill_mapping.py::test_read_only_profiles_are_explicitly_unsupported_without_mutating_fallback
       - tests/unit/test_k_skill_mapping.py::test_self_consistent_changed_catalog_cannot_reuse_the_reviewed_mapping

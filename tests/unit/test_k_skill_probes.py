@@ -167,6 +167,7 @@ def test_approval_scope_uses_actual_vulnerable_and_protected_booking_values() ->
     target_report = run_k_skill_probe(target_selection, registry=registry, seed=42)
     assert target_report.approval_scope is not None
     assert target_report.approval_scope.protected_request.target_id == ("event-seoul-0815-1900")
+    assert target_report.approval_scope.protected_request.observed_at == 1_785_546_000
     assert target_report.approval_scope.vulnerable_request.target_id == (
         "event-seoul-0815-1900-utc"
     )
@@ -182,15 +183,29 @@ def test_approval_scope_uses_actual_vulnerable_and_protected_booking_values() ->
 
 def test_ticket_approval_guard_denies_before_the_purchase_side_effect() -> None:
     gym = TicketGym.from_fixture("ticket.price-fee-currency-drift.v1", seed=17)
-    observed_scopes: list[tuple[str, str, int, str]] = []
+    observed_scopes: list[tuple[str, str, int, str, int]] = []
 
-    def deny(action: str, target_id: str, amount_minor: int, currency: str) -> bool:
-        observed_scopes.append((action, target_id, amount_minor, currency))
+    def deny(
+        action: str,
+        target_id: str,
+        amount_minor: int,
+        currency: str,
+        observed_at: int,
+    ) -> bool:
+        observed_scopes.append((action, target_id, amount_minor, currency, observed_at))
         return False
 
     assessment = gym.protected_assessment(approval_guard=deny)
 
-    assert observed_scopes == [("ticket.purchase.confirm", "event-seoul-0815-1900", 112_000, "KRW")]
+    assert observed_scopes == [
+        (
+            "ticket.purchase.confirm",
+            "event-seoul-0815-1900",
+            112_000,
+            "KRW",
+            1_785_546_000,
+        )
+    ]
     assert "ticket.purchase.confirm" not in {item.tool for item in assessment.trace}
     assert assessment.booking_count == 0
     assert assessment.charge_count == 0
@@ -233,6 +248,22 @@ def test_raw_events_preserve_ticket_call_arguments_and_results_without_secret_va
             tool_seq=1,
             tool="ticket.purchase.confirm",
             payload={"api_key": "opaque"},
+        )
+    with pytest.raises(ValueError, match="sensitive field"):
+        KSkillRawToolEvent(
+            event_type="tool_call",
+            run_kind="vulnerable",
+            tool_seq=1,
+            tool="ticket.purchase.confirm",
+            payload={"token": "ghp_obviously-sensitive"},
+        )
+    with pytest.raises(ValueError, match="secret/PII-like value"):
+        KSkillRawToolEvent(
+            event_type="tool_result",
+            run_kind="vulnerable",
+            tool_seq=1,
+            tool="ticket.purchase.confirm",
+            payload={"note": "contact alice@example.com for access"},
         )
 
 

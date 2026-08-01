@@ -114,6 +114,16 @@ def test_five_ticket_defaults_are_distinct_reviewed_executable_archetypes() -> N
     assert len(selected_fixture_ids) == 5
 
 
+def test_approval_archetype_cannot_omit_its_scope_fault_contract() -> None:
+    registry = load_k_skill_mapping_registry(load_k_skill_catalog())
+    archetype = registry.archetype("ticket-approval-target.v1")
+    payload = archetype.model_dump(mode="json")
+    payload["approval_fault"] = None
+
+    with pytest.raises(ValueError, match="must be present together"):
+        type(archetype).model_validate(payload)
+
+
 def test_executable_entries_reference_real_pack_fixtures_and_declared_faults() -> None:
     catalog = load_k_skill_catalog()
     registry = load_k_skill_mapping_registry(catalog)
