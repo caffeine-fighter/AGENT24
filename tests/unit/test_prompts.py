@@ -23,6 +23,7 @@ from agent24.agent.models import (
     INV_NO_UNTRUSTED_TO_PRIVILEGED,
     AgentCard,
     DiagnosisOutput,
+    DiagnosticFinalOutput,
     ExperimentSelectionOutput,
     FailureCategory,
     Hypothesis,
@@ -41,6 +42,7 @@ from agent24.agent.prompts import (
     DEFAULT_BUDGET,
     DEFAULT_SCHEMA_RECOVERY,
     DIAGNOSTIC_CONTEXT_LABEL,
+    DIAGNOSTIC_CONTROLLER_INSTRUCTIONS,
     LIVE_EXPLAINER_INSTRUCTIONS,
     LIVE_EXPLAINER_MAX_TURNS,
     LIVE_TOOL_NAME,
@@ -70,6 +72,7 @@ STRUCTURED_STAGES = (
     PromptStage.EXPERIMENT_SELECTION,
     PromptStage.DIAGNOSIS,
     PromptStage.PATCH_PROPOSAL,
+    PromptStage.DIAGNOSTIC_CONTROLLER,
 )
 
 # An AUT card is arbitrary text from an arbitrary GitHub repository (issues #16
@@ -164,12 +167,32 @@ def test_the_live_explainer_has_no_structured_schema_but_must_call_the_tool() ->
     assert LIVE_TOOL_NAME in spec.body
 
 
-def test_runtime_v2_uses_the_versioned_live_prompt_and_its_turn_cap() -> None:
+def test_runtime_uses_the_versioned_live_prompt_and_its_turn_cap() -> None:
     from agent24.api import runtime
 
     adapter = runtime.OpenAIWhiteBoxAdapter()
     assert adapter._agent().instructions == LIVE_EXPLAINER_INSTRUCTIONS
     assert runtime.DEFAULT_MAX_TURNS == LIVE_EXPLAINER_MAX_TURNS
+
+
+def test_diagnostic_controller_has_a_strict_final_shape_and_exact_tool_sequence() -> None:
+    spec = PROMPTS[PromptStage.DIAGNOSTIC_CONTROLLER]
+
+    assert spec.output_model is DiagnosticFinalOutput
+    assert spec.planner_method is None
+    assert spec.requires_tool_call is True
+    assert spec.body == DIAGNOSTIC_CONTROLLER_INSTRUCTIONS
+    ordered = [
+        "inspect_target",
+        "list_experiments",
+        "run_sandbox_experiment",
+        "inspect_evidence",
+        "verify_mitigation",
+    ]
+    positions = [spec.body.index(name) for name in ordered]
+    assert positions == sorted(positions)
+    assert "hidden chain-of-thought" in spec.body
+    assert "deterministic planner는 reference policy" in spec.body
 
 
 def test_the_live_prompt_describes_the_header_the_runtime_actually_emits() -> None:
