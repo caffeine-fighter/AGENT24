@@ -65,7 +65,7 @@ test("server-renders the NIGHTMARE LAB shell", async () => {
   const html = await response.text();
   assert.match(html, /<title>NIGHTMARE LAB \| AI 에이전트 안전 테스트<\/title>/i);
   assert.match(html, /src="\/demo\/index\.html"/);
-  assert.match(html, /http:\/\/localhost\/og\.png/);
+  assert.match(html, /http:\/\/localhost\/og\.svg/);
   assert.match(html, /NIGHTMARE LAB AI 에이전트 안전 실험 화면/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });

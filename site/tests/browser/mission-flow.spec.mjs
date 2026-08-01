@@ -68,6 +68,10 @@ test("input error preserves values and connects the corrective message", async (
 });
 
 test("normal mission uses the hosted form, SSE stream, and one terminal event", async ({ page }) => {
+  let runRequests = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/api/runs") runRequests += 1;
+  });
   await submit(page, "엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문해줘.");
 
   await expect(page.locator("#rawStream .stream-type", { hasText: "run.completed" })).toHaveCount(1);
@@ -77,6 +81,16 @@ test("normal mission uses the hosted form, SSE stream, and one terminal event", 
   await expect(page.locator("#worldGrid")).toBeVisible();
   await expect(page.locator("#resetButton")).toBeVisible();
   await expect(page.locator("#replayButton")).toBeVisible();
+  expect(runRequests).toBe(1);
+  const firstRunId = await page.locator("#runId").textContent();
+
+  await page.locator("#replayButton").click();
+  await expect.poll(() => runRequests).toBe(2);
+  await expect(page.locator("#runId")).not.toHaveText(firstRunId ?? "");
+  await expect(page.locator("#runButton")).toBeDisabled();
+  await expect(page.locator("#connectionStatus")).toContainText("완료", { timeout: 15_000 });
+  await expect(page.locator("#rawStream .stream-type", { hasText: "run.completed" })).toHaveCount(1);
+  await expect(page.locator("#runId")).not.toContainText("fixture-life-payment-intent-timeout-v1");
   await expectNoSeriousA11yViolations(page);
 });
 

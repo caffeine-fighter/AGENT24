@@ -7,7 +7,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost";
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
   const metadataBase = new URL(`${protocol}://${host}`);
-  const socialImage = new URL("/og.png", metadataBase);
+  const socialImage = new URL("/og.svg", metadataBase);
 
   return {
     metadataBase,
@@ -22,8 +22,8 @@ export async function generateMetadata(): Promise<Metadata> {
       url: metadataBase,
       images: [{
         url: socialImage,
-        width: 1731,
-        height: 909,
+        width: 1200,
+        height: 630,
         alt: "NIGHTMARE LAB — 배포하기 전에 먼저 실패시켜 보세요.",
       }],
     },

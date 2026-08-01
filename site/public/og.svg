@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title description">
+  <title id="title">NIGHTMARE LAB</title>
+  <desc id="description">배포하기 전에 AI 에이전트를 먼저 실패시켜 보세요.</desc>
+  <rect width="1200" height="630" fill="#07090d"/>
+  <path d="M64 64H1136V566H64Z" fill="none" stroke="#313640" stroke-width="2"/>
+  <path d="M64 64H512" stroke="#f04f44" stroke-width="8"/>
+  <text x="96" y="150" fill="#f04f44" font-family="Arial, sans-serif" font-size="26" font-weight="700" letter-spacing="6">AGENT FAILURE LAB</text>
+  <text x="96" y="306" fill="#f6f3ea" font-family="Arial, sans-serif" font-size="92" font-weight="800" letter-spacing="-3">NIGHTMARE LAB</text>
+  <text x="100" y="392" fill="#c8c9cc" font-family="Arial, sans-serif" font-size="34">배포하기 전에 먼저 실패시켜 보세요.</text>
+  <g transform="translate(96 482)">
+    <rect width="290" height="52" fill="#f04f44"/>
+    <text x="24" y="35" fill="#07090d" font-family="Arial, sans-serif" font-size="22" font-weight="700">CLONE · CRASH · FIX · REPLAY</text>
+  </g>
+</svg>

@@ -721,7 +721,7 @@ $("#resetButton").addEventListener("click", () => {
   render();
 });
 
-$("#replayButton").addEventListener("click", () => playFixture(lastTarget, { speed: 270 }));
+$("#replayButton").addEventListener("click", () => runMission(lastTarget));
 
 $("#copyStreamButton").addEventListener("click", async () => {
   const raw = state.events.map((event) => JSON.stringify(event.raw)).join("\n");
