@@ -1,0 +1,37 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# JavaScript
+node_modules/
+web/dist/
+.vite/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local artifacts
+artifacts/*
+!artifacts/raw-streams/
+artifacts/raw-streams/*
+!artifacts/raw-streams/.gitignore
+slides/*.pdf
+slides/*.pptx
+*.log

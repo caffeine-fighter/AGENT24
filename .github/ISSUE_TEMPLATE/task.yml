@@ -1,0 +1,34 @@
+name: Hackathon task
+description: A small, testable unit of work
+title: "[Task] "
+labels: ["task"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Agent / Prompt
+        - Tools / Integration
+        - Web / Live Demo
+        - Eval / Demo / Infra
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: Describe the observable result, not just the implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance checks
+      placeholder: |
+        - [ ] Happy path
+        - [ ] Failure path
+        - [ ] Demo impact reviewed
+    validations:
+      required: true
+
