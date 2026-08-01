@@ -15,16 +15,13 @@ YAI × OpenAI AGENT:24 해커톤 Creative 트랙 4인 팀용 모노레포입니�
 
 공식 안내: <https://yonsei-yai-hackathon.netlify.app/>
 
-## 배포된 웹 데모
+## 비공개 웹 데모 운영
 
-- [NIGHTMARE LAB 데모](https://caffeine-fighter.github.io/nightmare-lab-demo/) — GitHub Pages에서 바로 여는 공개 정적 데모
-- [공개 배포 소스](https://github.com/caffeine-fighter/nightmare-lab-demo)에는 `web/` 정적 snapshot만 있고 API key나 원본 비공개 저장소 이력은 포함하지 않음
-- Pages에서는 같은 origin API 연결을 먼저 시도하고, 서버가 없으면 `내장 예시`와 “제출한 저장소를 분석한 결과가 아님”을 표시한 뒤 결정적 fixture로 완주
-- OpenAI API를 사용하는 실제 agent/API 경로는 아래 로컬 실행 또는 별도 서버 배포에서 사용하며, 브라우저 정적 파일에는 key를 넣지 않음
-- [NIGHTMARE LAB production](https://nightmare-lab-agent24.conceivability.chatgpt.site) — pinned owner manifest와 검토된 UCP adapter를 지원하는 Sites 링크
-- 한 입력으로 GitHub ref 확인 → OpenAI 실험 근거 생성 → `CLONE → CRASH → AUTOPSY → VACCINE → REPLAY`를 SSE Raw Stream으로 표시
-- OpenAI 설명 경로가 없거나 실패하면 화면에 `offline_demo`를 명시하고 동일한 합성 fallback으로 완주하며, source preflight 실패는 제출 Agent 분석을 주장하지 않고 중단
-- 운영 체크리스트: [#50 A/배포: NIGHTMARE LAB 웹 데모 링크 운영](https://github.com/caffeine-fighter/AGENT24/issues/50)
+- 데모 소스와 실행 이력은 이 비공개 저장소의 `web/`와 `site/`에서만 관리합니다.
+- 별도 공개 저장소, GitHub Pages, ChatGPT Sites 주소는 공식 데모 경로로 사용하지 않습니다.
+- OpenAI API를 사용하는 실제 경로는 로컬 또는 팀 전용 서버에서 실행하며, API key는 서버에만 둡니다.
+- API가 없는 정적 화면은 `내장 예시`라고 표시하고 제출한 저장소를 분석한 결과로 주장하지 않습니다.
+- 운영 체크리스트: [#50 A/배포: NIGHTMARE LAB 비공개 데모 운영](https://github.com/caffeine-fighter/AGENT24/issues/50)
 
 ## Product concept
 
