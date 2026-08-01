@@ -158,27 +158,28 @@ const first = createCakeCrashFixture(mission);
 const second = createCakeCrashFixture(mission);
 
 assert.deepEqual(first, second, "fixture event ordering and payloads must be deterministic");
-assert.equal(first[0].type, "run.started");
-assert.equal(first.at(-1).type, "run.completed");
+assert.deepEqual(first.map((event) => event.seq), Array.from({ length: first.length }, (_, index) => index));
+assert.equal(first[0].type, "run_started");
+assert.equal(first.at(-1).type, "run_completed");
 assert.ok(first.some((event) => event.type === "tool_call"));
 assert.ok(first.some((event) => event.type === "tool_result"));
 assert.deepEqual(
-  first.find((event) => event.type === "source_descriptor").raw,
+  first.find((event) => event.type === "source_descriptor").payload,
   createCakeSourceDescriptor(),
   "fixture SourceDescriptor payload must remain unedited",
 );
 assert.deepEqual(
-  first.find((event) => event.type === "behavior_profile").raw,
+  first.find((event) => event.type === "behavior_profile").payload,
   createCakeBehaviorProfile(),
   "fixture BehaviorProfile payload must remain unedited",
 );
 assert.deepEqual(
-  first.find((event) => event.type === "experiment_plan").raw,
+  first.find((event) => event.type === "experiment_plan").payload,
   createCakeExperimentPlan(mission),
   "fixture ExperimentPlan payload must remain unedited",
 );
 assert.deepEqual(
-  first.find((event) => event.type === "lab_report").raw,
+  first.find((event) => event.type === "lab_report").payload,
   createCakeLabReport(mission),
   "fixture LabReport payload must remain unedited",
 );
@@ -214,8 +215,8 @@ const unsupportedFixture = createUnsupportedFixture(unsupportedMission, {
   ...target,
   mission: unsupportedMission,
 });
-assert.equal(unsupportedFixture.filter((item) => item.type === "run.completed").length, 1);
-assert.equal(unsupportedFixture.at(-1).data.status, "unsupported");
+assert.equal(unsupportedFixture.filter((item) => item.type === "run_completed").length, 1);
+assert.equal(unsupportedFixture.at(-1).payload.status, "unsupported");
 assert.equal(unsupportedFixture.some((item) => item.type === "experiment_plan"), false);
 assert.doesNotMatch(JSON.stringify(unsupportedFixture), /payment\.charge|life\.payment|cake-001|protected_replay/);
 const unsupportedFixtureState = replayDeterministically(unsupportedFixture);

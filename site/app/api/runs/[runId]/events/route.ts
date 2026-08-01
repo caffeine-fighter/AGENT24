@@ -1,4 +1,4 @@
-import { buildHostedEvents } from "@/lib/hosted-lab";
+import { buildHostedEvents, toHostedWireEvent } from "@/lib/hosted-lab";
 import { openRunContext } from "@/lib/run-context";
 
 export const runtime = "edge";
@@ -27,7 +27,7 @@ export async function GET(request: Request) {
       { headers: { "Cache-Control": "no-store" }, status: opened.status },
     );
   }
-  const events = buildHostedEvents(opened.context);
+  const events = buildHostedEvents(opened.context).map((event, seq) => toHostedWireEvent(event, seq));
   const encoder = new TextEncoder();
   const paceMs = request.headers.get("x-agent24-test") === "1" ? 0 : 170;
 

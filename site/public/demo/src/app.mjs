@@ -1927,7 +1927,7 @@ function playFixture(target, { speed = 360 } = {}) {
   events.forEach((fixtureEvent, index) => {
     timers.push(setTimeout(() => {
       dispatch(fixtureEvent);
-      if (fixtureEvent.type === "run.completed") clearInterval(clockTimer);
+      if (fixtureEvent.type === "run_completed") clearInterval(clockTimer);
     }, index * speed));
   });
 }

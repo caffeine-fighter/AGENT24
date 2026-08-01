@@ -120,6 +120,44 @@ type LabEvent = {
   type: string;
 };
 
+/**
+ * The hosted implementation keeps its event-building model private, but its
+ * transport must expose the same envelope as the canonical FastAPI runtime.
+ * Keeping this conversion at the boundary prevents the hosted-only `data` /
+ * `raw` projection from becoming a second public wire contract.
+ */
+export type HostedWireEvent = {
+  payload: Record<string, unknown>;
+  phase: string;
+  run_id: string;
+  seq: number;
+  timestamp: string;
+  type: string;
+};
+
+const HOSTED_WIRE_TYPE_ALIASES: Record<string, string> = {
+  "run.started": "run_started",
+  "run.completed": "run_completed",
+};
+
+const RAW_TOOL_EVENT_TYPES = new Set([
+  "gym.tool_call",
+  "gym.tool_result",
+  "tool_call",
+  "tool_result",
+]);
+
+export function toHostedWireEvent(event: LabEvent, seq: number): HostedWireEvent {
+  return {
+    payload: RAW_TOOL_EVENT_TYPES.has(event.type) ? event.raw : event.data,
+    phase: event.phase,
+    run_id: event.run_id,
+    seq,
+    timestamp: event.timestamp,
+    type: HOSTED_WIRE_TYPE_ALIASES[event.type] ?? event.type,
+  };
+}
+
 const INITIAL_WORLD = Object.freeze({
   wallet_krw: 500_000,
   orders: 0,

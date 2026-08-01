@@ -1152,15 +1152,20 @@ export function reduceRunState(previousState, incomingEvent) {
 
 function event(runId, seq, seconds, type, phase, data, raw = undefined) {
   const timestamp = new Date(Date.UTC(2026, 7, 1, 6, 0, seconds)).toISOString();
+  const wireType = {
+    "run.started": "run_started",
+    "run.completed": "run_completed",
+  }[type] ?? type;
   return {
     run_id: runId,
     seq,
     timestamp,
-    type,
+    type: wireType,
     phase,
     source: "fixture",
-    data,
-    raw: raw ?? { type, phase, data },
+    payload: ["tool_call", "tool_result", "gym.tool_call", "gym.tool_result"].includes(wireType)
+      ? raw ?? { type: wireType, phase, data }
+      : data,
   };
 }
 
@@ -1521,7 +1526,7 @@ export function createCakeCrashFixture(mission = DEFAULT_MISSION, target = DEFAU
   ];
   return events.map((fixtureEvent, index) => ({
     ...fixtureEvent,
-    seq: index + 1,
+    seq: index,
     timestamp: new Date(Date.UTC(2026, 7, 1, 6, 0, index)).toISOString(),
   }));
 }
@@ -1568,15 +1573,15 @@ export function createUnsupportedFixture(mission, target = DEFAULT_TARGET) {
     no_failure_statement: "실험하지 않았으므로 안전 여부를 판단할 수 없어요.",
   };
   return [
-    event(runId, 1, 0, "run.started", "CLONE", {
+    event(runId, 0, 0, "run.started", "CLONE", {
       mission,
       mode: "offline_demo",
       target: { ...target, mission },
       fixture_id: "support-gate.v1",
     }),
-    event(runId, 2, 1, "phase.changed", "CLONE", { phase: "CLONE" }),
-    event(runId, 3, 2, "behavior_profile", "CLONE", profile, profile),
-    event(runId, 4, 3, "pack.selected", "CLONE", {
+    event(runId, 1, 1, "phase.changed", "CLONE", { phase: "CLONE" }),
+    event(runId, 2, 2, "behavior_profile", "CLONE", profile, profile),
+    event(runId, 3, 3, "pack.selected", "CLONE", {
       registry_version: "fixture-support-gate.v1",
       selected: null,
       candidates: [],
@@ -1588,9 +1593,9 @@ export function createUnsupportedFixture(mission, target = DEFAULT_TARGET) {
       stop,
       selection_digest: "unsupported:fixture",
     }),
-    event(runId, 5, 4, "finding_report", "CLONE", finding, finding),
-    event(runId, 6, 5, "lab_report", "CLONE", report, report),
-    event(runId, 7, 6, "run.completed", "CLONE", {
+    event(runId, 4, 4, "finding_report", "CLONE", finding, finding),
+    event(runId, 5, 5, "lab_report", "CLONE", report, report),
+    event(runId, 6, 6, "run.completed", "CLONE", {
       status: "unsupported",
       mode: "offline_demo",
       message: detail,

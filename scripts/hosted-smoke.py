@@ -153,6 +153,25 @@ def require(condition: bool, message: str) -> None:
         raise RuntimeError(message)
 
 
+def event_type(event: dict[str, Any]) -> str:
+    """Read the canonical wire type."""
+
+    value = event.get("type")
+    return value if isinstance(value, str) else ""
+
+
+def event_payload(event: dict[str, Any]) -> Any:
+    """Read the canonical payload field."""
+
+    return event.get("payload")
+
+
+def event_raw(event: dict[str, Any]) -> Any:
+    """Read a tool event's unedited raw item from the canonical payload."""
+
+    return event_payload(event)
+
+
 def build_run_payload(*, repository: str, requested_ref: str, mission: str) -> dict[str, Any]:
     return {
         "target": {
@@ -204,7 +223,7 @@ def verify_rejected_stream(
     )
     require(content_type != "text/event-stream", f"{label} unexpectedly opened an SSE stream")
     require(
-        "run.completed" not in body and '"status":"verified"' not in body,
+        "run_completed" not in body and '"status":"verified"' not in body,
         f"{label} emitted a verified outcome",
     )
 
@@ -242,14 +261,21 @@ def verify_trace(
         f"expected the complete hosted trace, got {len(events)} events",
     )
     require(
-        [event.get("seq") for event in events] == list(range(1, len(events) + 1)),
+        [event.get("seq") for event in events] == list(range(len(events))),
         "SSE sequence is not contiguous",
     )
     require(all(event.get("run_id") == run_id for event in events), "SSE run_id changed")
-    require(events[0].get("type") == "run.started", "first event is not run.started")
-    terminals = [event for event in events if event.get("type") == "run.completed"]
-    require(len(terminals) == 1, "stream must contain exactly one run.completed terminal")
-    require(events[-1] is terminals[0], "run.completed terminal is not the final event")
+    require(
+        all(
+            "payload" in event and "data" not in event and "raw" not in event
+            for event in events
+        ),
+        "SSE event envelope is not canonical",
+    )
+    require(event_type(events[0]) == "run_started", "first event is not run_started")
+    terminals = [event for event in events if event_type(event) == "run_completed"]
+    require(len(terminals) == 1, "stream must contain exactly one run_completed terminal")
+    require(events[-1] is terminals[0], "run_completed terminal is not the final event")
 
     phases = unique_in_order(
         str(event.get("phase")) for event in events if isinstance(event.get("phase"), str)
@@ -262,10 +288,10 @@ def verify_trace(
     )
     require(phases == expected_phases, f"unexpected phase order: {phases}")
 
-    start_data = events[0].get("data")
-    terminal_data = events[-1].get("data")
-    require(isinstance(start_data, dict), "run.started data is missing")
-    require(isinstance(terminal_data, dict), "run.completed data is missing")
+    start_data = event_payload(events[0])
+    terminal_data = event_payload(events[-1])
+    require(isinstance(start_data, dict), "run_started payload is missing")
+    require(isinstance(terminal_data, dict), "run_completed payload is missing")
     require(start_data.get("safety_boundary") == "SIMULATION_ONLY", "start boundary missing")
     require(
         terminal_data.get("safety_boundary") == "SIMULATION_ONLY",
@@ -283,9 +309,9 @@ def verify_trace(
     ):
         require(field in terminal_data, f"terminal stage truth field {field} is missing")
 
-    descriptor = next((event for event in events if event.get("type") == "source_descriptor"), None)
+    descriptor = next((event for event in events if event_type(event) == "source_descriptor"), None)
     require(isinstance(descriptor, dict), "source_descriptor event is missing")
-    descriptor_data = descriptor.get("data") if descriptor else None
+    descriptor_data = event_payload(descriptor) if descriptor else None
     require(isinstance(descriptor_data, dict), "source_descriptor data is missing")
     resolved_sha = (
         descriptor_data.get("resolved_sha") if isinstance(descriptor_data, dict) else None
@@ -295,9 +321,9 @@ def verify_trace(
             isinstance(resolved_sha, str) and FULL_SHA.fullmatch(resolved_sha),
             "source ref was not pinned",
         )
-        snapshot = next((event for event in events if event.get("type") == "source_snapshot"), None)
+        snapshot = next((event for event in events if event_type(event) == "source_snapshot"), None)
         require(isinstance(snapshot, dict), "source_snapshot event is missing")
-        snapshot_data = snapshot.get("data") if snapshot else None
+        snapshot_data = event_payload(snapshot) if snapshot else None
         normal_experiment_terminal = expected_terminal in {
             "verified",
             "openai_analysis_unavailable",
@@ -319,11 +345,11 @@ def verify_trace(
             and snapshot_data.get("execution_scope") == expected_execution_scope,
             "pinned source snapshot did not match the expected intake mode",
         )
-        profile = next((event for event in events if event.get("type") == "target_profile"), None)
+        profile = next((event for event in events if event_type(event) == "target_profile"), None)
         require(
             isinstance(profile, dict)
-            and isinstance(profile.get("data"), dict)
-            and profile["data"].get("profile_label")
+            and isinstance(event_payload(profile), dict)
+            and event_payload(profile).get("profile_label")
             == (
                 "ALLOWLISTED ADAPTER"
                 if expected_adapter
@@ -336,11 +362,11 @@ def verify_trace(
         if normal_experiment_terminal:
             if expected_adapter:
                 adapter = next(
-                    (event for event in events if event.get("type") == "adapter.matched"),
+                    (event for event in events if event_type(event) == "adapter.matched"),
                     None,
                 )
                 require(isinstance(adapter, dict), "allowlisted adapter match event is missing")
-                adapter_data = adapter.get("data") if adapter else None
+                adapter_data = event_payload(adapter) if adapter else None
                 require(
                     isinstance(adapter_data, dict)
                     and adapter_data.get("adapter_id") == "ucp-shopping-v0"
@@ -350,15 +376,15 @@ def verify_trace(
                 )
                 require(
                     any(
-                        event.get("type") == "gym.tool_call"
-                        and isinstance(event.get("raw"), dict)
-                        and event["raw"].get("name") == "complete_purchase"
+                        event_type(event) == "gym.tool_call"
+                        and isinstance(event_raw(event), dict)
+                        and event_raw(event).get("name") == "complete_purchase"
                         for event in events
                     ),
                     "UCP Gym trace did not execute complete_purchase",
                 )
                 require(
-                    any(event.get("type") == "lab_report" for event in events),
+                    any(event_type(event) == "lab_report" for event in events),
                     "UCP adapter path did not produce a lab report",
                 )
             files = snapshot_data.get("files", []) if isinstance(snapshot_data, dict) else []
@@ -377,37 +403,37 @@ def verify_trace(
                 "bounded owner entrypoint evidence is missing",
             )
             canonical_pack = next(
-                (event for event in events if event.get("type") == "pack.selected"), None
+                (event for event in events if event_type(event) == "pack.selected"), None
             )
             require(
                 isinstance(canonical_pack, dict)
-                and isinstance(canonical_pack.get("data"), dict)
-                and isinstance(canonical_pack["data"].get("selected"), dict)
-                and canonical_pack["data"]["selected"].get("domain_kind") == "life",
+                and isinstance(event_payload(canonical_pack), dict)
+                and isinstance(event_payload(canonical_pack).get("selected"), dict)
+                and event_payload(canonical_pack)["selected"].get("domain_kind") == "life",
                 "canonical Life pack selection is missing",
             )
             require(
-                any(event.get("type") == "experiment_plan" for event in events),
+                any(event_type(event) == "experiment_plan" for event in events),
                 "owner manifest path did not produce an experiment plan",
             )
         else:
             require(
-                any(event.get("type") == "compatibility_report" for event in events),
+                any(event_type(event) == "compatibility_report" for event in events),
                 "compatibility report is missing",
             )
     else:
         require(resolved_sha is None, "source unexpectedly resolved")
-        snapshot = next((event for event in events if event.get("type") == "source_snapshot"), None)
+        snapshot = next((event for event in events if event_type(event) == "source_snapshot"), None)
         require(isinstance(snapshot, dict), "fallback source_snapshot event is missing")
         require(
-            isinstance(snapshot.get("data"), dict)
-            and snapshot["data"].get("execution_scope") == "none",
+            isinstance(event_payload(snapshot), dict)
+            and event_payload(snapshot).get("execution_scope") == "none",
             "unresolved source was not bounded as an empty intake",
         )
         if expected_terminal in {"source_unresolved", "source_preflight_failed"}:
-            failure = next((event for event in events if event.get("type") == "stage_failed"), None)
+            failure = next((event for event in events if event_type(event) == "stage_failed"), None)
             require(isinstance(failure, dict), "source failure event is missing")
-            failure_data = failure.get("data") if failure else None
+            failure_data = event_payload(failure) if failure else None
             require(
                 isinstance(failure_data, dict)
                 and failure_data.get("stage") == "source"
@@ -415,7 +441,7 @@ def verify_trace(
                 "source failure code did not match the expected terminal",
             )
             require(
-                not any(event.get("type") == "experiment_plan" for event in events),
+                not any(event_type(event) == "experiment_plan" for event in events),
                 "source failure unexpectedly planned an experiment",
             )
             return {
@@ -431,9 +457,9 @@ def verify_trace(
         (
             event
             for event in events
-            if event.get("type") == "tool_result"
-            and isinstance(event.get("raw"), dict)
-            and event["raw"].get("name") == "openai.responses.plan_experiment"
+            if event_type(event) == "tool_result"
+            and isinstance(event_raw(event), dict)
+            and event_raw(event).get("name") == "openai.responses.plan_experiment"
         ),
         None,
     )
@@ -453,11 +479,11 @@ def verify_trace(
     }:
         require(openai_result is None, "offline run emitted an OpenAI planner tool event")
         failure = next(
-            (event for event in events if event.get("type") == "stage_failed"),
+            (event for event in events if event_type(event) == "stage_failed"),
             None,
         )
         require(isinstance(failure, dict), "OpenAI stage failure event is missing")
-        failure_data = failure.get("data") if failure else None
+        failure_data = event_payload(failure) if failure else None
         require(
             isinstance(failure_data, dict)
             and failure_data.get("stage") == "openai_analysis"
@@ -479,7 +505,7 @@ def verify_trace(
             "terminal_status": terminal_data.get("status"),
         }
     require(isinstance(openai_result, dict), "OpenAI tool_result event is missing")
-    raw = openai_result.get("raw") if openai_result else None
+    raw = event_raw(openai_result) if openai_result else None
     output = raw.get("output") if isinstance(raw, dict) else None
     require(isinstance(output, dict), "OpenAI result output is missing")
     response_id = output.get("response_id") if isinstance(output, dict) else None

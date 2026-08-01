@@ -67,11 +67,16 @@ Accept: text/event-stream
 ## Wire contract
 
 - `run_id`, `seq`, `timestamp`, `type`, `payload`는 필수입니다.
+- `phase`는 hosted adapter가 화면 단계 보존을 위해 제공할 수 있는 선택 필드이며, 의미 데이터는 항상 `payload`에 있습니다.
 - `seq`는 run마다 0부터 단조 증가하며 SSE와 JSONL의 순서가 같습니다.
 - `tool_call`과 `tool_result`의 `payload`는 OpenAI Agents SDK raw item을 요약·재작성하지 않은 JSON입니다.
 - 표시용 설명은 선택 필드 `summary`에만 둡니다.
 - API key, 개인정보, 실제 외부 계정 데이터는 envelope에 넣지 않습니다.
 - 연결이 끊겨도 웹은 이미 받은 이벤트를 삭제하지 않습니다.
+
+Cloudflare hosted route는 내부적으로 `data`와 `raw`를 사용하는 builder를 유지할 수
+있지만, SSE 응답 전에 이 canonical envelope로 변환합니다. 따라서 local FastAPI와
+hosted route 소비자는 같은 `payload`/`run_started`/`run_completed` 계약을 사용합니다.
 
 현재 런타임 타입은 다음과 같습니다.
 

@@ -292,6 +292,55 @@ test("hosted D1 request rejects invalid shape before upstream calls", async () =
   }
 });
 
+test("hosted SSE uses the canonical raw event envelope", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  delete process.env.OPENAI_API_KEY;
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(
+      typeof input === "string" || input instanceof URL ? input : input.url,
+    );
+    if (url.hostname === "api.github.com") return new Response(null, { status: 404 });
+    return previousFetch(input, init);
+  };
+
+  try {
+    const accepted = await request("/api/runs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: RUN_BODY,
+    });
+    assert.equal(accepted.status, 202);
+    const run = await accepted.json();
+    const streamed = await request(run.events_url, {
+      headers: { accept: "text/event-stream", "x-agent24-test": "1" },
+    });
+    assert.equal(streamed.status, 200);
+    const events = (await streamed.text())
+      .trim()
+      .split("\n\n")
+      .map((block) => JSON.parse(block.slice("data: ".length)));
+
+    assert.equal(events[0].type, "run_started");
+    assert.equal(events.at(-1).type, "run_completed");
+    assert.equal(events.at(-1).payload.status, "source_unresolved");
+    assert.equal("data" in events[0], false);
+    assert.equal("raw" in events[0], false);
+    for (const [index, event] of events.entries()) {
+      assert.equal(event.run_id, run.run_id);
+      assert.equal(event.seq, index);
+      assert.equal(typeof event.timestamp, "string");
+      assert.ok(event.payload && typeof event.payload === "object");
+      assert.equal("data" in event, false);
+      assert.equal("raw" in event, false);
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+  }
+});
+
 test("health never exposes credentials", async () => {
   const response = await request("/health", { headers: { accept: "application/json" } });
   assert.equal(response.status, 200);
@@ -344,10 +393,10 @@ test("hosted source failure stops before any synthetic experiment", async () => 
     assert.equal(events.status, 200);
     assert.match(events.headers.get("content-type") ?? "", /^text\/event-stream\b/i);
     const stream = await events.text();
-    assert.match(stream, /"type":"run.started"/);
+    assert.match(stream, /"type":"run_started"/);
     assert.match(stream, /"type":"stage_failed"/);
     assert.doesNotMatch(stream, /"type":"run_failed"/);
-    assert.match(stream, /"type":"run.completed"/);
+    assert.match(stream, /"type":"run_completed"/);
     assert.doesNotMatch(stream, /"type":"experiment_plan"/);
     assert.match(stream, /"type":"source_snapshot"/);
     assert.match(stream, /"resolver":"github-http-404"/);
@@ -393,7 +442,7 @@ test("hosted pinned source without a manifest stops at compatibility", async () 
     });
     const parsedEvents = (await events.text()).trim().split("\n\n").map((block) => JSON.parse(block.slice(6)));
     assert.deepEqual(parsedEvents.map((event) => event.type), [
-      "run.started",
+      "run_started",
       "phase.changed",
       "tool_call",
       "tool_result",
@@ -402,10 +451,10 @@ test("hosted pinned source without a manifest stops at compatibility", async () 
       "target_profile",
       "pack_selection",
       "compatibility_report",
-      "run.completed",
+      "run_completed",
     ]);
-    assert.equal(parsedEvents[5].data.mode, "metadata_only");
-    assert.equal(parsedEvents.at(-1).data.status, "compatibility_only");
+    assert.equal(parsedEvents[5].payload.mode, "metadata_only");
+    assert.equal(parsedEvents.at(-1).payload.status, "compatibility_only");
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
@@ -451,14 +500,14 @@ test("hosted Surprise input stops once instead of becoming a payment demo", asyn
       .trim()
       .split("\n\n")
       .map((block) => JSON.parse(block.slice("data: ".length)));
-    const terminal = events.filter((event) => event.type === "run.completed");
+    const terminal = events.filter((event) => event.type === "run_completed");
 
-    assert.deepEqual(events.map((event) => event.seq), Array.from({ length: events.length }, (_, index) => index + 1));
+    assert.deepEqual(events.map((event) => event.seq), Array.from({ length: events.length }, (_, index) => index));
     assert.equal(terminal.length, 1);
-    assert.equal(events.at(-1).type, "run.completed");
-    assert.equal(terminal[0].data.status, "unsupported");
-    assert.equal(events.find((event) => event.type === "finding_report")?.data.status, "unsupported");
-    assert.equal(events.find((event) => event.type === "lab_report")?.data.termination.reason, "unsupported_input");
+    assert.equal(events.at(-1).type, "run_completed");
+    assert.equal(terminal[0].payload.status, "unsupported");
+    assert.equal(events.find((event) => event.type === "finding_report")?.payload.status, "unsupported");
+    assert.equal(events.find((event) => event.type === "lab_report")?.payload.termination.reason, "unsupported_input");
     assert.equal(events.some((event) => event.type === "experiment_plan"), false);
     assert.doesNotMatch(JSON.stringify(events), /payment\.charge|life\.payment|cake-001|protected_replay/);
   } finally {
@@ -562,11 +611,11 @@ test("hosted OpenAI path keeps credentials server-side and emits its evidence", 
       parsedEvents.slice(4, 8).map((event) => event.type),
       ["source_descriptor", "source_snapshot", "target_profile", "pack_selection"],
     );
-    const sourceSnapshot = parsedEvents.find((event) => event.type === "source_snapshot").data;
+    const sourceSnapshot = parsedEvents.find((event) => event.type === "source_snapshot").payload;
     assert.equal(sourceSnapshot.execution_scope, "manifest_and_entrypoint");
     assert.deepEqual(sourceSnapshot.files.map((file) => file.path), [".agent24/manifest.json", "agent/main.py"]);
-    assert.equal(parsedEvents.find((event) => event.type === "target_profile").data.profile_label, "OWNER MANIFEST");
-    assert.equal(parsedEvents.find((event) => event.type === "pack.selected").data.selected.domain_kind, "life");
+    assert.equal(parsedEvents.find((event) => event.type === "target_profile").payload.profile_label, "OWNER MANIFEST");
+    assert.equal(parsedEvents.find((event) => event.type === "pack.selected").payload.selected.domain_kind, "life");
     assert.match(stream, /"fallback":false/);
     assert.match(stream, /"response_id":"resp_hosted_test"/);
     assert.match(stream, /결제 timeout 뒤 상태 조회 없는 재시도 가능성/);
@@ -657,17 +706,17 @@ test("hosted planner failures remain typed and never become an OpenAI fallback t
         .split("\n\n")
         .map((block) => JSON.parse(block.slice("data: ".length)));
       const stageFailure = events.find((event) => event.type === "stage_failed");
-      assert.equal(stageFailure?.data.stage, "openai_analysis", plannerCase.name);
-      assert.equal(stageFailure?.data.code, plannerCase.code, plannerCase.name);
-      assert.equal(events.at(-1).type, "run.completed", plannerCase.name);
-      assert.equal(events.filter((event) => event.type === "run.completed").length, 1, plannerCase.name);
-      assert.equal(events.at(-1).data.status, plannerCase.status, plannerCase.name);
-      assert.equal(events.at(-1).data.source_resolved, true, plannerCase.name);
-      assert.equal(events.at(-1).data.diagnostic_completed, true, plannerCase.name);
-      assert.equal(events.at(-1).data.openai_analysis_completed, false, plannerCase.name);
-      assert.equal(events.at(-1).data.execution_scope, "synthetic_archetype", plannerCase.name);
+      assert.equal(stageFailure?.payload.stage, "openai_analysis", plannerCase.name);
+      assert.equal(stageFailure?.payload.code, plannerCase.code, plannerCase.name);
+      assert.equal(events.at(-1).type, "run_completed", plannerCase.name);
+      assert.equal(events.filter((event) => event.type === "run_completed").length, 1, plannerCase.name);
+      assert.equal(events.at(-1).payload.status, plannerCase.status, plannerCase.name);
+      assert.equal(events.at(-1).payload.source_resolved, true, plannerCase.name);
+      assert.equal(events.at(-1).payload.diagnostic_completed, true, plannerCase.name);
+      assert.equal(events.at(-1).payload.openai_analysis_completed, false, plannerCase.name);
+      assert.equal(events.at(-1).payload.execution_scope, "synthetic_archetype", plannerCase.name);
       assert.equal(events.some((event) => event.type === "offline_demo"), false, plannerCase.name);
-      assert.equal(events.some((event) => event.raw?.name === "openai.responses.plan_experiment"), false, plannerCase.name);
+      assert.equal(events.some((event) => event.payload?.name === "openai.responses.plan_experiment"), false, plannerCase.name);
       assert.doesNotMatch(JSON.stringify(events), /provider-secret|test-openai-key/);
     }
   } finally {
@@ -731,27 +780,27 @@ test("hosted exact UCP source selects the adapter and drives the Gym trace", asy
     assert.ok(position("adapter.matched") < position("target_profile"));
     assert.ok(position("experiment_plan") < position("gym.tool_call"));
     assert.ok(position("gym.tool_call") < position("lab_report"));
-    assert.ok(position("lab_report") < position("run.completed"));
-    const terminal = parsedEvents.at(-1).data;
+    assert.ok(position("lab_report") < position("run_completed"));
+    const terminal = parsedEvents.at(-1).payload;
     assert.equal(terminal.status, "openai_analysis_unavailable");
-    assert.equal(parsedEvents.at(-1).type, "run.completed");
-    assert.equal(parsedEvents.filter((event) => event.type === "run.completed").length, 1);
-    assert.equal(parsedEvents.find((event) => event.type === "stage_failed").data.code, "openai_key_missing");
+    assert.equal(parsedEvents.at(-1).type, "run_completed");
+    assert.equal(parsedEvents.filter((event) => event.type === "run_completed").length, 1);
+    assert.equal(parsedEvents.find((event) => event.type === "stage_failed").payload.code, "openai_key_missing");
     assert.equal(terminal.diagnostic_completed, true);
     assert.equal(terminal.openai_analysis_completed, false);
     assert.equal(terminal.execution_scope, "allowlisted_adapter");
-    assert.equal(parsedEvents.some((event) => event.raw?.name === "openai.responses.plan_experiment"), false);
+    assert.equal(parsedEvents.some((event) => event.payload?.name === "openai.responses.plan_experiment"), false);
     assert.equal(parsedEvents.some((event) => event.type === "offline_demo"), false);
 
-    const snapshot = parsedEvents.find((event) => event.type === "source_snapshot").data;
+    const snapshot = parsedEvents.find((event) => event.type === "source_snapshot").payload;
     assert.equal(snapshot.execution_scope, "allowlisted_adapter");
     assert.deepEqual(snapshot.files.map((file) => file.path), ["upsonic_shopping_agent.py"]);
-    const adapter = parsedEvents.find((event) => event.type === "adapter.matched").data;
+    const adapter = parsedEvents.find((event) => event.type === "adapter.matched").payload;
     assert.equal(adapter.adapter_id, "ucp-shopping-v0");
     assert.equal(adapter.inspection_method, "bounded_static_contract");
     assert.equal(adapter.execution_mode, "network_disabled_local_replacement");
     assert.equal(adapter.network_access, "disabled");
-    const profile = parsedEvents.find((event) => event.type === "target_profile").data;
+    const profile = parsedEvents.find((event) => event.type === "target_profile").payload;
     assert.equal(profile.profile_label, "ALLOWLISTED ADAPTER");
     assert.deepEqual(profile.declared_capabilities, [
       "get_available_products",
@@ -763,20 +812,20 @@ test("hosted exact UCP source selects the adapter and drives the Gym trace", asy
       "set_shipping_address",
       "complete_purchase",
     ]);
-    const plan = parsedEvents.find((event) => event.type === "experiment_plan").data;
+    const plan = parsedEvents.find((event) => event.type === "experiment_plan").payload;
     assert.equal(plan.scenario.faults[0].target_tool, "complete_purchase");
-    const pack = parsedEvents.find((event) => event.type === "pack.selected").data;
+    const pack = parsedEvents.find((event) => event.type === "pack.selected").payload;
     assert.match(pack.selected.why, /reviewed UCP adapter contract/);
     assert.doesNotMatch(pack.selected.why, /owner manifest/);
     const gymCalls = parsedEvents.filter((event) => event.type === "gym.tool_call");
-    assert.deepEqual(gymCalls.map((event) => event.raw.name), [
+    assert.deepEqual(gymCalls.map((event) => event.payload.name), [
       "get_available_products",
       "complete_purchase",
       "complete_purchase",
       "complete_purchase",
       "get_order_status",
     ]);
-    const labReport = parsedEvents.find((event) => event.type === "lab_report").data;
+    const labReport = parsedEvents.find((event) => event.type === "lab_report").payload;
     assert.equal(labReport.findings[0].verified.accepted, true);
     assert.match(stream, /"network_access":"disabled"/);
     assert.match(stream, /duplicate-complete-purchase-timeout/);

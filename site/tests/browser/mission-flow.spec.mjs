@@ -19,7 +19,7 @@ test("unresolved hosted source stops before a synthetic payment experiment", asy
     "https://github.com/caffeine-fighter/AGENT24",
   );
 
-  await expect(page.locator("#rawStream .stream-type", { hasText: "run.completed" })).toHaveCount(1);
+  await expect(page.locator("#rawStream .stream-type", { hasText: "run_completed" })).toHaveCount(1);
   await expect(page.locator("#diagnosisSeverity")).toHaveText("NOT RUN · 분석 안 함");
   await expect(page.locator("#diagnosisScope")).toContainText("immutable source");
   await expect(page.locator("#runNotice")).toContainText("GitHub ref를 immutable commit으로 고정하지 못해");
@@ -32,7 +32,7 @@ test("unsupported Surprise mission stops once without payment substitution", asy
   await expect(page.locator("#diagnosisSeverity")).toHaveText("NOT RUN · 지원하지 않음");
   await expect(page.locator("#diagnosisScope")).toContainText("내장 예시");
   await expect(page.locator("#runNotice")).toContainText("이 작업에 맞는 실험은 아직 준비되지 않았어요");
-  await expect(page.locator("#rawStream .stream-type", { hasText: "run.completed" })).toHaveCount(1);
+  await expect(page.locator("#rawStream .stream-type", { hasText: "run_completed" })).toHaveCount(1);
   await expect(page.locator("#rawStream")).not.toContainText("payment.charge");
   await expect(page.locator("#rawStream")).not.toContainText("experiment_plan");
   await expect(page.locator("#rawStream")).not.toContainText("protected_replay");
@@ -47,6 +47,6 @@ test("API failure is labeled as a built-in example and still ends once", async (
     { timeout: 5_000 },
   );
   await expect(page.locator("#connectionStatus")).toContainText("완료", { timeout: 15_000 });
-  await expect(page.locator("#rawStream .stream-type", { hasText: "run.completed" })).toHaveCount(1);
+  await expect(page.locator("#rawStream .stream-type", { hasText: "run_completed" })).toHaveCount(1);
   await expect(page.locator("#modeBadge")).toHaveText("내장 예시 확인 완료");
 });

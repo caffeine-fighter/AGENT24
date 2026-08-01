@@ -31,22 +31,21 @@ def trace(*, hosted: bool, source_pinned: bool = True) -> list[dict[str, object]
             "seq": index,
             "type": "placeholder",
             "phase": phase,
-            "data": {},
-            "raw": {},
+            "payload": {},
         }
-        for index, phase in enumerate(phases, start=1)
+        for index, phase in enumerate(phases)
     ]
     events[0].update(
-        type="run.started",
-        data={"safety_boundary": "SIMULATION_ONLY"},
+        type="run_started",
+        payload={"safety_boundary": "SIMULATION_ONLY"},
     )
     events[4].update(
         type="source_descriptor",
-        data={"resolved_sha": PINNED_SHA if source_pinned else None},
+        payload={"resolved_sha": PINNED_SHA if source_pinned else None},
     )
     events[5].update(
         type="source_snapshot",
-        data={
+        payload={
             "mode": "bounded_download" if source_pinned else "metadata_only",
             "execution_scope": "manifest_and_entrypoint" if source_pinned else "none",
             "files": [{"path": "agent/main.py"}] if source_pinned else [],
@@ -54,15 +53,15 @@ def trace(*, hosted: bool, source_pinned: bool = True) -> list[dict[str, object]
     )
     events[6].update(
         type="target_profile",
-        data={"profile_label": "OWNER MANIFEST"} if source_pinned else {},
+        payload={"profile_label": "OWNER MANIFEST"} if source_pinned else {},
     )
     events[7].update(
         type="pack_selection",
-        data={"status": "compatible_candidate"} if source_pinned else {},
+        payload={"status": "compatible_candidate"} if source_pinned else {},
     )
     events[11].update(
         type="behavior_profile",
-        data={
+        payload={
             "agent_name": "submitted-github-agent"
             if source_pinned
             else "synthetic-fixture-fallback"
@@ -70,12 +69,12 @@ def trace(*, hosted: bool, source_pinned: bool = True) -> list[dict[str, object]
     )
     events[12].update(
         type="pack.selected",
-        data={"selected": {"domain_kind": "life"}} if source_pinned else {},
+        payload={"selected": {"domain_kind": "life"}} if source_pinned else {},
     )
     if hosted:
         events[14].update(
             type="tool_result",
-            raw={
+            payload={
                 "name": "openai.responses.plan_experiment",
                 "output": {"fallback": False, "response_id": "resp_live_smoke"},
             },
@@ -83,7 +82,7 @@ def trace(*, hosted: bool, source_pinned: bool = True) -> list[dict[str, object]
     else:
         events[14].update(
             type="stage_failed",
-            data={
+            payload={
                 "stage": "openai_analysis",
                 "code": "openai_key_missing",
                 "message": "controller result preserved",
@@ -91,8 +90,8 @@ def trace(*, hosted: bool, source_pinned: bool = True) -> list[dict[str, object]
         )
     events[15].update(type="experiment_plan")
     events[-1].update(
-        type="run.completed",
-        data={
+        type="run_completed",
+        payload={
             "status": "verified" if hosted else "openai_analysis_unavailable",
             "source_resolved": True,
             "diagnostic_completed": True,
@@ -102,6 +101,37 @@ def trace(*, hosted: bool, source_pinned: bool = True) -> list[dict[str, object]
         },
     )
     return events
+
+
+def canonical_trace(*, hosted: bool, source_pinned: bool = True) -> list[dict[str, object]]:
+    return trace(hosted=hosted, source_pinned=source_pinned)
+
+
+def test_verify_trace_accepts_canonical_wire_envelope() -> None:
+    result = SMOKE.verify_trace(
+        canonical_trace(hosted=True),
+        run_id=RUN_ID,
+        expected_mode="openai_hosted",
+        expected_source="pinned",
+        expected_terminal="verified",
+    )
+
+    assert result["terminal_status"] == "verified"
+
+
+def test_verify_trace_rejects_legacy_hosted_envelope() -> None:
+    events = trace(hosted=True)
+    events[0]["type"] = "run.started"
+    events[0]["data"] = events[0].pop("payload")
+
+    with pytest.raises(RuntimeError, match="canonical"):
+        SMOKE.verify_trace(
+            events,
+            run_id=RUN_ID,
+            expected_mode="openai_hosted",
+            expected_source="pinned",
+            expected_terminal="verified",
+        )
 
 
 @pytest.mark.parametrize(
@@ -141,28 +171,27 @@ def test_verify_trace_accepts_allowlisted_adapter_path() -> None:
             "seq": 0,
             "type": "adapter.matched",
             "phase": "CLONE",
-            "data": {
+            "payload": {
                 "adapter_id": "ucp-shopping-v0",
                 "execution_mode": "network_disabled_local_replacement",
                 "network_access": "disabled",
             },
-            "raw": {},
         },
     )
-    events[5]["data"] = {
+    events[5]["payload"] = {
         "mode": "bounded_download",
         "execution_scope": "allowlisted_adapter",
         "files": [{"path": "upsonic_shopping_agent.py"}],
     }
     events[7]["type"] = "target_profile"
-    events[7]["data"] = {"profile_label": "ALLOWLISTED ADAPTER"}
+    events[7]["payload"] = {"profile_label": "ALLOWLISTED ADAPTER"}
     events[20].update(
         type="gym.tool_call",
         phase="CRASH",
-        raw={"name": "complete_purchase"},
+        payload={"name": "complete_purchase"},
     )
     events[-2].update(type="lab_report")
-    for index, event in enumerate(events, start=1):
+    for index, event in enumerate(events):
         event["seq"] = index
 
     result = SMOKE.verify_trace(
@@ -193,7 +222,7 @@ def test_verify_trace_rejects_non_contiguous_sequence() -> None:
 
 def source_failure_trace(code: str = "source_unresolved") -> list[dict[str, object]]:
     entries = [
-        ("run.started", {"safety_boundary": "SIMULATION_ONLY"}),
+        ("run_started", {"safety_boundary": "SIMULATION_ONLY"}),
         ("phase.changed", {"phase": "CLONE"}),
         ("tool_call", {}),
         ("tool_result", {}),
@@ -201,7 +230,7 @@ def source_failure_trace(code: str = "source_unresolved") -> list[dict[str, obje
         ("source_snapshot", {"mode": "metadata_only", "execution_scope": "none"}),
         ("stage_failed", {"stage": "source", "code": code, "message": "source stop"}),
         (
-            "run.completed",
+            "run_completed",
             {
                 "status": code,
                 "source_resolved": False,
@@ -218,10 +247,9 @@ def source_failure_trace(code: str = "source_unresolved") -> list[dict[str, obje
             "seq": index,
             "type": event_type,
             "phase": "CLONE",
-            "data": data,
-            "raw": {},
+            "payload": data,
         }
-        for index, (event_type, data) in enumerate(entries, start=1)
+        for index, (event_type, data) in enumerate(entries)
     ]
 
 
@@ -292,7 +320,7 @@ def test_rejected_stream_cannot_masquerade_as_verified_sse() -> None:
         SMOKE.verify_rejected_stream(
             401,
             "application/json",
-            '{"type":"run.completed","status":"verified"}',
+            '{"type":"run_completed","payload":{"status":"verified"}}',
             label="token_tamper",
             expected_status=401,
         )
