@@ -100,6 +100,48 @@
           </ol>
         </nav>
 
+        <section id="labReportPanel" class="report-panel panel" aria-label="구조화 진단 보고서" hidden>
+          <header class="section-heading">
+            <div><p class="eyebrow">AUDITABLE LAB REPORT</p><h2>증거와 주장을 분리합니다</h2></div>
+            <span id="reportTermination">REPORT 대기</span>
+          </header>
+          <div class="report-profile">
+            <article>
+              <small>OBSERVED BEHAVIOR PROFILE</small>
+              <strong id="reportAgent">Agent 정보 없음</strong>
+              <p id="reportCapabilities">capability evidence 대기</p>
+            </article>
+            <article>
+              <small>EXPERIMENT BUDGET</small>
+              <strong id="reportBudget">0 runs · 0 cost</strong>
+              <p id="reportPermissions">permission evidence 대기</p>
+            </article>
+          </div>
+          <div class="claim-grid">
+            <article data-claim="observed">
+              <small>01 · OBSERVED</small>
+              <strong>측정된 사실</strong>
+              <p id="reportObserved">evidence event 대기</p>
+            </article>
+            <article data-claim="hypothesis">
+              <small>02 · HYPOTHESIS</small>
+              <strong>진단 가설</strong>
+              <p id="reportHypothesis">가설 event 대기</p>
+            </article>
+            <article data-claim="proposed">
+              <small>03 · PROPOSED</small>
+              <strong>제안된 패치</strong>
+              <pre id="reportProposed">patch event 대기</pre>
+            </article>
+            <article data-claim="verified">
+              <small>04 · VERIFIED</small>
+              <strong>재실행 검증</strong>
+              <p id="reportVerified">verification event 대기</p>
+            </article>
+          </div>
+          <p id="reportResidualRisk" class="residual-risk">잔여 위험 event 대기</p>
+        </section>
+
         <section class="world-grid">
           <article class="world-card panel" data-world="before">
             <header>

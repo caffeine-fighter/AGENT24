@@ -107,6 +107,61 @@ function renderChecks() {
   setText("#verificationStatus", label);
 }
 
+function compactJson(value) {
+  return JSON.stringify(value, null, 2);
+}
+
+function renderLabReport() {
+  const panel = $("#labReportPanel");
+  const report = state.reportView;
+  panel.hidden = !report;
+  if (!report) return;
+
+  const capabilityText = report.profile.capabilities.length
+    ? report.profile.capabilities
+        .map((capability) => `${capability.tool} [${capability.categories.join(", ") || "unknown"}]`)
+        .join(" · ")
+    : report.profile.tools.join(" · ") || "관찰된 capability 없음";
+  const permissions = Object.keys(report.profile.permissions).length
+    ? compactJson(report.profile.permissions)
+    : "명시된 permission 없음";
+  const termination = report.experiment.termination;
+  const observedItems = report.observed.items
+    .map((item) => `${item.invariant}: ${compactJson(item.actual)} / ${item.expected} (${item.evidence})`)
+    .join("\n");
+
+  setText("#reportAgent", report.profile.agentName);
+  setText("#reportCapabilities", capabilityText);
+  setText("#reportBudget", `${report.experiment.runs} runs · ${report.experiment.costUnits} cost`);
+  setText("#reportPermissions", permissions);
+  setText("#reportTermination", termination?.reason || "termination 정보 없음");
+  setText(
+    "#reportObserved",
+    observedItems ? `${report.observed.headline}\n${observedItems}` : report.observed.headline,
+  );
+  setText(
+    "#reportHypothesis",
+    report.hypothesis
+      ? `${report.hypothesis.category} · ${report.hypothesis.statement}`
+      : "증거가 없어 진단 가설을 확정하지 않았습니다.",
+  );
+  setText(
+    "#reportProposed",
+    report.proposedPatch ? compactJson(report.proposedPatch) : "검증할 패치가 제안되지 않았습니다.",
+  );
+  setText(
+    "#reportVerified",
+    report.verification
+      ? `${report.verification.accepted ? "ACCEPTED" : "REJECTED"} · ${report.verification.passedGates}/${report.verification.totalGates} gates pass`
+      : "protected replay로 검증되지 않았습니다.",
+  );
+  const limits = [...report.residualRisk, ...report.unsupportedScope];
+  setText(
+    "#reportResidualRisk",
+    limits.length ? `RESIDUAL / UNSUPPORTED · ${limits.join(" · ")}` : "RESIDUAL RISK · 보고된 잔여 위험 없음",
+  );
+}
+
 function renderStream() {
   const stream = $("#rawStream");
   if (!state.events.length) {
@@ -137,6 +192,7 @@ function render() {
   renderAutopsy();
   renderPatch();
   renderChecks();
+  renderLabReport();
   renderStream();
   setText("#targetRepo", state.target.repositoryUrl || "입력 대기");
   setText("#targetRef", state.target.requestedRef || "입력 대기");
