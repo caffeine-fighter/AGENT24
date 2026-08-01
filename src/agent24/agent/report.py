@@ -101,6 +101,12 @@ _NON_FINDING: frozenset[FindingReportStatus] = frozenset(
 _STATUS_BY_STOP_REASON: dict[str, FindingReportStatus] = {
     "unsupported_input": FindingReportStatus.UNSUPPORTED,
     "budget_exhausted": FindingReportStatus.BUDGET_EXHAUSTED,
+    # A domain-pack tie (issue #57) stops with ``insufficient_evidence``: the
+    # input is supported, the evidence just does not say which pack owns it.
+    # That distinction is worth keeping at the routing layer, but it does not
+    # earn a sixth terminal status -- the report still says "we could not cover
+    # this", and ``unsupported_scope`` names the tie.
+    "insufficient_evidence": FindingReportStatus.UNSUPPORTED,
 }
 
 

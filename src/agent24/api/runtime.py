@@ -20,6 +20,7 @@ from agent24.agent.loop import (
 )
 from agent24.agent.manifest import ManifestLoadError
 from agent24.agent.models import ExperimentPlan, StopDecision, run_digest
+from agent24.agent.packs import pack_failure_stop
 from agent24.agent.prompts import (
     DIAGNOSTIC_CONTEXT_LABEL,
     LIVE_EXPLAINER_INSTRUCTIONS,
@@ -224,6 +225,14 @@ class OpenAIWhiteBoxAdapter:
 
         channel.publish("source_descriptor", result.source, summary=result.source.source_ref)
         channel.publish("behavior_profile", result.profile, summary=result.profile.agent_name)
+        # Published before the stop branch on purpose: the routing decision is
+        # exactly what a reader needs when the run terminates as unsupported,
+        # and that path never reaches ``experiment_plan``.
+        channel.publish(
+            "pack.selected",
+            result.pack_selection,
+            summary=result.pack_selection.pack_id or "ambiguous",
+        )
         if isinstance(result.decision, StopDecision):
             finding_report, lab_report = unsupported_reports(
                 manifest=result.manifest,
@@ -429,6 +438,7 @@ class OpenAIWhiteBoxAdapter:
             "execution_scope": "synthetic_archetype",
             "scope_note": SYNTHETIC_SCOPE,
             "source_ref": preflight.source.source_ref,
+            "pack_id": preflight.pack_selection.pack_id,
             "plan_id": preflight.decision.plan_id,
             "finding_status": result.report.status.value,
             "bounded_summary": result.report.bounded_summary,
@@ -482,10 +492,22 @@ class OpenAIWhiteBoxAdapter:
                     diagnostic_result = await self._run_diagnostic_loop(
                         preflight_result, channel
                     )
-                except Exception:  # noqa: BLE001 - preserve a safe live-demo terminal state
+                except Exception as error:  # noqa: BLE001 - keep a safe terminal state
+                    # Name the pack that failed.  Re-routing to another pack
+                    # here is exactly how one pack's failure would come out
+                    # looking like a different pack's success.  The exception
+                    # string stays out of the payload; only its class is safe.
+                    stop = pack_failure_stop(
+                        preflight_result.pack_selection, type(error).__name__
+                    )
                     channel.publish(
                         "run_failed",
-                        {"status": "offline_demo", "code": "diagnostic_loop_failed"},
+                        {
+                            "status": "offline_demo",
+                            "code": "diagnostic_loop_failed",
+                            "pack_id": preflight_result.pack_selection.pack_id,
+                            "message": stop.detail,
+                        },
                         summary="Deterministic diagnostic loop failed",
                     )
                     await self._run_offline(
