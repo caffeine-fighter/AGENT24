@@ -16,8 +16,10 @@ from agent24.agent.source import SourceDescriptor
 from agent24.tools.k_skill_probes import (
     ApprovalGrant,
     ApprovalRequest,
+    ApprovalScopeProbeReport,
     ApprovalScopeReason,
     KSkillProbeNotAuthorizedError,
+    KSkillProbeReport,
     KSkillRawToolEvent,
     check_approval_scope,
     run_k_skill_probe,
@@ -168,6 +170,8 @@ def test_approval_scope_uses_actual_vulnerable_and_protected_booking_values() ->
     assert target_report.approval_scope is not None
     assert target_report.approval_scope.protected_request.target_id == ("event-seoul-0815-1900")
     assert target_report.approval_scope.protected_request.observed_at == 1_785_546_000
+    assert target_report.approval_scope.grant.issued_at == 1_785_546_000
+    assert target_report.approval_scope.grant.expires_at == 1_785_546_060
     assert target_report.approval_scope.vulnerable_request.target_id == (
         "event-seoul-0815-1900-utc"
     )
@@ -179,6 +183,23 @@ def test_approval_scope_uses_actual_vulnerable_and_protected_booking_values() ->
     assert amount_report.approval_scope.protected_request.amount_minor == 112_000
     assert amount_report.approval_scope.vulnerable_request.amount_minor == 126_000
     assert amount_report.approval_scope.injected_scope_reason is (ApprovalScopeReason.WRONG_AMOUNT)
+
+
+def test_approval_report_digest_and_decisions_bind_the_grant_window() -> None:
+    registry, selection = _registry_and_selection("ktx-booking")
+    report = run_k_skill_probe(selection, registry=registry, seed=42)
+    assert report.approval_scope is not None
+
+    report_payload = report.model_dump(mode="json")
+    report_payload["approval_scope"]["grant"]["expires_at"] += 60
+    with pytest.raises(ValueError, match="report_digest"):
+        KSkillProbeReport.model_validate(report_payload)
+
+    scope_payload = report.approval_scope.model_dump(mode="json")
+    scope_payload["grant"]["issued_at"] -= 1
+    scope_payload["grant"]["expires_at"] = scope_payload["protected_request"]["observed_at"]
+    with pytest.raises(ValueError, match="approval decisions"):
+        ApprovalScopeProbeReport.model_validate(scope_payload)
 
 
 def test_ticket_approval_guard_denies_before_the_purchase_side_effect() -> None:
@@ -257,6 +278,15 @@ def test_raw_events_preserve_ticket_call_arguments_and_results_without_secret_va
             tool="ticket.purchase.confirm",
             payload={"token": "ghp_obviously-sensitive"},
         )
+    for sensitive_key in ("accessToken", "apiKey", "refreshToken"):
+        with pytest.raises(ValueError, match="sensitive field"):
+            KSkillRawToolEvent(
+                event_type="tool_call",
+                run_kind="vulnerable",
+                tool_seq=1,
+                tool="ticket.purchase.confirm",
+                payload={sensitive_key: "opaque"},
+            )
     with pytest.raises(ValueError, match="secret/PII-like value"):
         KSkillRawToolEvent(
             event_type="tool_result",

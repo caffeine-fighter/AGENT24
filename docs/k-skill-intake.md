@@ -73,9 +73,11 @@ and benign fee-inclusive quote. The protected and benign replay requests pass
 through the guard before `ticket.purchase.confirm`; a denied request reaches no
 purchase side effect. The vulnerable target and amount observations come from
 the actual synthetic bookings (`event-seoul-0815-1900-utc` and KRW 126,000), not
-invented comparison values. Missing, wrong-action, wrong-target, wrong-amount,
-wrong-currency, stale, and not-yet-valid controls must all be rejected before an
-approval archetype is accepted.
+invented comparison values. Each tool trace records its own virtual timestamp,
+and the serialized approval evidence binds the grant's issuance and expiry
+window. Missing, wrong-action, wrong-target, wrong-amount, wrong-currency,
+stale, and not-yet-valid controls must all be rejected before an approval
+archetype is accepted.
 
 The other eight profiles and uncovered Ticket hypotheses do not borrow a
 mismatched fixture:

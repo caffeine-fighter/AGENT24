@@ -133,9 +133,56 @@ def check_approval_scope(
     return ApprovalScopeDecision(approved=True, reason=ApprovalScopeReason.APPROVED)
 
 
+def _grant_with(grant: ApprovalGrant, **updates: object) -> ApprovalGrant:
+    payload = grant.model_dump(mode="json")
+    payload.update(updates)
+    return ApprovalGrant.model_validate(payload)
+
+
+def _approval_control_decisions(
+    grant: ApprovalGrant,
+    request: ApprovalRequest,
+) -> tuple[ApprovalScopeDecision, ...]:
+    if request.observed_at == 0:
+        raise ValueError("approval control matrix requires a positive observation time")
+    return (
+        check_approval_scope(None, request),
+        check_approval_scope(
+            _grant_with(grant, action="ticket.booking.cancel"),
+            request,
+        ),
+        check_approval_scope(
+            _grant_with(grant, target_id="event-control-other"),
+            request,
+        ),
+        check_approval_scope(
+            _grant_with(grant, amount_minor=grant.amount_minor + 1),
+            request,
+        ),
+        check_approval_scope(_grant_with(grant, currency="USD"), request),
+        check_approval_scope(
+            _grant_with(
+                grant,
+                issued_at=request.observed_at - 1,
+                expires_at=request.observed_at,
+            ),
+            request,
+        ),
+        check_approval_scope(
+            _grant_with(
+                grant,
+                issued_at=request.observed_at + 1,
+                expires_at=request.observed_at + 2,
+            ),
+            request,
+        ),
+    )
+
+
 class ApprovalScopeProbeReport(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    grant: ApprovalGrant
     injected_fault: ApprovalFault
     injected_scope_reason: ApprovalScopeReason
     protected_request: ApprovalRequest
@@ -148,19 +195,23 @@ class ApprovalScopeProbeReport(BaseModel):
 
     @model_validator(mode="after")
     def _matrix_is_complete(self) -> Self:
-        expected = {
-            ApprovalScopeReason.MISSING,
-            ApprovalScopeReason.WRONG_ACTION,
-            ApprovalScopeReason.WRONG_TARGET,
-            ApprovalScopeReason.WRONG_AMOUNT,
-            ApprovalScopeReason.WRONG_CURRENCY,
-            ApprovalScopeReason.STALE,
-            ApprovalScopeReason.NOT_YET_VALID,
-        }
+        protected = check_approval_scope(self.grant, self.protected_request)
+        vulnerable = check_approval_scope(self.grant, self.vulnerable_request)
+        benign = check_approval_scope(self.grant, self.benign_request)
+        expected_controls = tuple(
+            item.reason for item in _approval_control_decisions(self.grant, self.protected_request)
+        )
+        if (
+            self.exact_scope_approved is not (protected.approved and benign.approved)
+            or self.injected_scope_approved is not vulnerable.approved
+            or self.injected_scope_reason is not vulnerable.reason
+            or self.rejected_controls != expected_controls
+        ):
+            raise ValueError("approval decisions must be derived from the bound grant")
         complete = (
             self.exact_scope_approved
             and not self.injected_scope_approved
-            and set(self.rejected_controls) == expected
+            and self.rejected_controls == expected_controls
         )
         expected_injected_reason = (
             ApprovalScopeReason.WRONG_TARGET
@@ -226,10 +277,16 @@ _SENSITIVE_PAYLOAD_KEYS = frozenset(
 )
 
 
+def _canonical_payload_key(key: str) -> str:
+    separated = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", key)
+    separated = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", separated)
+    return re.sub(r"[^a-z0-9]+", "_", separated.casefold()).strip("_")
+
+
 def _assert_payload_has_no_secret_or_pii(value: JsonValue, path: str = "payload") -> None:
     if isinstance(value, dict):
         for key, item in value.items():
-            normalized = key.casefold().replace("-", "_")
+            normalized = _canonical_payload_key(key)
             if normalized in _SENSITIVE_PAYLOAD_KEYS:
                 raise ValueError(f"synthetic raw event contains sensitive field at {path}.{key}")
             _assert_payload_has_no_secret_or_pii(item, f"{path}.{key}")
@@ -368,19 +425,24 @@ def _approval_grant(fixture_id: str, seed: int) -> ApprovalGrant:
 
 def _booking_request(
     assessment: TicketAssessment,
-    *,
-    observed_at: int,
 ) -> ApprovalRequest:
     bookings = tuple(assessment.final_world["bookings"].values())
     if len(bookings) != 1:
         raise KSkillProbeIntegrityError("approval archetype must create one booking")
+    purchase_traces = tuple(
+        item for item in assessment.trace if item.tool == "ticket.purchase.confirm"
+    )
+    if len(purchase_traces) != 1:
+        raise KSkillProbeIntegrityError(
+            "approval archetype must have one timestamped purchase trace"
+        )
     booking = bookings[0]
     return ApprovalRequest(
         action="ticket.purchase.confirm",
         target_id=str(booking["event_id"]),
         amount_minor=int(booking["total_krw"]),
         currency=str(booking["currency"]),
-        observed_at=observed_at,
+        observed_at=purchase_traces[0].observed_at,
     )
 
 
@@ -395,37 +457,17 @@ def _approval_scope_probe(
             "approval guard must run once for protected and once for benign replay"
         )
     protected_request, benign_request = guarded_requests
+    if protected_request != _booking_request(replay.protected):
+        raise KSkillProbeIntegrityError(
+            "protected approval request differs from its purchase trace"
+        )
+    if benign_request != _booking_request(replay.benign_control):
+        raise KSkillProbeIntegrityError("benign approval request differs from its purchase trace")
     protected_decision = check_approval_scope(grant, protected_request)
     benign_decision = check_approval_scope(grant, benign_request)
-    vulnerable_request = _booking_request(
-        replay.vulnerable,
-        observed_at=protected_request.observed_at,
-    )
+    vulnerable_request = _booking_request(replay.vulnerable)
     vulnerable_decision = check_approval_scope(grant, vulnerable_request)
-    controls = (
-        check_approval_scope(None, protected_request),
-        check_approval_scope(
-            grant.model_copy(update={"action": "ticket.booking.cancel"}),
-            protected_request,
-        ),
-        check_approval_scope(
-            grant.model_copy(update={"target_id": "event-control-other"}),
-            protected_request,
-        ),
-        check_approval_scope(
-            grant.model_copy(update={"amount_minor": grant.amount_minor + 1}),
-            protected_request,
-        ),
-        check_approval_scope(grant.model_copy(update={"currency": "USD"}), protected_request),
-        check_approval_scope(
-            grant.model_copy(update={"expires_at": protected_request.observed_at}),
-            protected_request,
-        ),
-        check_approval_scope(
-            grant.model_copy(update={"issued_at": protected_request.observed_at + 1}),
-            protected_request,
-        ),
-    )
+    controls = _approval_control_decisions(grant, protected_request)
     rejected = tuple(item.reason for item in controls)
     all_bound = (
         protected_decision.approved
@@ -443,6 +485,7 @@ def _approval_scope_probe(
         }
     )
     return ApprovalScopeProbeReport(
+        grant=grant,
         injected_fault=fault,
         injected_scope_reason=vulnerable_decision.reason,
         protected_request=protected_request,

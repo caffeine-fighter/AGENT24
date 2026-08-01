@@ -598,13 +598,15 @@ cases:
   - id: k-skill-approval-and-raw-boundary
     runner: pytest
     issue: 115
-    expectation: approval binds action, target, amount, currency, and freshness; exact Ticket call arguments/results remain structured raw events with no secret-like values, and the report labels target execution as not_executed
+    expectation: approval evidence binds the grant window plus each call's own virtual time, action, target, amount, and currency; exact Ticket call arguments/results remain structured raw events with no secret-like values, and the report labels target execution as not_executed
     targets:
       - tests/unit/test_k_skill_probes.py::test_approval_is_bound_to_action_target_amount_currency_and_freshness
       - tests/unit/test_k_skill_probes.py::test_approval_archetypes_run_all_scope_controls_before_acceptance
       - tests/unit/test_k_skill_probes.py::test_approval_scope_uses_actual_vulnerable_and_protected_booking_values
+      - tests/unit/test_k_skill_probes.py::test_approval_report_digest_and_decisions_bind_the_grant_window
       - tests/unit/test_k_skill_probes.py::test_ticket_approval_guard_denies_before_the_purchase_side_effect
       - tests/unit/test_k_skill_probes.py::test_raw_events_preserve_ticket_call_arguments_and_results_without_secret_values
+      - tests/unit/test_ticket_pack.py::test_ticket_tool_trace_records_each_calls_own_virtual_time
 
   # Pinned participant-repository intake (issue #62).
   - id: participant-pinned-static-profiles

@@ -268,6 +268,7 @@ class TicketWorld:
 class TicketToolTrace:
     seq: int
     tool: str
+    observed_at: int
     arguments_json: str
     result_json: str
     before_state_hash: str
@@ -285,6 +286,7 @@ class TicketToolTrace:
         return {
             "seq": self.seq,
             "tool": self.tool,
+            "observed_at": self.observed_at,
             "arguments": self.arguments,
             "result": self.result,
             "before_state_hash": self.before_state_hash,
@@ -933,6 +935,7 @@ class TicketGym:
             handler = dispatch[tool]
         except KeyError as error:
             raise ValueError(f"unsupported ticket tool: {tool}") from error
+        observed_at = int(datetime.fromisoformat(self.world.current_time).timestamp())
         before = self.world.state_hash
         result = handler(**arguments)
         after = self.world.state_hash
@@ -940,6 +943,7 @@ class TicketGym:
             TicketToolTrace(
                 seq=len(self._trace) + 1,
                 tool=tool,
+                observed_at=observed_at,
                 arguments_json=canonical_json(arguments),
                 result_json=canonical_json(result),
                 before_state_hash=before,
