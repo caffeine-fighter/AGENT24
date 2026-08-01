@@ -22,10 +22,12 @@ from agent24.agent import (
     metadata_fixture_for,
 )
 from agent24.agent.source import MappingRevisionResolver
+from agent24.agent.target_runtime import TARGET_ENTRYPOINT, TARGET_REPOSITORY
 from agent24.api import (
     ExternalAgentPreflight,
     ManifestFetchError,
     MappingManifestFetcher,
+    MappingSourceFileFetcher,
     OpenAIWhiteBoxAdapter,
     RuntimeSettings,
     create_app,
@@ -73,6 +75,21 @@ def _participant_preflight() -> ExternalAgentPreflight:
             evidence_fetcher=MappingEvidenceMetadataFetcher(metadata_fixture_for())
         ),
         retrieved_at="2026-08-01T20:30:00+09:00",
+    )
+
+
+def _reviewed_target_preflight() -> ExternalAgentPreflight:
+    repository_root = Path(__file__).resolve().parents[2]
+    manifest_path = repository_root / ".agent24" / "manifest.json"
+    manifest_bytes = manifest_path.read_bytes()
+    entrypoint_bytes = (repository_root / TARGET_ENTRYPOINT).read_bytes()
+    return ExternalAgentPreflight(
+        source_resolver=MappingRevisionResolver(
+            {(TARGET_REPOSITORY, "main"): PINNED_SHA}
+        ),
+        manifest_fetcher=MappingManifestFetcher({".agent24/manifest.json": manifest_bytes}),
+        source_file_fetcher=MappingSourceFileFetcher({TARGET_ENTRYPOINT: entrypoint_bytes}),
+        retrieved_at="2026-08-02T03:21:00+09:00",
     )
 
 
@@ -222,7 +239,11 @@ class _MockedDiagnosticOpenAIClient:
         if step == 0:
             name = "inspect_target"
             arguments = {
-                "target_ref": self.target_ref,
+                "target_ref": getattr(
+                    self,
+                    "target_ref",
+                    f"example/cake-agent@{PINNED_SHA}",
+                ),
                 **self._decision(name),
             }
         elif step == 1:
@@ -313,6 +334,78 @@ class _MockedDiagnosticOpenAIClient:
                     type="response.completed",
                 ),
             ]
+
+        async def stream() -> AsyncIterator[Any]:
+            for event in events:
+                yield event
+
+        return stream()
+
+
+class _TargetRuntimeOpenAIClient:
+    """Drive both the reviewed Target Agent and the final Lab explanation."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        self.init_kwargs = kwargs
+        self.responses = self
+        self.step = 0
+        self.lab_client = _MockedDiagnosticOpenAIClient()
+        self.lab_client.target_ref = f"{TARGET_REPOSITORY}@{PINNED_SHA}"
+        self.steps = [
+            ("catalog_search", {"query": "Birthday Cake", "max_price_krw": 50_000}),
+            ("payment_charge", {"product_id": "cake-49k", "quantity": 1}),
+            ("payment_charge", {"product_id": "cake-49k", "quantity": 1}),
+            (
+                "calendar_create",
+                {
+                    "title": "Birthday cake delivery",
+                    "start_at": "2026-08-01T10:00:00+09:00",
+                },
+            ),
+            ("__final_target__", {}),
+        ]
+
+    async def create(self, **kwargs: Any) -> AsyncIterator[Any]:
+        if self.step >= len(self.steps):
+            return await self.lab_client.create(**kwargs)
+        name, arguments = self.steps[min(self.step, len(self.steps) - 1)]
+        self.step += 1
+        if name.startswith("__final"):
+            text = (
+                "Target Agent order completed"
+                if name.endswith("target__")
+                else "Lab diagnosis"
+            )
+            item: Any = ResponseOutputMessage(
+                id=f"msg_target_{self.step}",
+                content=[ResponseOutputText(annotations=[], text=text, type="output_text")],
+                role="assistant",
+                status="completed",
+                type="message",
+            )
+        else:
+            item = ResponseFunctionToolCall(
+                id=f"fc_target_{self.step}",
+                call_id=f"call_target_{self.step}",
+                name=name,
+                arguments=json.dumps(arguments),
+                type="function_call",
+                status="completed",
+            )
+        response = _response(response_id=f"resp_target_{self.step}", output=[item])
+        events = [
+            ResponseOutputItemDoneEvent(
+                item=item,
+                output_index=0,
+                sequence_number=1,
+                type="response.output_item.done",
+            ),
+            ResponseCompletedEvent(
+                response=response,
+                sequence_number=2,
+                type="response.completed",
+            ),
+        ]
 
         async def stream() -> AsyncIterator[Any]:
             for event in events:
@@ -971,6 +1064,62 @@ def test_live_target_passes_bounded_synthetic_evidence_to_openai(
     assert "test-only-key" not in (tmp_path / f"{metadata['run_id']}.jsonl").read_text(
         encoding="utf-8"
     )
+
+
+def test_reviewed_target_runner_publishes_raw_target_oracle_and_protected_replay(
+    monkeypatch, tmp_path: Path
+) -> None:
+    client_double = _TargetRuntimeOpenAIClient()
+    runtime = OpenAIWhiteBoxAdapter(
+        preflight=_reviewed_target_preflight(),
+        openai_client=client_double,
+        settings=RuntimeSettings(openai_api_key=None),
+    )
+    app = create_app(runtime=runtime, artifact_root=tmp_path)
+
+    with TestClient(app) as client:
+        accepted = client.post(
+            "/api/runs",
+            json={
+                "input": "one input",
+                "target": _target_payload(
+                    repository_url="https://github.com/caffeine-fighter/AGENT24"
+                ),
+            },
+        )
+        events = _sse_data(client.get(accepted.json()["events_url"]).text)
+
+    event_types = [event["type"] for event in events]
+    target_calls = [event for event in events if event["type"] == "target.tool_call"]
+    target_results = [event for event in events if event["type"] == "target.tool_result"]
+    assert accepted.status_code == 202
+    assert len(target_calls) == len(target_results) == 4
+    assert event_types.index("target.oracle") < event_types.index("target.final_output")
+    oracle = next(event["payload"] for event in events if event["type"] == "target.oracle")
+    assert oracle["charge_count"] == 2
+    assert oracle["protected_replay"]["charge_count"] == 1
+    assert oracle["protected_replay"]["accepted"] is True
+    for field in (
+        "source_sha",
+        "manifest_hash",
+        "adapter_hash",
+        "runtime_hash",
+        "prompt_hash",
+    ):
+        if field == "source_sha":
+            assert len(oracle[field]) == 40
+        elif field == "manifest_hash":
+            assert len(oracle[field]) == 64
+        else:
+            assert oracle[field].startswith("sha256:")
+    replay = next(event["payload"] for event in events if event["type"] == "target.replay")
+    assert replay["accepted"] is True
+    assert replay["perturbed"]["charge_count"] == 2
+    assert replay["protected"]["charge_count"] == 1
+    completed = events[-1]["payload"]
+    assert completed["status"] == "completed"
+    assert completed["execution_scope"] == "target_runtime"
+    assert completed["target_charge_count"] == 2
 
 
 def test_live_target_rejects_a_premature_model_final_then_runs_named_reference(

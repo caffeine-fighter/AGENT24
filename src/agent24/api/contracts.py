@@ -12,11 +12,12 @@ ExecutionScope = Literal[
     "synthetic_archetype",
     "allowlisted_adapter",
     "target_sandbox",
+    "target_runtime",
     "no_target",
     "no_target_offline_demo",
 ]
 
-StageName = Literal["source", "diagnostic", "openai_analysis", "runtime"]
+StageName = Literal["source", "diagnostic", "openai_analysis", "target_runtime", "runtime"]
 
 
 class StageFailurePayload(BaseModel):
@@ -50,6 +51,8 @@ class RunTerminalPayload(BaseModel):
     message: str | None = Field(default=None, max_length=500)
     experiments_run: int | None = Field(default=None, ge=0)
     findings: int | None = Field(default=None, ge=0)
+    target_runtime_completed: bool | None = None
+    target_charge_count: int | None = Field(default=None, ge=0)
     safety_boundary: Literal["SIMULATION_ONLY", "TARGET_CODE_IN_SANDBOX"] = "SIMULATION_ONLY"
 
 

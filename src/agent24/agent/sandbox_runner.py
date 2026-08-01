@@ -14,6 +14,7 @@ import hashlib
 import json
 import math
 import os
+import queue
 import re
 import selectors
 import shutil
@@ -21,8 +22,10 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Callable
+from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -377,6 +380,14 @@ def _read_reviewed_bundle(repository_root: Path) -> ReviewedBundle:
 
 
 def _resource_limits_available() -> bool:
+    if os.name == "nt":
+        # Windows does not expose POSIX ``resource``.  The parent still
+        # enforces the reviewed RSS and CPU budgets by polling the native
+        # process counters in ``_drive``.
+        return (
+            _resident_memory_bytes(os.getpid()) is not None
+            and _process_cpu_seconds(os.getpid()) is not None
+        )
     if os.name != "posix":
         return False
     try:
@@ -391,6 +402,10 @@ def _resource_limits_available() -> bool:
 
 
 def _child_preexec(limits: SandboxLimits) -> Any:
+    if os.name != "posix":
+        # ``preexec_fn`` is unsupported by Windows' Popen implementation.
+        # Resource budgets are enforced by the host-side monitor instead.
+        return None
     import resource
 
     def apply_limits() -> None:
@@ -465,6 +480,122 @@ def _bounded_utf8(value: str, max_bytes: int) -> str:
     return encoded[:max_bytes].decode("utf-8", errors="ignore")
 
 
+def _windows_process_tree(root_pid: int) -> tuple[int, ...]:
+    """Return a process and its descendants (venv launchers spawn a child)."""
+
+    if os.name != "nt":
+        return (root_pid,)
+    try:
+        import ctypes
+
+        class _ProcessEntry32(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", wintypes.WCHAR * 260),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ProcessEntry32)]
+        kernel32.Process32FirstW.restype = wintypes.BOOL
+        kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ProcessEntry32)]
+        kernel32.Process32NextW.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
+        invalid_handle = ctypes.c_void_p(-1).value
+        if not snapshot or snapshot == invalid_handle:
+            return (root_pid,)
+        parents: dict[int, int] = {}
+        try:
+            entry = _ProcessEntry32()
+            entry.dwSize = ctypes.sizeof(entry)
+            if kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
+                while True:
+                    parents[int(entry.th32ProcessID)] = int(entry.th32ParentProcessID)
+                    if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
+                        break
+        finally:
+            kernel32.CloseHandle(snapshot)
+        descendants = [root_pid]
+        index = 0
+        while index < len(descendants):
+            parent = descendants[index]
+            descendants.extend(
+                pid
+                for pid, parent_pid in parents.items()
+                if parent_pid == parent and pid not in descendants
+            )
+            index += 1
+        return tuple(descendants)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return (root_pid,)
+
+
+def _windows_memory_single(pid: int) -> int | None:
+    try:
+        import ctypes
+
+        class _ProcessMemoryCounters(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("PageFaultCount", wintypes.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        process_query_information = 0x0400
+        process_vm_read = 0x0010
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        psapi.GetProcessMemoryInfo.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(_ProcessMemoryCounters),
+            wintypes.DWORD,
+        ]
+        psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+        handle = kernel32.OpenProcess(
+            process_query_information | process_vm_read,
+            False,
+            pid,
+        )
+        if not handle:
+            return None
+        try:
+            counters = _ProcessMemoryCounters()
+            counters.cb = ctypes.sizeof(counters)
+            if not psapi.GetProcessMemoryInfo(
+                handle,
+                ctypes.byref(counters),
+                ctypes.sizeof(counters),
+            ):
+                return None
+            return int(counters.WorkingSetSize)
+        finally:
+            kernel32.CloseHandle(handle)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
 def _resident_memory_bytes(pid: int) -> int | None:
     """Read child RSS without installing a monitoring dependency."""
 
@@ -477,6 +608,10 @@ def _resident_memory_bytes(pid: int) -> int | None:
         except (OSError, ValueError, IndexError):
             return None
         return None
+    if os.name == "nt":
+        values = [_windows_memory_single(child) for child in _windows_process_tree(pid)]
+        measured = [value for value in values if value is not None]
+        return sum(measured) if measured else None
     try:
         measured = subprocess.run(
             ["ps", "-o", "rss=", "-p", str(pid)],
@@ -488,6 +623,129 @@ def _resident_memory_bytes(pid: int) -> int | None:
         return int(measured) * 1024 if measured else None
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
+
+
+def _process_cpu_seconds(pid: int) -> float | None:
+    """Return child user+kernel CPU seconds where the host exposes it."""
+
+    if os.name != "nt":
+        return None
+
+    def process_cpu_single(process_id: int) -> float | None:
+        try:
+            import ctypes
+
+            class _FileTime(ctypes.Structure):
+                _fields_ = [
+                    ("dwLowDateTime", wintypes.DWORD),
+                    ("dwHighDateTime", wintypes.DWORD),
+                ]
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            kernel32.CloseHandle.restype = wintypes.BOOL
+            kernel32.GetProcessTimes.argtypes = [
+                wintypes.HANDLE,
+                ctypes.POINTER(_FileTime),
+                ctypes.POINTER(_FileTime),
+                ctypes.POINTER(_FileTime),
+                ctypes.POINTER(_FileTime),
+            ]
+            kernel32.GetProcessTimes.restype = wintypes.BOOL
+            handle = kernel32.OpenProcess(0x1000, False, process_id)
+            if not handle:
+                return None
+            try:
+                creation = _FileTime()
+                exit_time = _FileTime()
+                kernel = _FileTime()
+                user = _FileTime()
+                if not kernel32.GetProcessTimes(
+                    handle,
+                    ctypes.byref(creation),
+                    ctypes.byref(exit_time),
+                    ctypes.byref(kernel),
+                    ctypes.byref(user),
+                ):
+                    return None
+
+                def seconds(value: _FileTime) -> float:
+                    ticks = (int(value.dwHighDateTime) << 32) | int(value.dwLowDateTime)
+                    return ticks / 10_000_000
+
+                return seconds(kernel) + seconds(user)
+            finally:
+                kernel32.CloseHandle(handle)
+        except (AttributeError, OSError, TypeError, ValueError):
+            return None
+
+    try:
+        values = [process_cpu_single(child) for child in _windows_process_tree(pid)]
+        measured = [value for value in values if value is not None]
+        return sum(measured) if measured else None
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
+class _WindowsPipeSelector:
+    """Small selector-shaped adapter for Windows' non-selectable pipe handles."""
+
+    def __init__(self) -> None:
+        self._events: queue.Queue[tuple[int, bytes]] = queue.Queue()
+        self._keys: dict[int, selectors.SelectorKey] = {}
+        self._ready: dict[int, list[bytes]] = {}
+
+    def register(self, fileobj: Any, events: int, data: Any = None) -> selectors.SelectorKey:
+        key = selectors.SelectorKey(fileobj, fileobj.fileno(), events, data)
+        self._keys[key.fd] = key
+
+        def read_pipe() -> None:
+            while True:
+                try:
+                    chunk = os.read(key.fd, 64 * 1024)
+                except OSError:
+                    chunk = b""
+                self._events.put((key.fd, chunk))
+                if not chunk:
+                    return
+
+        threading.Thread(target=read_pipe, daemon=True).start()
+        return key
+
+    def select(self, timeout: float | None = None) -> list[tuple[selectors.SelectorKey, int]]:
+        try:
+            fd, chunk = self._events.get(timeout=timeout)
+        except queue.Empty:
+            return []
+        if fd not in self._keys:
+            return []
+        self._ready.setdefault(fd, []).append(chunk)
+        return [(self._keys[fd], selectors.EVENT_READ)]
+
+    def read(self, fileobj: Any) -> bytes:
+        fd = fileobj.fileno()
+        chunks = self._ready.get(fd)
+        if not chunks:
+            return b""
+        chunk = chunks.pop(0)
+        if not chunks:
+            self._ready.pop(fd, None)
+        return chunk
+
+    def unregister(self, fileobj: Any) -> selectors.SelectorKey:
+        fd = fileobj.fileno()
+        key = self._keys.pop(fd)
+        self._ready.pop(fd, None)
+        return key
+
+    def get_map(self) -> dict[int, selectors.SelectorKey]:
+        return self._keys
+
+    def close(self) -> None:
+        self._keys.clear()
+        self._ready.clear()
 
 
 def _strict_json_line(line: bytes) -> dict[str, Any]:
@@ -657,8 +915,16 @@ class LocalSandboxRunner:
             if os.name == "posix":
                 os.killpg(process.pid, signal.SIGKILL)
             else:
-                process.kill()
-        except (ProcessLookupError, OSError):
+                # A venv's Windows python.exe can be a launcher with a real
+                # interpreter descendant; terminate the complete tree so no
+                # child keeps the temporary workdir open.
+                subprocess.run(
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    capture_output=True,
+                    check=False,
+                    timeout=2,
+                )
+        except (ProcessLookupError, OSError, subprocess.SubprocessError):
             pass
         try:
             process.wait(timeout=1)
@@ -701,7 +967,7 @@ class LocalSandboxRunner:
         if process.stdout is None or process.stderr is None or process.stdin is None:
             return None, SandboxFailure("runner_spawn_failed", "child pipes were unavailable")
 
-        selector = selectors.DefaultSelector()
+        selector: Any = _WindowsPipeSelector() if os.name == "nt" else selectors.DefaultSelector()
         selector.register(process.stdout, selectors.EVENT_READ, "stdout")
         selector.register(process.stderr, selectors.EVENT_READ, "stderr")
         stdout_buffer = bytearray()
@@ -714,6 +980,7 @@ class LocalSandboxRunner:
         protected_key: str | None = None
         unknown_payment_seen = False
         deadline = time.monotonic() + self.limits.wall_clock_seconds
+        process_exit_deadline: float | None = None
 
         def fail(code: SandboxFailureCode, message: str) -> None:
             nonlocal failure
@@ -922,12 +1189,20 @@ class LocalSandboxRunner:
                     if resident is not None and resident > self.limits.memory_bytes:
                         fail("memory_limit_exceeded", "child memory budget exceeded")
                         break
+                    cpu_seconds = _process_cpu_seconds(process.pid)
+                    if cpu_seconds is not None and cpu_seconds > self.limits.cpu_seconds:
+                        fail("cpu_time_exceeded", "child CPU budget exceeded")
+                        break
                 selected = selector.select(min(remaining, _MEMORY_POLL_SECONDS))
                 if not selected:
                     continue
                 for key, _ in selected:
                     try:
-                        chunk = os.read(key.fileobj.fileno(), 64 * 1024)
+                        chunk = (
+                            selector.read(key.fileobj)
+                            if os.name == "nt"
+                            else os.read(key.fileobj.fileno(), 64 * 1024)
+                        )
                     except OSError:
                         chunk = b""
                     if not chunk:
@@ -966,10 +1241,15 @@ class LocalSandboxRunner:
                             break
                 if failure is not None:
                     break
-                if result is not None and process.poll() is not None:
-                    break
-                if process.poll() is not None and not selector.get_map():
-                    break
+                if process.poll() is not None:
+                    # Pipe EOF and process-handle reaping are not ordered.
+                    # Give readers a short grace period to drain frames
+                    # written just before process exit; an exit without a
+                    # result then becomes a typed runner crash.
+                    if process_exit_deadline is None:
+                        process_exit_deadline = time.monotonic() + 0.5
+                    if not selector.get_map() or time.monotonic() >= process_exit_deadline:
+                        break
         finally:
             selector.close()
 
@@ -1200,7 +1480,12 @@ class LocalSandboxRunner:
                         initial_state_hash=initial_state_hash,
                     )
                 command = [
-                    sys.executable,
+                    (
+                        getattr(sys, "_base_executable", None)
+                        if os.name == "nt"
+                        and getattr(sys, "_base_executable", None)
+                        else sys.executable
+                    ),
                     "-I",
                     "-S",
                     "-u",
