@@ -47,15 +47,21 @@ from .research_pack import (
 )
 from .sandbox import TOOL_MANIFEST, SandboxGym
 from .stock_pack import (
+    MAX_STOCK_TOOL_CALL_BUDGET,
     STOCK_CLEAN_FIXTURE,
     STOCK_FAILURE_FIXTURES,
     STOCK_FIXTURE_IDS,
     STOCK_FULL_FIXTURE,
+    STOCK_PACK_METADATA,
     STOCK_TOOL_MANIFEST,
     SourceAttribution,
     StockAssessment,
+    StockDomainPackAdapter,
     StockFixture,
     StockGym,
+    StockProtectedReplayReport,
+    StockReplayPolicy,
+    stock_protected_replay,
 )
 from .ticket_pack import (
     DEFAULT_TICKET_SEED,
@@ -111,6 +117,7 @@ __all__ = [
     "FAULT_TYPES",
     "FIXTURES",
     "MAX_ADHOC_TOOL_CALL_BUDGET",
+    "MAX_STOCK_TOOL_CALL_BUDGET",
     "MAX_TICKET_TOOL_CALL_BUDGET",
     "PAYMENT_FIXTURE",
     "RESEARCH_CLEAN_FIXTURE",
@@ -123,6 +130,7 @@ __all__ = [
     "STOCK_FAILURE_FIXTURES",
     "STOCK_FIXTURE_IDS",
     "STOCK_FULL_FIXTURE",
+    "STOCK_PACK_METADATA",
     "STOCK_TOOL_MANIFEST",
     "TOOL_MANIFEST",
     "TICKET_BENIGN_FIXTURES",
@@ -163,8 +171,11 @@ __all__ = [
     "SideEffectLedger",
     "SourceAttribution",
     "StockAssessment",
+    "StockDomainPackAdapter",
     "StockFixture",
     "StockGym",
+    "StockProtectedReplayReport",
+    "StockReplayPolicy",
     "StripeLikePaymentProvider",
     "SyntheticGym",
     "TicketAssessment",
@@ -193,5 +204,6 @@ __all__ = [
     "load_fixture",
     "protected_replay",
     "select_adhoc_scenarios",
+    "stock_protected_replay",
     "ticket_protected_replay",
 ]
