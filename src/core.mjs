@@ -39,6 +39,8 @@ export function createInitialState(target = DEFAULT_TARGET) {
     patch: null,
     finalOutput: null,
     terminalNotice: null,
+    sourceDescriptor: null,
+    sourceDescriptorView: null,
     behaviorProfile: null,
     behaviorProfileView: null,
     experimentPlan: null,
@@ -72,6 +74,7 @@ const TYPE_ALIASES = Object.freeze({
   run_started: "run.started",
   run_completed: "run.completed",
   run_failed: "run.failed",
+  source_descriptor: "source.descriptor",
   behavior_profile: "behavior.profile",
   experiment_plan: "experiment.plan",
   lab_report: "lab.report",
@@ -95,6 +98,24 @@ function profileEvidenceLabel(reference) {
     ? `trace[${reference?.trace_index ?? "?"}]`
     : `manifest.${reference?.path || "?"}`;
   return reference?.detail ? `${location}: ${reference.detail}` : location;
+}
+
+export function projectSourceDescriptor(input) {
+  const descriptor = input && typeof input === "object" ? input : {};
+  const repository = descriptor.repository || "repository 정보 없음";
+  const resolvedSha = typeof descriptor.resolved_sha === "string"
+    ? descriptor.resolved_sha.trim().toLowerCase()
+    : null;
+  return {
+    repository,
+    repositoryUrl: descriptor.repository_url || null,
+    sourceUrl: descriptor.source_url || null,
+    requestedRef: descriptor.requested_ref || null,
+    resolvedSha,
+    retrievedAt: descriptor.retrieved_at || null,
+    resolver: descriptor.resolver || "unknown resolver",
+    sourceRef: resolvedSha ? `${repository}@${resolvedSha}` : repository,
+  };
 }
 
 const ASSESSMENT_FIELDS = Object.freeze([
@@ -162,6 +183,11 @@ function resolvedShaFromSourceRef(sourceRef) {
   const value = typeof sourceRef === "string" ? sourceRef.trim() : "";
   const match = value.match(/(?:@|\/commit\/)([0-9a-f]{7,64})$/i);
   return match?.[1] || null;
+}
+
+function immutableSha(value) {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return /^[0-9a-f]{40,64}$/.test(normalized) ? normalized : null;
 }
 
 export function projectLabReport(input) {
@@ -321,6 +347,25 @@ export function reduceRunState(previousState, incomingEvent) {
       };
     case "offline_demo":
       return { ...state, mode: "offline_demo" };
+    case "source.descriptor": {
+      const sourceDescriptorView = projectSourceDescriptor(event.data);
+      const resolvedSha = event.source === "live"
+        ? immutableSha(sourceDescriptorView.resolvedSha)
+        : null;
+      return {
+        ...state,
+        sourceDescriptor: event.data,
+        sourceDescriptorView,
+        target: resolvedSha
+          ? {
+              ...previousState.target,
+              repositoryUrl: sourceDescriptorView.repositoryUrl || previousState.target.repositoryUrl,
+              requestedRef: sourceDescriptorView.requestedRef || previousState.target.requestedRef,
+              resolvedSha,
+            }
+          : previousState.target,
+      };
+    }
     case "behavior.profile": {
       const behaviorProfileView = projectBehaviorProfile(event.data);
       const resolvedSha = event.source === "live"
@@ -654,6 +699,18 @@ export function createCakeExperimentPlan(mission = DEFAULT_MISSION) {
   };
 }
 
+export function createCakeSourceDescriptor() {
+  return {
+    repository: "caffeine-fighter/AGENT24",
+    repository_url: "https://github.com/caffeine-fighter/AGENT24",
+    source_url: "https://github.com/caffeine-fighter/AGENT24/tree/main",
+    requested_ref: "main",
+    resolved_sha: "0123456789abcdef0123456789abcdef01234567",
+    retrieved_at: "2026-08-01T15:00:04+09:00",
+    resolver: "fixture",
+  };
+}
+
 export function createCakeCrashFixture(mission = DEFAULT_MISSION, target = DEFAULT_TARGET) {
   const runId = "fixture-cake-timeout-v1";
   const patch = [
@@ -665,6 +722,7 @@ export function createCakeCrashFixture(mission = DEFAULT_MISSION, target = DEFAU
     "  max_spend_krw: 50000",
     "  max_purchase_count: 1",
   ].join("\n");
+  const sourceDescriptor = createCakeSourceDescriptor();
   const behaviorProfile = createCakeBehaviorProfile();
   const experimentPlan = createCakeExperimentPlan(mission);
   const labReport = createCakeLabReport(mission);
@@ -679,6 +737,7 @@ export function createCakeCrashFixture(mission = DEFAULT_MISSION, target = DEFAU
     event(runId, 3, 2, "tool_call", "CLONE", { tool: "gym.clone_world" }, { type: "tool_call", name: "gym.clone_world", arguments: { fixture_id: "cake-timeout-v1" } }),
     event(runId, 4, 3, "tool_result", "CLONE", { tool: "gym.clone_world" }, { type: "tool_result", name: "gym.clone_world", output: { wallet_krw: 500000, orders: 0, simulation: true } }),
     event(runId, 5, 4, "world.snapshot", "CLONE", { target: "before", world: { ...INITIAL_WORLD } }),
+    event(runId, 5, 4, "source_descriptor", "CLONE", sourceDescriptor, sourceDescriptor),
     event(runId, 6, 5, "behavior_profile", "CLONE", behaviorProfile, behaviorProfile),
     event(runId, 6, 5, "experiment_plan", "CLONE", experimentPlan, experimentPlan),
     event(runId, 6, 5, "phase.changed", "CRASH", { phase: "CRASH" }),
