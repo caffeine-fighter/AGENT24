@@ -11,6 +11,8 @@ requires-python = ">=3.11"
 dependencies = [
   "fastapi",
   "openai-agents",
+  # Imported directly by agent24.agent; JsonValue needs >= 2.5.
+  "pydantic>=2.7",
   "pydantic-settings",
   "uvicorn[standard]",
 ]
