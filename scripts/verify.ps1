@@ -8,7 +8,12 @@ $BrowserSummary = Join-Path $ArtifactDirectory "browser-smoke-summary.json"
 $OriginalPythonPath = $env:PYTHONPATH
 $CompletedGates = [System.Collections.Generic.List[string]]::new()
 
-function Write-BrowserPrerequisiteFailure {
+function Write-BrowserFailure {
+    param(
+        [Parameter(Mandatory = $true)][string]$CaseId,
+        [Parameter(Mandatory = $true)][string]$Code
+    )
+
     New-Item -ItemType Directory -Force -Path $ArtifactDirectory | Out-Null
     $Summary = [ordered]@{
         schema = "agent24.browser-smoke.v1"
@@ -16,8 +21,8 @@ function Write-BrowserPrerequisiteFailure {
         passed = $false
         cases = @()
         failure = [ordered]@{
-            case_id = "prerequisites"
-            code = "dependency_install_failed"
+            case_id = $CaseId
+            code = $Code
         }
     }
     $Summary | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $BrowserSummary -Encoding utf8
@@ -57,7 +62,9 @@ function Invoke-Gate {
     Write-Host "VERIFY $Name PASS"
 }
 
-Write-BrowserPrerequisiteFailure
+if (Test-Path -LiteralPath $BrowserSummary) {
+    Remove-Item -LiteralPath $BrowserSummary -Force
+}
 Push-Location $RepoRoot
 try {
     Invoke-Gate "prerequisites" {
@@ -131,6 +138,9 @@ try {
     }
 
     Invoke-Gate "browser" {
+        # This fallback exists only while browser dependencies or server startup are unresolved.
+        # Once Playwright starts, canonical-flow.spec.mjs replaces it with observed case evidence.
+        Write-BrowserFailure "prerequisites" "dependency_install_failed"
         & (Join-Path $RepoRoot "scripts/install-browser.ps1")
         Assert-LastExitCode "browser" "run ./scripts/install-browser.ps1 after npm --prefix site ci --engine-strict."
         Push-Location (Join-Path $RepoRoot "site")
@@ -142,7 +152,10 @@ try {
             Pop-Location
         }
         node scripts/validate-browser-summary.mjs
-        Assert-LastExitCode "browser" "regenerate the sanitized browser summary with the repository test runner."
+        if ($LASTEXITCODE -ne 0) {
+            Write-BrowserFailure "artifact_export" "artifact_policy_failed"
+            throw "VERIFY browser FAIL: browser summary violates the closed schema. Recover: regenerate the sanitized browser summary with the repository test runner."
+        }
     }
 
     Invoke-Gate "hygiene" {
@@ -156,7 +169,10 @@ try {
             throw "VERIFY hygiene FAIL: a forbidden secret, log, or generated artifact is tracked. Recover: remove it from Git and keep only the documented example or ignore file."
         }
         node scripts/validate-browser-summary.mjs
-        Assert-LastExitCode "hygiene" "remove unapproved browser artifact fields or files and rerun the browser gate."
+        if ($LASTEXITCODE -ne 0) {
+            Write-BrowserFailure "artifact_export" "artifact_policy_failed"
+            throw "VERIFY hygiene FAIL: browser artifact policy failed. Recover: remove unapproved browser artifact fields or files and rerun the browser gate."
+        }
     }
 
     $GateList = [string]::Join(",", $CompletedGates)
