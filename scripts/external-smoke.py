@@ -18,8 +18,10 @@ from agent24.agent.report import canonical_report_json
 from agent24.agent.source import GitHubApiRevisionResolver
 from agent24.api.preflight import (
     ExternalAgentPreflight,
+    ExternalPreflightResult,
     ExternalTarget,
     GitHubContentsManifestFetcher,
+    GitHubContentsSourceFetcher,
 )
 from agent24.tools import PAYMENT_FIXTURE, protected_replay
 
@@ -32,8 +34,13 @@ async def run_once(target: ExternalTarget) -> dict[str, object]:
     runner = ExternalAgentPreflight(
         source_resolver=GitHubApiRevisionResolver(token=token),
         manifest_fetcher=GitHubContentsManifestFetcher(token=token),
+        source_file_fetcher=GitHubContentsSourceFetcher(token=token),
     )
     preflight = await asyncio.to_thread(runner.run, target)
+    if not isinstance(preflight, ExternalPreflightResult):
+        raise RuntimeError(
+            "target did not provide an executable owner manifest; no experiment was run"
+        )
     if not isinstance(preflight.decision, ExperimentPlan):
         # Carry the detail, not just the reason.  A mission-scope stop and an
         # unroutable manifest both report ``unsupported_input``, and the reason

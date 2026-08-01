@@ -32,6 +32,17 @@ replay를 실행하고 `finding_report`와 호환 `lab_report`를 발행한다. 
 code는 import하거나 실행하지 않으며 이 제한이 두 보고서에 남는다. 결제 P0은 같은
 seed의 `SandboxGym` protected replay도 같은 run에 evidence로 기록한다.
 
+allowlisted manifest가 없더라도 exact pinned source가 reviewed adapter와 일치하면
+`adapter.matched`를 먼저 기록한다. 현재 P0 adapter는
+`Upsonic/UCP-Agent@3f98ef03111e560afe92347333865ccac9081d93`의
+`upsonic_shopping_agent.py`만 허용한다. entrypoint는 Python AST로 imports, literal
+`SYSTEM_PROMPT`, UCP tool vocabulary, `create_agent`의 tool attachment를 확인하고,
+실행은 `network_disabled_local_replacement` facade에서만 한다. upstream Python,
+dependency install/import, merchant·결제 network와 실제 side effect는 실행하지 않는다.
+이 경로의 `source_snapshot.execution_scope`은 `allowlisted_adapter`이며,
+`experiment_plan`의 fault target과 `gym.tool_call`은 외부 이름인 `complete_purchase`를
+그대로 보존한다.
+
 owner manifest가 없으면 exact pinned source에 검토된 static profile이 있을 때만
 metadata-only compatibility candidate를 반환한다. 이 경로는 experiments 0, findings 0인
 `compatibility_report`에서 terminal 상태가 되며 OpenAI나 synthetic Gym을 호출하지 않는다.
@@ -42,7 +53,9 @@ metadata-only compatibility candidate를 반환한다. 이 경로는 experiments
 모델은 `inspect_synthetic_gym` 도구를 호출해 결과를 설명하되 synthetic archetype
 측정을 제출 저장소 자체의 실행 결과로 표현해서는 안 된다. source 또는 malformed
 manifest를 읽지 못하면
-외부 Agent를 진단했다고 주장하지 않고 `run_failed` 뒤 명시적 `offline_demo`로 전환한다.
+외부 Agent를 진단했다고 주장하지 않고 `run_failed` 뒤 `run_completed(status=source_preflight_failed)`로
+종료한다. 이 terminal은 experiments 0, findings 0이며 일반 offline synthetic Gym으로
+전환하지 않는다.
 
 로컬 실행:
 

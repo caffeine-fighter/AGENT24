@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import json
 
+import pytest
+
 from agent24.agent.models import ExperimentPlan, StopDecision
 from agent24.agent.participant_intake import (
     CompatibilityStatus,
@@ -10,10 +12,14 @@ from agent24.agent.participant_intake import (
 )
 from agent24.agent.source import MappingRevisionResolver, SourceDescriptor
 from agent24.api.preflight import (
+    MAX_ENTRYPOINT_BYTES,
     ExternalAgentPreflight,
     ExternalTarget,
     GitHubContentsManifestFetcher,
+    GitHubContentsSourceFetcher,
     MappingManifestFetcher,
+    MappingSourceFileFetcher,
+    SourceFileFetchError,
 )
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
@@ -100,6 +106,31 @@ def test_mapping_fetcher_uses_allowlist_order_and_is_deterministic() -> None:
     assert first.model_dump_json() == second.model_dump_json()
 
 
+def test_preflight_records_bounded_entrypoint_without_executing_it() -> None:
+    preflight = ExternalAgentPreflight(
+        source_resolver=MappingRevisionResolver(
+            {("example/cake-agent", "main"): SHA}
+        ),
+        manifest_fetcher=MappingManifestFetcher(
+            {".agent24/manifest.json": manifest_json()}
+        ),
+        source_file_fetcher=MappingSourceFileFetcher(
+            {"agent/main.py": "raise RuntimeError('must not execute')"}
+        ),
+        retrieved_at="2026-08-01T17:45:00+09:00",
+    )
+
+    result = preflight.run(TARGET)
+
+    assert result.source_snapshot.execution_scope == "manifest_and_entrypoint"
+    assert [file.path for file in result.source_snapshot.files] == [
+        ".agent24/manifest.json",
+        "agent/main.py",
+    ]
+    assert result.source_snapshot.files[1].retrieval_mode == "bounded_download"
+    assert result.source_snapshot.files[1].content_sha256 is not None
+
+
 def test_absent_manifest_returns_honest_unsupported_compatibility() -> None:
     preflight = ExternalAgentPreflight(
         source_resolver=MappingRevisionResolver(
@@ -164,3 +195,66 @@ def test_github_fetcher_accepts_line_wrapped_base64_and_keeps_token_in_header(
     assert manifest_path == ".agent24/manifest.json"
     assert fetched == manifest_bytes
     assert captured == {"authorization": "Bearer test-token", "timeout": 3.0}
+
+
+def test_github_source_fetcher_reads_pinned_entrypoint_and_enforces_bound(
+    monkeypatch,
+) -> None:
+    entrypoint_bytes = b"raise RuntimeError('never execute this source')\n"
+    response_body = json.dumps(
+        {
+            "encoding": "base64",
+            "content": base64.encodebytes(entrypoint_bytes).decode("ascii"),
+        }
+    ).encode("utf-8")
+    captured: dict[str, str | float] = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit: int) -> bytes:
+            return response_body
+
+    def fake_urlopen(request, *, timeout: float):
+        captured["url"] = request.full_url
+        captured["authorization"] = request.get_header("Authorization")
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr("agent24.api.preflight.urlopen", fake_urlopen)
+    source = SourceDescriptor(
+        repository="example/cake-agent",
+        repository_url="https://github.com/example/cake-agent",
+        source_url="https://github.com/example/cake-agent/tree/main",
+        requested_ref="main",
+        resolved_sha=SHA,
+        retrieved_at="2026-08-01T17:45:00+09:00",
+        resolver="fixture",
+    )
+
+    fetched = GitHubContentsSourceFetcher(
+        token="test-token",
+        timeout_seconds=4.0,
+    ).fetch(source, "agent/main.py")
+
+    assert fetched == entrypoint_bytes
+    assert captured == {
+        "url": f"https://api.github.com/repos/example/cake-agent/contents/agent/main.py?ref={SHA}",
+        "authorization": "Bearer test-token",
+        "timeout": 4.0,
+    }
+
+    oversized = b"x" * (MAX_ENTRYPOINT_BYTES + 1)
+    oversized_body = json.dumps(
+        {
+            "encoding": "base64",
+            "content": base64.b64encode(oversized).decode("ascii"),
+        }
+    ).encode("utf-8")
+    response_body = oversized_body
+    with pytest.raises(SourceFileFetchError, match="bounded intake limit"):
+        GitHubContentsSourceFetcher(token="test-token").fetch(source, "agent/main.py")
