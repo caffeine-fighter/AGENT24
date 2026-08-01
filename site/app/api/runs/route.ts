@@ -1,4 +1,5 @@
 import { contextToSearchParams, type HostedPlan, type HostedRunContext } from "@/lib/hosted-lab";
+import { BUILD_COMMIT, isBuildSource } from "@/lib/build-provenance";
 
 export const runtime = "edge";
 
@@ -40,6 +41,9 @@ function githubCoordinates(repositoryUrl: string): { owner: string; repository: 
 async function resolveGitHubRef(repositoryUrl: string, requestedRef: string) {
   const coordinates = githubCoordinates(repositoryUrl);
   if (!coordinates) return { resolvedSha: null, resolver: "invalid-github-url" };
+  if (isBuildSource(coordinates.owner, coordinates.repository, requestedRef)) {
+    return { resolvedSha: BUILD_COMMIT, resolver: "sites-build-provenance" };
+  }
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
     "User-Agent": "nightmare-lab-hosted",

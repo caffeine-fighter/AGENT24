@@ -2,7 +2,7 @@
 
 This directory packages the existing NIGHTMARE LAB interface for Sites. It keeps the browser experience intact and adds a Cloudflare Worker-compatible API surface:
 
-- `POST /api/runs` resolves the requested GitHub ref and asks the OpenAI Responses API for a bounded experiment rationale.
+- `POST /api/runs` pins the default private target to the immutable Sites build commit, resolves other requested GitHub refs, and asks the OpenAI Responses API for a bounded experiment rationale.
 - `GET /api/runs/:runId/events` emits the autonomous CLONE → CRASH → AUTOPSY → VACCINE → REPLAY trace over SSE.
 - `/health` reports configuration without returning credentials.
 
@@ -24,12 +24,12 @@ Open [http://localhost:3000](http://localhost:3000). Runtime variables are docum
 
 ## Deployment smoke
 
-After `OPENAI_API_KEY` and a private-repository-capable `GITHUB_TOKEN` are configured as production secrets, verify the real hosted path from the repository root:
+After `OPENAI_API_KEY` is configured as a production secret, verify the real hosted path from the repository root:
 
 ```bash
 python scripts/hosted-smoke.py
 ```
 
-The command requires `openai_hosted`, a pinned 40-character GitHub SHA, all five phases, 34 contiguous SSE events, an OpenAI `resp_…` evidence ID, and a verified `SIMULATION_ONLY` terminal event. It prints no credential values.
+The command requires `openai_hosted`, a pinned 40-character source SHA, all five phases, 34 contiguous SSE events, an OpenAI `resp_…` evidence ID, and a verified `SIMULATION_ONLY` terminal event. The default `caffeine-fighter/AGENT24@main` source uses the exact commit embedded during the Sites build, so it does not need a broad GitHub token. `GITHUB_TOKEN` remains optional for other private targets. The command prints no credential values.
 
 For an owner-only Sites deployment, place only the bypass token in the process environment as `SITES_BYPASS_TOKEN`; the script sends it as `OAI-Sites-Authorization: Bearer …`. Never pass it on the command line or commit it. To rehearse the explicit fallback without a private GitHub token, use a public source: `--base-url http://localhost:3000 --expect-mode offline_demo --repository https://github.com/openai/openai-python`.
