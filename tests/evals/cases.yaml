@@ -637,3 +637,33 @@ cases:
     targets:
       - tests/evals/test_registry.py::test_the_live_stub_never_reaches_the_network
       - tests/evals/test_registry.py::test_the_live_stub_restores_the_ambient_environment
+
+  # D5a Q3 · controller/outcome evidence (issue #13, family C3/C4 controller
+  # half).  The authoritative case set is the ratified manifest vendored at
+  # tests/evals/d5a-plan.json; the guard reads it rather than restating it.
+  - id: d5a-q3-controller-success
+    runner: pytest
+    issue: 13
+    expectation: CS-03 the healthy twin and the failing run first diverge where the AUT opens a second payment intent instead of retrieving the unreconciled original, cited by ledger position and independently by the controller oracle, while the protected run reconciles and rejoins the twin; CS-05 one accepted run emits exactly one terminal with no run_failed and every success signal measured rather than narrated
+    targets:
+      - tests/acceptance/test_controller_success.py::test_cs_03_first_divergence_cites_the_unreconciled_original_payment_intent
+      - tests/acceptance/test_controller_success.py::test_cs_05_an_accepted_run_emits_exactly_one_terminal
+      - tests/acceptance/test_controller_success.py::test_cs_05_the_terminal_is_reached_without_a_model_call
+      - tests/acceptance/test_controller_success.py::test_every_c3_case_in_the_ratified_plan_is_accounted_for
+  - id: d5a-q3-honest-outcomes
+    runner: pytest
+    issue: 13
+    expectation: HO-02 a run that found nothing carries the not-a-safety-certificate sentence and no observed, patch, verification, hypothesis, divergence or counterexample field; HO-03 either declared bound exhausts the budget, an exhausted budget is not a clean result, and an unsupported input outranks it
+    targets:
+      - tests/acceptance/test_honest_outcomes.py::test_ho_02_a_run_that_found_nothing_does_not_claim_safety
+      - tests/acceptance/test_honest_outcomes.py::test_ho_02_a_non_finding_state_carries_no_finding_fields
+      - tests/acceptance/test_honest_outcomes.py::test_ho_03_an_exhausted_budget_is_not_a_clean_result
+      - tests/acceptance/test_honest_outcomes.py::test_ho_03_either_bound_exhausts_the_budget
+      - tests/acceptance/test_honest_outcomes.py::test_ho_03_an_unsupported_input_outranks_an_exhausted_budget
+      - tests/acceptance/test_honest_outcomes.py::test_every_c4_case_in_the_ratified_plan_is_accounted_for
+  - id: d5a-q3-traceability-guard
+    runner: pytest
+    issue: 13
+    expectation: the authoritative case set is read from the ratified manifest rather than restated, so a case dropped from every bucket is still caught; an invented case id, a case claimed twice, an implemented case naming a missing test, a covered case naming a node id pytest cannot collect, a module claiming a family the plan did not assign it, and a blocked case with no reason are each rejected
+    targets:
+      - tests/acceptance/test_traceability_guard.py
