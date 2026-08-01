@@ -13,6 +13,7 @@ class RuntimeSettings(BaseSettings):
 
     openai_api_key: str | None = None
     openai_model: str | None = None
+    github_token: str | None = None
     run_timeout_seconds: float = Field(default=45.0, validation_alias="AGENT24_RUN_TIMEOUT_SECONDS")
     raw_event_log_dir: str = Field(
         default="artifacts/raw-streams", validation_alias="RAW_EVENT_LOG_DIR"

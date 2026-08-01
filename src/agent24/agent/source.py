@@ -242,8 +242,14 @@ class GitHubApiRevisionResolver:
 
     name = "github-api"
 
-    def __init__(self, *, timeout_seconds: float = 5.0) -> None:
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = 5.0,
+        token: str | None = None,
+    ) -> None:
         self.timeout_seconds = timeout_seconds
+        self.token = token
 
     def _get_json(self, path: str) -> dict[str, object]:
         request = Request(
@@ -251,6 +257,7 @@ class GitHubApiRevisionResolver:
             headers={
                 "Accept": "application/vnd.github+json",
                 "User-Agent": "agent24-nightmare-lab",
+                **({"Authorization": f"Bearer {self.token}"} if self.token else {}),
             },
         )
         try:
