@@ -2,6 +2,7 @@ import {
   createCakeCrashFixture,
   createInitialState,
   createUnsupportedFixture,
+  EXAMPLE_AGENT_TARGET,
   isDocumentedUnsupportedMission,
   formatRunInput,
   getInitialTarget,
@@ -12,6 +13,43 @@ import {
 
 const $ = (selector) => document.querySelector(selector);
 const won = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
+
+function isExampleAgentTarget(repositoryUrl) {
+  return String(repositoryUrl || "").trim() === EXAMPLE_AGENT_TARGET.repositoryUrl;
+}
+
+function visibleCuaToolName(toolName) {
+  const tool = String(toolName || "unknown API");
+  return isExampleAgentTarget(state?.target?.repositoryUrl) && tool === "web.read"
+    ? "catalog.search"
+    : tool;
+}
+
+function apiRequestPresentation(request) {
+  const payload = request?.raw?.arguments ?? request?.data?.arguments ?? request?.data ?? {};
+  if (!isExampleAgentTarget(state?.target?.repositoryUrl) || eventToolName(request) !== "web.read") {
+    return payload;
+  }
+  return {
+    ...payload,
+    tool: "catalog.search",
+    synthetic_adapter_tool: "web.read",
+  };
+}
+
+function syncSourcePreset() {
+  const repositoryInput = $("#repositoryInput");
+  const refInput = $("#refInput");
+  const note = $("#defaultTargetNote");
+  if (!repositoryInput || !refInput) return;
+  const exampleTarget = isExampleAgentTarget(repositoryInput.value);
+  refInput.value = exampleTarget ? EXAMPLE_AGENT_TARGET.requestedRef : "main";
+  if (note) {
+    note.textContent = exampleTarget
+      ? "기본 예시 · ExampleCakeAgent · reviewed local bundle"
+      : "공개 GitHub source · 기본 ref main";
+  }
+}
 const OUTCOME_STATUS_LABELS = Object.freeze({
   accepted: "접수 완료",
   ambiguous: "추가 근거 필요",
@@ -841,7 +879,7 @@ function buildCuaActivity(pairs) {
       entries.push({
         title: copy.title,
         detail: copy.detail,
-        meta: copy.tool + " · " + (eventCallId(event) === "—" ? "event #" + event.seq : "call_id " + eventCallId(event)),
+        meta: visibleCuaToolName(copy.tool) + " · " + (eventCallId(event) === "—" ? "event #" + event.seq : "call_id " + eventCallId(event)),
         status: copy.activityStatus,
       });
       return;
@@ -1372,10 +1410,10 @@ function renderGymSession() {
         const tool = document.createElement("strong");
         const sourceTool = eventToolName(source);
         tool.textContent = pair.request
-          ? eventToolName(pair.request)
+          ? visibleCuaToolName(eventToolName(pair.request))
           : sourceTool === "unknown API"
             ? "unmatched result"
-            : sourceTool + " · unmatched result";
+            : visibleCuaToolName(sourceTool) + " · unmatched result";
         const time = document.createElement("time");
         time.textContent = `#${source.seq} · ${source.phase || "GYM"} · call_id ${eventCallId(pair.request || pair.result)}`;
         const status = document.createElement("span");
@@ -1395,7 +1433,7 @@ function renderGymSession() {
           const requestLabel = document.createElement("span");
           requestLabel.textContent = "요청";
           const requestValue = document.createElement("pre");
-          requestValue.textContent = compactValue(pair.request.raw?.arguments ?? pair.request.data?.arguments ?? pair.request.data);
+          requestValue.textContent = compactValue(apiRequestPresentation(pair.request));
           request.append(requestLabel, requestValue);
           item.appendChild(request);
         }
@@ -1583,7 +1621,9 @@ function renderLabReport() {
     ? ` · ADAPTER ${adapter.adapterId} · network ${adapter.networkAccess}`
     : "";
 
-  setText("#reportAgent", profile.agentName);
+  const exampleAgent = source?.sourceKind === "local_bundle"
+    && source?.sourcePath === "examples/demo-agent-repo";
+  setText("#reportAgent", exampleAgent ? "ExampleCakeAgent" : profile.agentName);
   setText(
     "#reportSourceRef",
     targetProfile
@@ -1910,6 +1950,7 @@ async function startLiveRun(target) {
     });
     if (response.status === 422) {
       clearTimeout(timeout);
+      if (isExampleAgentTarget(target.repositoryUrl)) return "unavailable";
       showInputError("입력하지 않은 항목이 있어요. 저장소 주소, 브랜치나 커밋, 에이전트에게 시킬 일을 모두 입력해 주세요.");
       return "rejected";
     }
@@ -1966,6 +2007,7 @@ function escapeHtml(value) {
 
 $("#missionForm").addEventListener("submit", (event) => {
   event.preventDefault();
+  syncSourcePreset();
   const target = {
     repositoryUrl: $("#repositoryInput").value.trim(),
     requestedRef: $("#refInput").value.trim(),
@@ -2003,5 +2045,7 @@ $("#copyStreamButton")?.addEventListener("click", async () => {
 $("#repositoryInput").value = initialTarget.repositoryUrl;
 $("#refInput").value = initialTarget.requestedRef;
 $("#missionInput").value = initialTarget.mission;
+$("#repositoryInput").addEventListener("input", syncSourcePreset);
+syncSourcePreset();
 render();
 loadRuntimeStatus();

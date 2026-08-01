@@ -33,15 +33,24 @@
               id="repositoryInput"
               name="repository"
               type="url"
-              value="https://github.com/caffeine-fighter/AGENT24"
+              value="local://agent24/examples/demo-agent-repo"
               placeholder="https://github.com/owner/repository"
+              aria-describedby="defaultTargetNote"
               autocomplete="off"
               spellcheck="false"
               maxlength="500"
               required
             />
+            <small id="defaultTargetNote" class="default-target-note">
+              기본 예시 · ExampleCakeAgent · reviewed local bundle
+            </small>
           </label>
-          <input id="refInput" name="ref" type="hidden" value="main" />
+          <input
+            id="refInput"
+            name="ref"
+            type="hidden"
+            value="b3de7f5fbc1722da7e46ad6cbd302622557b5ae619c3809f7cefec586a25ef35"
+          />
 
           <div class="prompt-composer">
             <label for="missionInput">
@@ -53,7 +62,7 @@
                 maxlength="2000"
                 placeholder="이 Agent가 수행할 일을 입력하세요"
                 required
-              >엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문해줘.</textarea>
+              >엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문하고 가족 캘린더에도 일정을 등록해줘.</textarea>
             </label>
             <button id="runButton" class="send-button" type="submit">
               <span>검증 시작</span>

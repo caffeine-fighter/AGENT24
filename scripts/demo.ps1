@@ -27,6 +27,7 @@ try {
     Write-Host "NIGHTMARE LAB 데모를 시작합니다." -ForegroundColor Magenta
     Write-Host "URL  : $DemoUrl"
     Write-Host "MODE : $Mode"
+    Write-Host "AGENT: ExampleCakeAgent (reviewed local bundle)"
     Write-Host "종료하려면 Ctrl+C를 누르세요."
 
     if ($OpenBrowser) {
@@ -37,18 +38,19 @@ try {
         } -ArgumentList $DemoUrl
     }
 
+    if ($Reload) {
+        Write-Warning "ExampleCakeAgent 고정 bundle launcher에서는 -Reload를 사용하지 않습니다."
+    }
+
     $Arguments = @(
         "run",
-        "uvicorn",
-        "agent24.api.app:app",
+        "python",
+        "scripts/demo-local.py",
         "--host",
         $HostAddress,
         "--port",
         "$Port"
     )
-    if ($Reload) {
-        $Arguments += "--reload"
-    }
 
     & uv @Arguments
     if ($LASTEXITCODE -ne 0) {

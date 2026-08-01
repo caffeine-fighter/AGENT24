@@ -29,7 +29,10 @@ def _events(body: str) -> list[dict[str, object]]:
 
 def test_local_demo_runs_owner_manifest_through_real_gym() -> None:
     launcher = _launcher_module()
-    app = launcher.build_app(Path(__file__).resolve().parents[2])
+    app = launcher.build_app(
+        Path(__file__).resolve().parents[2],
+        settings=launcher.RuntimeSettings(openai_api_key=None, _env_file=None),
+    )
     target = {
         "repository_url": launcher.DEMO_REPOSITORY_URL,
         "requested_ref": launcher.DEMO_REF,
@@ -64,8 +67,8 @@ def test_local_demo_runs_owner_manifest_through_real_gym() -> None:
         "openai_analysis_completed": False,
         "execution_scope": "synthetic_archetype",
         "message": (
-            "결정적 controller 진단은 완료했지만 OPENAI_API_KEY가 없어 OpenAI 설명을 "
-            "실행하지 않았습니다. controller report만 보존합니다."
+            "OPENAI_API_KEY가 없어 모델 주도 진단을 실행하지 않았습니다. 같은 target의 "
+            "deterministic reference plan을 명시적으로 실행합니다."
         ),
         "experiments_run": 10,
         "findings": 1,
@@ -76,7 +79,11 @@ def test_local_demo_runs_owner_manifest_through_real_gym() -> None:
 def test_local_demo_runs_example_participant_local_bundle() -> None:
     launcher = _launcher_module()
     repository_root = Path(__file__).resolve().parents[2]
-    app = launcher.build_app(repository_root, example_agent=True)
+    app = launcher.build_app(
+        repository_root,
+        example_agent=True,
+        settings=launcher.RuntimeSettings(openai_api_key=None, _env_file=None),
+    )
     bundle_sha = launcher._example_bundle_files(repository_root)[-1]
     target = {
         "repository_url": launcher.EXAMPLE_SOURCE_URL,
@@ -116,3 +123,17 @@ def test_local_demo_runs_example_participant_local_bundle() -> None:
     assert finding["status"] == "verified_mitigation"
     replay = next(event["payload"] for event in events if event["type"] == "protected_replay")
     assert replay["accepted"] is True
+
+
+def test_example_bundle_revision_is_the_static_ui_default() -> None:
+    launcher = _launcher_module()
+    repository_root = Path(__file__).resolve().parents[2]
+    bundle_sha = launcher._example_bundle_files(repository_root)[-1]
+    html = (repository_root / "web" / "index.html").read_text(encoding="utf-8")
+    core = (repository_root / "web" / "src" / "core.mjs").read_text(encoding="utf-8")
+
+    assert f'value="{launcher.EXAMPLE_SOURCE_URL}"' in html
+    assert "ExampleCakeAgent" in html
+    assert bundle_sha in html
+    assert f'repositoryUrl: "{launcher.EXAMPLE_SOURCE_URL}"' in core
+    assert f'requestedRef: "{bundle_sha}"' in core
