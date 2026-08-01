@@ -77,6 +77,15 @@ uv run python scripts/surprise-smoke.py
 
 판정 기준과 artifact 저장법은 [Surprise Task 리허설 문서](docs/surprise-smoke.md)에 있습니다.
 
+## PR 검증
+
+PR 전 canonical entrypoint는 `scripts/verify.ps1`이며 PowerShell 7에서는
+`pwsh -File ./scripts/verify.ps1`로 실행합니다. 필수 도구를 찾지 못한
+검사를 성공으로 간주하지 않으며, Python·web·hosted site·real-browser gate와 CI
+artifact 비노출 기준은 [canonical verification 수용 계약](docs/verification.md)을
+따릅니다. #70의 구현이 완료되기 전에는 현재 script의 성공만으로 전체 gate가
+충족됐다고 주장하지 않습니다.
+
 ## 14:00 이후 첫 시작
 
 ```powershell
