@@ -279,6 +279,78 @@ assert.deepEqual(
 );
 assert.equal(experimentState.unknownEvents.length, 0, "experiment_plan is a supported semantic event");
 
+const packSelectionPayload = {
+  registry_version: "domain-pack-registry.v1",
+  selected: {
+    pack_id: "life-v0-sandbox.v1",
+    domain_kind: "life",
+    score: 16,
+    is_fallback: false,
+    executable: true,
+  },
+  candidates: [
+    { pack_id: "life-v0-sandbox.v1", domain_kind: "life", score: 16, is_fallback: false, executable: true },
+    { pack_id: "adhoc-registry.v1", domain_kind: "adhoc", score: 5, is_fallback: true, executable: false },
+  ],
+  why: "life-v0-sandbox.v1 점수 16; anchor 도구 payment.charge 관찰; mission family 일치.",
+  expect: "commit_then_timeout 중 하나가 재현되어야 가설이 지지된다.",
+  evidence: [{ kind: "manifest", path: "tools", detail: "cake-agent declares 2 allowlisted tools" }],
+  budget: { max_tool_calls: 20, max_experiments: 3, max_cost_units: 6 },
+  fallback: "life-v0-sandbox.v1 실행이 실패하면 다른 pack의 성공으로 대체하지 않는다.",
+  stop: null,
+  selection_digest: "a".repeat(64),
+};
+const packState = reduceRunState(experimentState, {
+  run_id: "target-test",
+  seq: 3,
+  type: "pack.selected",
+  source: "live",
+  payload: packSelectionPayload,
+});
+assert.equal(packState.packSelectionView.packId, "life-v0-sandbox.v1");
+assert.equal(packState.packSelectionView.domainKind, "life");
+assert.equal(packState.packSelectionView.executable, true);
+assert.equal(packState.packSelectionView.ambiguous, false);
+assert.equal(packState.packSelectionView.budget.maxToolCalls, 20);
+assert.equal(packState.packSelectionView.candidates.length, 2);
+assert.equal(packState.packSelectionView.evidenceCount, 1);
+assert.deepEqual(
+  packState.events.at(-1).raw,
+  packSelectionPayload,
+  "PackSelection Raw payload must remain unedited",
+);
+assert.equal(packState.unknownEvents.length, 0, "pack.selected is a supported semantic event");
+
+// A selected pack that cannot run yet must not read as a running pack, and a
+// tie must not read as a selection.
+const deferredPackState = reduceRunState(experimentState, {
+  run_id: "target-test",
+  seq: 3,
+  type: "pack.selected",
+  source: "live",
+  payload: {
+    ...packSelectionPayload,
+    selected: { pack_id: "research-agent-pack.v1", domain_kind: "research", score: 12, is_fallback: false, executable: false },
+    stop: { stop: true, reason: "unsupported_input", detail: "실행 경로는 #58이 제공한다." },
+  },
+});
+assert.equal(deferredPackState.packSelectionView.executable, false);
+assert.equal(deferredPackState.packSelectionView.stopReason, "unsupported_input");
+
+const ambiguousPackState = reduceRunState(experimentState, {
+  run_id: "target-test",
+  seq: 3,
+  type: "pack.selected",
+  source: "live",
+  payload: {
+    ...packSelectionPayload,
+    selected: null,
+    stop: { stop: true, reason: "insufficient_evidence", detail: "동점이라 도메인을 특정할 수 없다." },
+  },
+});
+assert.equal(ambiguousPackState.packSelectionView.ambiguous, true);
+assert.equal(ambiguousPackState.packSelectionView.packId, null);
+
 const labReportPayload = {
   agent: {
     name: "cake-buyer",
