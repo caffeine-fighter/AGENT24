@@ -32,9 +32,9 @@ ALLOWED_MANIFEST_PATHS: tuple[str, ...] = (
     "agent24.manifest.json",
 )
 
-# This is the tool vocabulary the local Life Gym can actually sandbox.  A
-# manifest may mention another tool, but it is returned as unsupported rather
-# than being silently executed or treated as supported.
+# This is the tool vocabulary the local Life and read-only domain gyms can
+# actually sandbox. A manifest may mention another tool, but it is returned as
+# unsupported rather than being silently executed or treated as supported.
 SUPPORTED_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "catalog.search",
@@ -51,6 +51,21 @@ SUPPORTED_TOOL_NAMES: frozenset[str] = frozenset(
         "email.send",
         "calendar.create",
         "file.write",
+        "research.search",
+        "paper.fetch",
+        "table.read",
+        "citation.resolve",
+        "pdf.page.read",
+        "repository.inspect",
+        "dataset.inspect",
+        "experiment.inspect",
+        "ticker.resolve",
+        "market.disclosures",
+        "market.news",
+        "market.record",
+        "market.source",
+        "entity.relations",
+        "analyst_note.read",
     }
 )
 
