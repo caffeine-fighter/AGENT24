@@ -32,7 +32,7 @@ The pinned `sharp` and `postcss` overrides keep Next's optional image path and C
 After `OPENAI_API_KEY` is configured as a production secret, verify the real hosted path from the repository root:
 
 ```bash
-python scripts/hosted-smoke.py
+python scripts/hosted-smoke.py --base-url https://your-dynamic-server.example
 ```
 
 The command requires `openai_hosted`, a pinned 40-character source SHA, all five phases, 34 contiguous SSE events, an OpenAI `resp_…` evidence ID, and a verified `SIMULATION_ONLY` terminal event. The P0 submission contract accepts public GitHub source only; the build commit reported by `/health` is deployment provenance and is never substituted for submitted-source preflight. The command prints no credential values.

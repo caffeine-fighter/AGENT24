@@ -1,0 +1,553 @@
+{
+  "schema_version": "agent24.k-skill-risk-catalog.v1",
+  "source": {
+    "repository": "NomaDamas/k-skill",
+    "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+    "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+    "committed_at": "2026-08-01T04:36:55Z",
+    "commit_url": "https://github.com/NomaDamas/k-skill/commit/06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+    "catalog_manifest": {
+      "path": ".claude-plugin/plugin.json",
+      "blob_sha": "6d9a5767b057566cf69977c291d95c3bb374961f",
+      "size": 3837,
+      "entry_count": 123
+    }
+  },
+  "reviewed_at": "2026-08-01T23:20:00+09:00",
+  "profiles": [
+    {
+      "skill_id": "catchtable-sniper",
+      "description": "Monitor Catchtable for open reservation slots and attempt booking using a logged-in Chrome session. 돌쇠에서는 공식 표면을 통한 후속 액션까지 진행한다.",
+      "upstream_profiles": ["browser", "action:booking"],
+      "declared_tools": ["chrome_mcp"],
+      "declared_capabilities": ["reservation.monitor", "reservation.create", "reservation.dry_run"],
+      "trust_boundaries": ["authenticated_session", "user_approval", "payment_surface", "untrusted_content"],
+      "protected_assets": ["account_session", "payment_method", "reservation", "personal_data"],
+      "side_effect": "reversible",
+      "requirements": {
+        "explicit_approval": "required",
+        "credential": "required",
+        "legal_boundary": "not_required",
+        "manual_handoff": "conditional"
+      },
+      "applicable_domains": ["ticket"],
+      "fault_hypotheses": ["approval_scope", "partial_success_retry", "hold_cancel_reconciliation", "sensitive_data_exposure", "polling_rate_budget"],
+      "evidence": [
+        {
+          "kind": "manifest",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "catchtable-sniper/skill.json",
+          "blob_sha": "29faa1b286496a3685d7c6e979da4b72945ec484",
+          "size": 690
+        },
+        {
+          "kind": "instruction",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "catchtable-sniper/instruction.md",
+          "blob_sha": "38c5dca8e164f6b9395457276a52e51c3788cc6d",
+          "size": 8259
+        }
+      ],
+      "rationale": "The pinned instruction declares polling and automatic free booking in an authenticated session; local intake conservatively requires fresh approval and treats payment as a manual boundary.",
+      "assessment_kind": "declared_surface",
+      "observation_status": "not_executed"
+    },
+    {
+      "skill_id": "court-payment-order-assistant",
+      "description": "법원 전자소송 지급명령 신청을 위해 채권자·채무자·청구금액·청구원인·증빙 정보를 인터뷰하고, 신청서 초안과 공식 전자소송 브라우저 입력 handoff를 준비한다. 돌쇠에서는 가능한 가장 가까운 합법적 공식 단계까지 준비한다.",
+      "upstream_profiles": ["vault", "browser", "legal"],
+      "declared_tools": ["court_payment_order_helper", "browseros_cdp", "manual_browser"],
+      "declared_capabilities": ["legal.intake", "legal.draft", "browser.handoff"],
+      "trust_boundaries": ["local_filesystem", "legal_portal", "manual_handoff", "untrusted_content"],
+      "protected_assets": ["personal_data", "financial_document", "legal_record"],
+      "side_effect": "read_only",
+      "requirements": {
+        "explicit_approval": "not_required",
+        "credential": "not_required",
+        "legal_boundary": "required",
+        "manual_handoff": "required"
+      },
+      "applicable_domains": ["adhoc"],
+      "fault_hypotheses": ["sensitive_data_exposure"],
+      "evidence": [
+        {
+          "kind": "manifest",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "court-payment-order-assistant/skill.json",
+          "blob_sha": "84a620a029374caabb5b0d5ff15c910ab0f57c5c",
+          "size": 883
+        },
+        {
+          "kind": "instruction",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "court-payment-order-assistant/instruction.md",
+          "blob_sha": "781d466e35fc380fd64e5cd38d4c58f1480e744a",
+          "size": 4926
+        }
+      ],
+      "rationale": "The core output is a sensitive legal draft and checklist; the pinned instruction prohibits signature, payment, and final submission and requires user-controlled portal handoff.",
+      "assessment_kind": "declared_surface",
+      "observation_status": "not_executed"
+    },
+    {
+      "skill_id": "express-bus-booking",
+      "description": "Search and assist Korean 고속버스/KOBUS bookings using official HTTP/API-first flows; use for 고속버스 예매, 시간표, 좌석 조회, 임시 선점, and official checkout-entry handoff. 돌쇠에서는 공식 표면을 통한 후속 액션까지 진행한다.",
+      "upstream_profiles": ["vault", "browser", "action:booking"],
+      "declared_tools": ["kobus_http", "kobus_helper", "browser"],
+      "declared_capabilities": ["ticket.search", "ticket.hold", "ticket.cancel", "payment.handoff"],
+      "trust_boundaries": ["public_network", "user_approval", "manual_handoff", "payment_surface"],
+      "protected_assets": ["payment_method", "reservation", "personal_data"],
+      "side_effect": "reversible",
+      "requirements": {
+        "explicit_approval": "required",
+        "credential": "conditional",
+        "legal_boundary": "not_required",
+        "manual_handoff": "required"
+      },
+      "applicable_domains": ["ticket"],
+      "fault_hypotheses": ["approval_scope", "partial_success_retry", "hold_cancel_reconciliation", "sensitive_data_exposure"],
+      "evidence": [
+        {
+          "kind": "manifest",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "express-bus-booking/skill.json",
+          "blob_sha": "3bfaf5d82d726155b631500e80cce99d08202c24",
+          "size": 803
+        },
+        {
+          "kind": "instruction",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "express-bus-booking/instruction.md",
+          "blob_sha": "c77877e3d8ef3447db3e38aedb962f5adb58c9e4",
+          "size": 8160
+        }
+      ],
+      "rationale": "The pinned instruction can create and cancel temporary holds but leaves card entry and final payment to a narrowly confirmed manual handoff.",
+      "assessment_kind": "declared_surface",
+      "observation_status": "not_executed"
+    },
+    {
+      "skill_id": "intercity-bus-booking",
+      "description": "Search and assist Korean 시외버스/Tmoney bookings using official HTTP/API-first flows; use for 시외버스 예매, 시간표, 좌석/요금 조회, and official checkout-entry handoff. 돌쇠에서는 공식 표면을 통한 후속 액션까지 진행한다.",
+      "upstream_profiles": ["vault", "browser", "action:booking"],
+      "declared_tools": ["tmoney_http", "intercity_bus_helper", "browser"],
+      "declared_capabilities": ["ticket.search", "ticket.hold", "ticket.cancel", "payment.handoff"],
+      "trust_boundaries": ["public_network", "user_approval", "manual_handoff", "payment_surface"],
+      "protected_assets": ["payment_method", "reservation", "personal_data"],
+      "side_effect": "reversible",
+      "requirements": {
+        "explicit_approval": "required",
+        "credential": "conditional",
+        "legal_boundary": "not_required",
+        "manual_handoff": "required"
+      },
+      "applicable_domains": ["ticket"],
+      "fault_hypotheses": ["approval_scope", "partial_success_retry", "hold_cancel_reconciliation", "sensitive_data_exposure"],
+      "evidence": [
+        {
+          "kind": "manifest",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "intercity-bus-booking/skill.json",
+          "blob_sha": "36d1aa85a09dc4d2973494a253a25e523b6b3044",
+          "size": 793
+        },
+        {
+          "kind": "instruction",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "intercity-bus-booking/instruction.md",
+          "blob_sha": "fc43d8bb148e53b7b332767679d688c49ea60fad",
+          "size": 7899
+        }
+      ],
+      "rationale": "The pinned instruction creates a short-lived seat hold and cancellation payload while requiring the user to complete payment on the official surface.",
+      "assessment_kind": "declared_surface",
+      "observation_status": "not_executed"
+    },
+    {
+      "skill_id": "iros-registry-automation",
+      "description": "인터넷등기소(IROS)에서 법인/부동산 등기부등본(등기사항증명서) 발급을 준비하고, 사용자가 직접 로그인·결제한 브라우저 흐름 안에서 장바구니·열람·저장을 안전하게 보조한다. 돌쇠에서는 가능한 가장 가까운 합법적 공식 단계까지 준비한다.",
+      "upstream_profiles": ["vault", "browser", "legal"],
+      "declared_tools": ["chromium", "iros_python_scripts", "local_pdf_helper"],
+      "declared_capabilities": ["registry.search", "registry.cart", "document.download", "document.summarize"],
+      "trust_boundaries": ["authenticated_session", "user_approval", "manual_handoff", "local_filesystem", "legal_portal", "payment_surface"],
+      "protected_assets": ["credentials", "payment_method", "personal_data", "legal_record", "local_private_data"],
+      "side_effect": "reversible",
+      "requirements": {
+        "explicit_approval": "required",
+        "credential": "required",
+        "legal_boundary": "required",
+        "manual_handoff": "required"
+      },
+      "applicable_domains": ["adhoc"],
+      "fault_hypotheses": ["approval_scope", "partial_success_retry", "sensitive_data_exposure", "untrusted_content_privileged_sink"],
+      "evidence": [
+        {
+          "kind": "manifest",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "iros-registry-automation/skill.json",
+          "blob_sha": "8bfe8d917bfa43a4a2eed27bf4ec3d552fe72810",
+          "size": 927
+        },
+        {
+          "kind": "instruction",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "iros-registry-automation/instruction.md",
+          "blob_sha": "9dc6fbd8a295784cf21fdf4b07c48ea0d69574aa",
+          "size": 13592
+        }
+      ],
+      "rationale": "The instruction automates cart and local document handling around sensitive registry records, but login, card payment, and legal interpretation remain user-controlled boundaries.",
+      "assessment_kind": "declared_surface",
+      "observation_status": "not_executed"
+    },
+    {
+      "skill_id": "k-skill-cleaner",
+      "description": "Interview the user and inspect coding-agent skill trigger counts to recommend unused K-skills for removal.",
+      "upstream_profiles": ["local"],
+      "declared_tools": ["k_skill_cleaner_helper", "local_usage_logs"],
+      "declared_capabilities": ["local_usage.scan", "skill_removal.recommend", "skill.delete"],
+      "trust_boundaries": ["local_filesystem", "user_approval", "untrusted_content"],
+      "protected_assets": ["local_private_data", "local_installation"],
+      "side_effect": "irreversible",
+      "requirements": {
+        "explicit_approval": "required",
+        "credential": "not_required",
+        "legal_boundary": "not_required",
+        "manual_handoff": "not_required"
+      },
+      "applicable_domains": ["adhoc"],
+      "fault_hypotheses": ["approval_scope", "partial_success_retry", "sensitive_data_exposure", "untrusted_content_privileged_sink"],
+      "evidence": [
+        {
+          "kind": "manifest",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "k-skill-cleaner/skill.json",
+          "blob_sha": "020570587243d9f49133ee3ddec28318bf13586d",
+          "size": 355
+        },
+        {
+          "kind": "instruction",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "k-skill-cleaner/instruction.md",
+          "blob_sha": "995c34a739ba3af039c60ee82bf3f1f4cfe24aeb",
+          "size": 4703
+        }
+      ],
+      "rationale": "The instruction scans sensitive local usage traces and permits directory deletion only after the user explicitly approves a reviewed shortlist.",
+      "assessment_kind": "declared_surface",
+      "observation_status": "not_executed"
+    },
+    {
+      "skill_id": "kakaotalk-mac",
+      "description": "Search local KakaoTalk archives on Apple Silicon macOS through the katok CLI. 돌쇠에서는 공식 표면을 통한 후속 액션까지 진행한다.",
+      "upstream_profiles": ["lookup"],
+      "declared_tools": ["katok_cli"],
+      "declared_capabilities": ["conversation.sync", "conversation.search", "conversation.retrieve"],
+      "trust_boundaries": ["local_filesystem", "manual_handoff"],
+      "protected_assets": ["personal_data", "local_private_data", "local_installation"],
+      "side_effect": "reversible",
+      "requirements": {
+        "explicit_approval": "not_required",
+        "credential": "not_required",
+        "legal_boundary": "not_required",
+        "manual_handoff": "conditional"
+      },
+      "applicable_domains": ["life"],
+      "fault_hypotheses": ["partial_success_retry", "sensitive_data_exposure"],
+      "evidence": [
+        {
+          "kind": "manifest",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "kakaotalk-mac/skill.json",
+          "blob_sha": "46ced577cec3dee271460f36d86bdfe784acb329",
+          "size": 520
+        },
+        {
+          "kind": "instruction",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "kakaotalk-mac/instruction.md",
+          "blob_sha": "f29d382be75abed54282a6c2d0c43fa9781e4695",
+          "size": 6512
+        }
+      ],
+      "rationale": "The pinned instruction writes a local archive and search index, a reversible filesystem effect, while excluding message send/delete, direct database access, authentication caches, and decryption material.",
+      "assessment_kind": "declared_surface",
+      "observation_status": "not_executed"
+    },
+    {
+      "skill_id": "keris-academic-search",
+      "description": "Use when the user asks to search Korean theses, academic articles, research reports, journals, or university-library catalog metadata through KERIS RISS. 돌쇠에서는 공식 표면을 통한 후속 액션까지 진행한다.",
+      "upstream_profiles": ["proxy", "vault", "action:booking"],
+      "declared_tools": ["riss_open_api", "keris_academic_helper"],
+      "declared_capabilities": ["research.search", "metadata.retrieve"],
+      "trust_boundaries": ["public_network", "credential_vault", "untrusted_content"],
+      "protected_assets": ["credentials", "research_results"],
+      "side_effect": "read_only",
+      "requirements": {
+        "explicit_approval": "not_required",
+        "credential": "required",
+        "legal_boundary": "not_required",
+        "manual_handoff": "not_required"
+      },
+      "applicable_domains": ["research"],
+      "fault_hypotheses": ["sensitive_data_exposure", "polling_rate_budget"],
+      "evidence": [
+        {
+          "kind": "manifest",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "keris-academic-search/skill.json",
+          "blob_sha": "d2da2e6d3cd993b70c2a2a61c41226e0e85f9736",
+          "size": 721
+        },
+        {
+          "kind": "instruction",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "keris-academic-search/instruction.md",
+          "blob_sha": "82c43c3b40a8eb7644160d28550bbc5a6eb7455c",
+          "size": 5167
+        }
+      ],
+      "rationale": "Upstream profile labels are retained as opaque evidence, but the narrower pinned instruction wins: it is direct, credentialed, read-only RISS metadata search with no proxy, booking, payment, or download automation.",
+      "assessment_kind": "declared_surface",
+      "observation_status": "not_executed"
+    },
+    {
+      "skill_id": "korean-stock-search",
+      "description": "Use k-skill-proxy to search Korean listed stocks, inspect KRX base information, and fetch daily trade snapshots without asking the user to issue a KRX API key.",
+      "upstream_profiles": ["proxy", "lookup"],
+      "declared_tools": ["k_skill_proxy_http"],
+      "declared_capabilities": ["ticker.resolve", "market.record", "market.source"],
+      "trust_boundaries": ["public_network", "untrusted_content"],
+      "protected_assets": ["market_data"],
+      "side_effect": "read_only",
+      "requirements": {
+        "explicit_approval": "not_required",
+        "credential": "not_required",
+        "legal_boundary": "not_required",
+        "manual_handoff": "not_required"
+      },
+      "applicable_domains": ["stock"],
+      "fault_hypotheses": ["polling_rate_budget"],
+      "evidence": [
+        {
+          "kind": "manifest",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "korean-stock-search/skill.json",
+          "blob_sha": "7d3a3de6107217e25ac0ced4f6350d7786bdf873",
+          "size": 559
+        },
+        {
+          "kind": "instruction",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "korean-stock-search/instruction.md",
+          "blob_sha": "87889ba57d492e00ca37db8ee59834138440c679",
+          "size": 6441
+        }
+      ],
+      "rationale": "The pinned instruction explicitly limits the skill to read-only market lookup, making it the negative control for side-effect classification.",
+      "assessment_kind": "declared_surface",
+      "observation_status": "not_executed"
+    },
+    {
+      "skill_id": "ktx-booking",
+      "description": "Search, reserve, inspect, and cancel KTX or Korail tickets in Korea with the korail2 + pycryptodome Python packages. Use when the user asks for KTX seats, Korail bookings, train changes, reservation status, remaining seat numbers, car-by-car seats, or power-outlet/good-seat tips. 돌쇠에서는 공식 표면을 통한 후속 액션까지 진행한다.",
+      "upstream_profiles": ["vault", "browser", "action:booking"],
+      "declared_tools": ["korail2", "ktx_booking_helper", "cloakbrowser"],
+      "declared_capabilities": ["ticket.search", "ticket.reserve", "ticket.inspect", "ticket.cancel", "payment.confirm"],
+      "trust_boundaries": ["public_network", "authenticated_session", "credential_vault", "user_approval", "manual_handoff", "payment_surface"],
+      "protected_assets": ["credentials", "payment_method", "reservation", "personal_data"],
+      "side_effect": "irreversible",
+      "requirements": {
+        "explicit_approval": "required",
+        "credential": "required",
+        "legal_boundary": "not_required",
+        "manual_handoff": "conditional"
+      },
+      "applicable_domains": ["ticket"],
+      "fault_hypotheses": ["approval_scope", "partial_success_retry", "hold_cancel_reconciliation", "sensitive_data_exposure", "polling_rate_budget"],
+      "evidence": [
+        {
+          "kind": "manifest",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "ktx-booking/skill.json",
+          "blob_sha": "e83345d60994876cca715e76d3b326b1df7d639e",
+          "size": 1063
+        },
+        {
+          "kind": "instruction",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "ktx-booking/instruction.md",
+          "blob_sha": "d54b290ab5204e6667b69a67aec7602775c26509",
+          "size": 11375
+        }
+      ],
+      "rationale": "The pinned instruction declares credentialed reservation/cancellation and can continue to approved payment, so the profile takes the highest irreversible effect while preserving handoff fallback.",
+      "assessment_kind": "declared_surface",
+      "observation_status": "not_executed"
+    },
+    {
+      "skill_id": "lovebug-report",
+      "description": "러브버그.com 공개 지도 표면으로 수도권 시·구별 러브버그 출몰 지수·동네별 제보 현황을 조회하고, 사용자가 제공한 현재 좌표로 익명 러브버그 제보를 제출한다. 돌쇠에서는 공식 표면을 통한 후속 액션까지 진행한다.",
+      "upstream_profiles": ["proxy", "action:submission"],
+      "declared_tools": ["lovebug_public_http", "lovebug_node_cli"],
+      "declared_capabilities": ["public_report.read", "public_report.submit"],
+      "trust_boundaries": ["public_network", "user_approval"],
+      "protected_assets": ["location", "public_record"],
+      "side_effect": "irreversible",
+      "requirements": {
+        "explicit_approval": "required",
+        "credential": "not_required",
+        "legal_boundary": "not_required",
+        "manual_handoff": "not_required"
+      },
+      "applicable_domains": ["life"],
+      "fault_hypotheses": ["approval_scope", "partial_success_retry", "sensitive_data_exposure"],
+      "evidence": [
+        {
+          "kind": "manifest",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "lovebug-report/skill.json",
+          "blob_sha": "c16e9a8a65528a3f61fd0b38cf8848315ea77a4d",
+          "size": 829
+        },
+        {
+          "kind": "instruction",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "lovebug-report/instruction.md",
+          "blob_sha": "279f5e4d50b5cc1be0930ac4618cbe0680b5d239",
+          "size": 6006
+        }
+      ],
+      "rationale": "The instruction performs a keyless public write using precise current coordinates and a stable anonymous device identifier; its upstream proxy label is retained but not trusted because the instruction says direct public access.",
+      "assessment_kind": "declared_surface",
+      "observation_status": "not_executed"
+    },
+    {
+      "skill_id": "popbill",
+      "description": "팝빌 전자세금계산서·전자명세서·현금영수증·문자·카카오톡·팩스·휴폐업/기업정보·계좌조회·홈택스 수집을 테스트/운영 환경에서 안전하게 호출한다. 돌쇠에서는 공식 표면을 통한 후속 액션까지 진행한다.",
+      "upstream_profiles": ["vault", "action:submission"],
+      "declared_tools": ["popbill_python_sdk", "popbill_cli"],
+      "declared_capabilities": ["document.issue", "message.send", "document.cancel", "financial.lookup"],
+      "trust_boundaries": ["public_network", "credential_vault", "user_approval"],
+      "protected_assets": ["credentials", "personal_data", "financial_document", "public_record"],
+      "side_effect": "irreversible",
+      "requirements": {
+        "explicit_approval": "required",
+        "credential": "required",
+        "legal_boundary": "required",
+        "manual_handoff": "not_required"
+      },
+      "applicable_domains": ["adhoc"],
+      "fault_hypotheses": ["approval_scope", "partial_success_retry", "sensitive_data_exposure"],
+      "evidence": [
+        {
+          "kind": "manifest",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "popbill/skill.json",
+          "blob_sha": "ea517a5052784676c8356708e2a15dc147853a9e",
+          "size": 793
+        },
+        {
+          "kind": "instruction",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "popbill/instruction.md",
+          "blob_sha": "542d244ca98537fb9b21bfd55ab51264d3e49f58",
+          "size": 7198
+        }
+      ],
+      "rationale": "The pinned instruction declares credentialed legal/financial issuance, transmission, cancellation, and personal-data lookup with current-turn approval for mutations.",
+      "assessment_kind": "declared_surface",
+      "observation_status": "not_executed"
+    },
+    {
+      "skill_id": "srt-booking",
+      "description": "Search, reserve, inspect, and cancel SRT tickets in Korea with the SRTrain library. Use when the user asks for SRT seat availability, booking, canceling, or sold-out retry plans. 돌쇠에서는 공식 표면을 통한 후속 액션까지 진행한다.",
+      "upstream_profiles": ["vault", "browser", "action:booking"],
+      "declared_tools": ["srtrain", "srt_booking_helper", "cloakbrowser"],
+      "declared_capabilities": ["ticket.search", "ticket.reserve", "ticket.inspect", "ticket.cancel", "payment.confirm"],
+      "trust_boundaries": ["public_network", "authenticated_session", "credential_vault", "user_approval", "manual_handoff", "payment_surface"],
+      "protected_assets": ["credentials", "payment_method", "reservation", "personal_data"],
+      "side_effect": "irreversible",
+      "requirements": {
+        "explicit_approval": "required",
+        "credential": "required",
+        "legal_boundary": "not_required",
+        "manual_handoff": "conditional"
+      },
+      "applicable_domains": ["ticket"],
+      "fault_hypotheses": ["approval_scope", "partial_success_retry", "hold_cancel_reconciliation", "sensitive_data_exposure", "polling_rate_budget"],
+      "evidence": [
+        {
+          "kind": "manifest",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "srt-booking/skill.json",
+          "blob_sha": "ea294dc9a89677e02314bf51eb80772942be1e26",
+          "size": 945
+        },
+        {
+          "kind": "instruction",
+          "repository": "NomaDamas/k-skill",
+          "commit_sha": "06d017ac05317da31ab2c8d6a9accf4ad4db70ad",
+          "tree_sha": "e7d5ac2fb2984cb8c81c28d07ce4eceaa020bbb7",
+          "path": "srt-booking/instruction.md",
+          "blob_sha": "b84dc4ff4fd000883745180e88e0e0063cd03c9e",
+          "size": 7187
+        }
+      ],
+      "rationale": "The pinned instruction declares credentialed reservation/cancellation and can continue to approved payment, so the profile takes the highest irreversible effect while preserving handoff fallback.",
+      "assessment_kind": "declared_surface",
+      "observation_status": "not_executed"
+    }
+  ],
+  "catalog_digest": "sha256:75a275de00dbc1ea61f7ac5bad80bac25cb340cd6d061789945e62d8920f56fb"
+}
