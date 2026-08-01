@@ -156,6 +156,10 @@ cases:
     issue: 43
     command: "pytest tests/integration/test_domain_packs.py::test_stock_full_pack_replays_six_failures_and_preserves_raw_boundary tests/unit/test_stock_pack.py::test_unknown_relied_record_becomes_a_source_finding_instead_of_a_crash -q"
     expectation: "rumor conflict, stale truth, source error, ticker collision, entity mixing, and analyst-note injection produce six cited findings; an unknown relied record becomes a source finding rather than crashing; the safe assessment passes"
+  - id: stock-protected-replay
+    issue: 59
+    command: "pytest tests/unit/test_stock_pack.py::test_stock_protected_replay_preserves_fixed_as_of_authoritative_analysis tests/unit/test_stock_pack.py::test_disabled_stock_policy_reproduces_all_full_gauntlet_findings tests/unit/test_stock_pack.py::test_stock_functionality_gate_requires_canonical_evidence_output tests/unit/test_stock_pack.py::test_stock_replay_rejects_an_untraced_tool_dispatch tests/unit/test_stock_pack.py::test_stock_fixed_as_of_hides_future_records_and_preserves_current_authority tests/unit/test_stock_pack.py::test_stock_domain_adapter_matches_registry_and_enforces_call_budget tests/unit/test_stock_pack.py::test_stock_budget_counts_failed_and_direct_tool_attempts -q"
+    expectation: "same-seed protected replay executes at most 14 metered Stock call attempts, removes all six findings, and preserves a fixed-as-of issuer-filing analysis with canonical tool-derived identity and claims; future records cannot enter raw feeds or oracle truth, untraced/arbitrary/duplicate/promotional and empty/refused/block-all outputs are rejected, disabled protections reproduce all six faults, public tool methods cannot bypass the budget, and adapter metadata matches the deferred registry"
   - id: adhoc-capability-selector
     issue: 44
     command: "pytest tests/integration/test_domain_packs.py::test_adhoc_selector_builds_bounded_probes_from_an_agent_tool_surface tests/unit/test_adhoc.py::test_selector_requires_every_capability_and_does_not_invent_side_effects -q"
