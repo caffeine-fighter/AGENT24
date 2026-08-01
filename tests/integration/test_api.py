@@ -632,7 +632,14 @@ def test_single_origin_serves_demo_assets_before_static_catch_all(
 ) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     repository_root = Path(__file__).resolve().parents[2]
-    app = create_app(artifact_root=tmp_path, web_root=repository_root / "web")
+    runtime = OpenAIWhiteBoxAdapter(
+        settings=RuntimeSettings(openai_api_key=None, _env_file=None)
+    )
+    app = create_app(
+        runtime=runtime,
+        artifact_root=tmp_path,
+        web_root=repository_root / "web",
+    )
 
     with TestClient(app) as client:
         root = client.get("/")

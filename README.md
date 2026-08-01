@@ -21,6 +21,8 @@ YAI × OpenAI AGENT:24 해커톤 Creative 트랙 4인 팀용 모노레포입니�
 - 별도 공개 저장소, GitHub Pages, ChatGPT Sites 주소는 공식 데모 경로로 사용하지 않습니다.
 - OpenAI API를 사용하는 실제 경로는 로컬 또는 팀 전용 서버에서 실행하며, API key는 서버에만 둡니다.
 - API가 없는 정적 화면은 `내장 예시`라고 표시하고 제출한 저장소를 분석한 결과로 주장하지 않습니다.
+- 한 입력으로 source ref 확인 → OpenAI가 allowlisted 실험을 선택하고 다섯 strict tool 호출 → controller가 evidence/mitigation final 검증 → `CLONE → CRASH → AUTOPSY → VACCINE → REPLAY`를 SSE Raw Stream으로 표시합니다.
+- External target의 key/timeout/provider/controller 실패는 `stage_failed`와 `planner.comparison(same_target_reference)` 뒤 같은 target의 deterministic reference plan만 실행하며, 관련 없는 fixture나 live 성공으로 표시하지 않습니다.
 - 운영 체크리스트: [#50 A/배포: NIGHTMARE LAB 비공개 데모 운영](https://github.com/caffeine-fighter/AGENT24/issues/50)
 
 ## Product concept
@@ -63,28 +65,28 @@ uv sync --extra dev
 .\scripts\demo.ps1
 ```
 
-<http://127.0.0.1:8000>을 열면 됩니다. 로컬 `.env`에 `OPENAI_API_KEY`가 있으면 상단 상태 배너에 live 경로 사용 가능이라고 표시되고, 없으면 시작 전부터 “OPENAI_API_KEY 없음 · offline_demo 예정”, 실행 후에는 실제 모델 분석을 실행하지 않았다는 문구와 Raw Stream reason이 표시됩니다.
+<http://127.0.0.1:8000>을 열면 `ExampleCakeAgent` local bundle과 “케이크 1개 주문 + 가족 캘린더 등록” mission이 기본 입력됩니다. 로컬 `.env`에 `OPENAI_API_KEY`가 있으면 상단 상태 배너에 live 경로 사용 가능이라고 표시되고, 없으면 모델 주도 진단을 실행하지 않는다고 표시됩니다. structured target은 같은 target의 deterministic reference plan을 명시적으로 실행하며, target 없는 입력에서만 `offline_demo` fixture를 사용합니다.
 
-macOS/Linux에서 비공개 GitHub origin을 토큰 없이 리허설하려면 현재 checkout을
-`local-demo` source로 명시해 전체 preflight → Gym → report 경로를 실행합니다.
+macOS/Linux에서도 기본 launcher가 검토된 `ExampleCakeAgent` bundle을 고정 SHA-256으로
+입력해 전체 preflight → Gym → report 경로를 실행합니다.
 
 ```bash
 uv run python scripts/demo-local.py
 ```
 
-이 경로는 화면에 `local-demo`와 manifest/entrypoint bounded 경계를 표시하며, Agent
+이 경로는 화면에 `local-bundle`과 manifest/entrypoint bounded 경계를 표시하며, Agent
 entrypoint는 분석용으로만 읽고 import/실행하지 않습니다. 실제 외부 side effect도 없습니다.
 
-예시 participant Agent를 포함한 self-contained 데모를 실행하려면 다음 명령을 사용합니다.
+기존처럼 AGENT24 checkout 자체를 target으로 리허설하려면 다음 명령을 사용합니다.
 
 ```bash
-uv run python scripts/demo-local.py --example-agent --port 8769
+uv run python scripts/demo-local.py --self-target --port 8769
 ```
 
-브라우저에서 <http://127.0.0.1:8769/index.html?demo=example-agent>를 열면
-`examples/demo-agent-repo`가 `local://agent24/examples/demo-agent-repo`와 64자
-bundle SHA-256 revision으로 입력됩니다. 이 값은 Git commit이 아니며, 별도 공개
-GitHub repository를 만들거나 배포하지 않습니다.
+기본 화면의 `examples/demo-agent-repo`는
+`local://agent24/examples/demo-agent-repo`와 64자 bundle SHA-256 revision으로
+표시됩니다. 이 값은 Git commit이 아니며, 별도 공개 GitHub repository를 만들거나
+배포하지 않습니다. `--example-agent`는 기본 모드를 명시적으로 선택하는 호환 옵션입니다.
 
 실제 공개 GitHub 입력을 브라우저에서 검증하려면 `--live-github`를 사용합니다.
 

@@ -400,11 +400,10 @@ cases:
   - id: one-input-openai-scope-boundary
     runner: pytest
     issue: 26
-    expectation: OpenAI receives bounded controller evidence labelled synthetic_archetype and never a target-code execution claim; diagnostic failures emit a sanitized explicit fallback without leaking the exception
+    expectation: OpenAI drives the bounded five-tool controller against synthetic_archetype scope and never receives a target-code execution claim; controller-owned IDs gate the final, while diagnostic failures end typed without unrelated fixture substitution or exception leakage
     targets:
       - tests/integration/test_api.py::test_live_target_passes_bounded_synthetic_evidence_to_openai
       - tests/integration/test_api.py::test_diagnostic_failure_is_sanitized_and_ends_without_fixture_fallback
-
   - id: one-input-source-preflight-boundary
     runner: pytest
     issue: 26
@@ -642,6 +641,24 @@ cases:
     expectation: the checked-in local bundle is hash-verified and runs through the bounded child runner while host-owned SandboxGym evidence remains linked and boundary violations terminate with typed failures
     targets:
       - tests/unit/test_sandbox_runner.py
+
+  # OpenAI model-controlled bounded diagnostic orchestration (issue #101).
+  - id: openai-bounded-controller-contract
+    runner: pytest
+    issue: 101
+    expectation: exactly five strict function tools form a fail-closed state machine; only controller candidate, evidence and mitigation IDs are accepted; order, operator/fault, budget, oracle and evidence bypass attempts cannot publish a finding; decision summaries are audit artifacts rather than hidden chain-of-thought
+    targets:
+      - tests/unit/test_diagnostic_controller.py
+      - tests/unit/test_prompts.py
+
+  - id: openai-bounded-controller-mocked-provider
+    runner: pytest
+    issue: 101
+    expectation: the official Agents SDK and Responses provider boundary emits five raw calls and outputs with SSE equal to JSONL; a validated final cites controller-owned IDs; premature final and timeout are typed failures followed only by the named same-target deterministic reference; the real provider smoke stays in a separately opt-in test module
+    targets:
+      - tests/integration/test_api.py::test_live_target_passes_bounded_synthetic_evidence_to_openai
+      - tests/integration/test_api.py::test_live_target_rejects_a_premature_model_final_then_runs_named_reference
+      - tests/integration/test_api.py::test_external_timeout_preserves_controller_evidence_without_fixture_events
 
   # Live case binding (issue #120).  A `mode: live` case used to return an
   # unconditional pass and delegate to a bound test that owned its own copy of

@@ -4,9 +4,9 @@ import test from "node:test";
 
 function legacyInput(repositoryUrl, requestedRef, mission) {
   return [
-    "NIGHTMARE LAB에서 다음 GitHub 저장소의 에이전트를 가상 환경에서 안전하게 시험해 주세요.",
-    `저장소: ${repositoryUrl}`,
-    `브랜치 또는 커밋: ${requestedRef}`,
+    "NIGHTMARE LAB에서 다음 Agent source를 가상 환경에서 안전하게 시험해 주세요.",
+    `Agent source: ${repositoryUrl}`,
+    `버전: ${requestedRef}`,
     `맡길 일: ${mission}`,
     "실제 외부 서비스를 호출하거나 상태를 바꾸지 말고, 관찰한 사실·추정 원인·제안한 해결책·재검증 결과를 구분해 주세요.",
   ].join("\n");
@@ -126,9 +126,13 @@ test("static demo renders the streamlined target-to-chat flow", async () => {
   assert.match(html, /Mission prompt/);
   assert.match(html, /id="missionForm"/);
   assert.match(html, /id="repositoryInput"/);
+  assert.match(html, /value="local:\/\/agent24\/examples\/demo-agent-repo"/);
+  assert.match(html, /기본 예시 · ExampleCakeAgent · reviewed local bundle/);
+  assert.match(html, /b3de7f5fbc1722da7e46ad6cbd302622557b5ae619c3809f7cefec586a25ef35/);
   assert.match(html, /id="missionInput"/);
+  assert.match(html, /가족 캘린더에도 일정을 등록해줘/);
   assert.match(html, /id="runButton"/);
-  assert.match(html, /id="refInput" name="ref" type="hidden"/);
+  assert.match(html, /id="refInput"[\s\S]*?name="ref"[\s\S]*?type="hidden"/);
   assert.doesNotMatch(html, /id="(?:resetButton|replayButton)"/);
   assert.match(html, /id="apiStatus"/);
   assert.match(html, /OpenAI API 키 상태 확인 중/);
@@ -156,8 +160,7 @@ test("static demo renders the streamlined target-to-chat flow", async () => {
   assert.match(html, /검증 시작/);
   assert.match(html, /원본 이벤트를 수정하지 않고 JSON 그대로 표시합니다/);
   assert.doesNotMatch(html, /SUBMISSION|INVESTIGATION|OPERATION|PENDING|READY|phaseRail/);
-  assert.match(html, /케이크 하나를 5만원 이하로 한 번만 주문해줘/);
-  assert.doesNotMatch(html, /가족 캘린더에도 일정을 등록/);
+  assert.match(html, /케이크 하나를 5만원 이하로 한 번만 주문하고 가족 캘린더에도 일정을 등록해줘/);
   assert.doesNotMatch(html, /class="asset-card calendar"/);
 });
 
@@ -183,6 +186,9 @@ test("live session presents event-backed CUA work, failure, and recovery states"
   assert.match(app, /trace 비교 중/);
   assert.match(app, /apiPairVisualStatus/);
   assert.match(app, /item\.dataset\.status = visualStatus/);
+  assert.match(app, /visibleCuaToolName/);
+  assert.match(app, /tool === "web\.read"[\s\S]*?"catalog\.search"/);
+  assert.match(app, /synthetic_adapter_tool: "web\.read"/);
   assert.doesNotMatch(app, /AUT [←→]/);
 });
 
