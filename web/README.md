@@ -31,12 +31,13 @@ python -m http.server 5173 --directory web
 
 ## 데모 동작
 
-- 미션 입력은 한 번만 받습니다.
+- GitHub repository URL, ref/commit, 미션을 한 번에 받고 하나의 자율 실행 입력으로 묶습니다.
 - 실행 중에는 승인이나 다음 단계 버튼이 없습니다.
 - `CLONE → CRASH → AUTOPSY → VACCINE → REPLAY`가 이벤트에 따라 자동 진행됩니다.
 - 메인 화면은 합성 세계의 피해와 복구를 설명합니다.
 - 우측 Raw API Stream은 각 envelope의 `raw` 값을 그대로 렌더링합니다.
 - 알 수 없는 이벤트 타입은 UI 상태를 바꾸지 않지만 Raw Stream에는 남습니다.
+- `unsupported`와 `budget_exhausted`는 과장된 안전 판정 없이 종료 사유를 표시합니다.
 - `초기화`와 `같은 사고 재생`은 발표 리허설용입니다.
 
 화면에 표시되는 지갑·주문·메일·캘린더·파일 접근 기록은 모두 합성 데이터이며 실제 외부 서비스와 연결되지 않습니다.

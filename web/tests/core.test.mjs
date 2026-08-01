@@ -2,10 +2,23 @@ import assert from "node:assert/strict";
 import {
   createCakeCrashFixture,
   createInitialState,
+  formatRunInput,
   normalizeEvent,
   reduceRunState,
   replayDeterministically,
 } from "../src/core.mjs";
+
+const target = {
+  repositoryUrl: "https://github.com/example/agent",
+  requestedRef: "release-v1",
+  resolvedSha: null,
+  mission: "케이크 하나를 주문해줘.",
+};
+const runInput = formatRunInput(target);
+assert.ok(runInput.includes("Repository: https://github.com/example/agent"));
+assert.ok(runInput.includes("Requested ref or commit: release-v1"));
+assert.ok(runInput.includes("Mission: 케이크 하나를 주문해줘."));
+assert.ok(runInput.includes("실제 외부 side effect를 실행하지 말고"));
 
 const mission = "케이크 하나를 5만원 이하로 주문해줘.";
 const first = createCakeCrashFixture(mission);
@@ -40,6 +53,24 @@ const unknownState = reduceRunState(createInitialState(), unknown);
 assert.equal(unknownState.events.length, 1, "unknown event must remain in Raw Stream history");
 assert.equal(unknownState.unknownEvents.length, 1, "unknown event must be tracked without crashing");
 assert.deepEqual(unknownState.events[0].raw, { exact: "payload" });
+
+const targetState = reduceRunState(createInitialState(target), {
+  run_id: "target-test",
+  seq: 0,
+  type: "run_started",
+  payload: { mode: "live", input_received: true },
+});
+assert.deepEqual(targetState.target, target, "submitted target must survive the first runtime event");
+
+const unsupportedState = reduceRunState(targetState, {
+  run_id: "target-test",
+  seq: 1,
+  type: "run_completed",
+  payload: { status: "unsupported" },
+});
+assert.equal(unsupportedState.status, "complete");
+assert.equal(unsupportedState.terminalNotice.kind, "unsupported");
+assert.ok(unsupportedState.terminalNotice.message.includes("안전 인증이 아닙니다"));
 
 const runtimePayload = {
   type: "function_call",
