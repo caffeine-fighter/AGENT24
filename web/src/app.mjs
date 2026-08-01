@@ -116,6 +116,7 @@ function renderLabReport() {
   const report = state.reportView;
   const behavior = state.behaviorProfileView;
   const experiment = state.experimentPlanView;
+  const source = state.sourceDescriptorView;
   panel.hidden = !report && !behavior && !experiment;
   if (!report && !behavior && !experiment) return;
 
@@ -142,7 +143,9 @@ function renderLabReport() {
   setText("#reportAgent", profile.agentName);
   setText(
     "#reportSourceRef",
-    behavior ? `${behavior.sourceRef} · ${behavior.baselineObserved ? "BASELINE OBSERVED" : "NO BASELINE"}` : "LabReport agent card",
+    behavior
+      ? `${source?.sourceRef || behavior.sourceRef} · ${source ? source.resolver.toUpperCase() : behavior.baselineObserved ? "BASELINE OBSERVED" : "NO BASELINE"}`
+      : source?.sourceRef || "LabReport agent card",
   );
   setText("#reportCapabilities", capabilityText);
   setText(
