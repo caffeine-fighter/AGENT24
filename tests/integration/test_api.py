@@ -179,8 +179,9 @@ class _MockedDiagnosticOpenAIClient:
 
     last: _MockedDiagnosticOpenAIClient | None = None
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, *, target_ref: str | None = None, **kwargs: Any) -> None:
         self.init_kwargs = kwargs
+        self.target_ref = target_ref or f"example/cake-agent@{PINNED_SHA}"
         self.requests: list[dict[str, Any]] = []
         self.responses = self
         type(self).last = self
@@ -221,7 +222,7 @@ class _MockedDiagnosticOpenAIClient:
         if step == 0:
             name = "inspect_target"
             arguments = {
-                "target_ref": f"example/cake-agent@{PINNED_SHA}",
+                "target_ref": self.target_ref,
                 **self._decision(name),
             }
         elif step == 1:

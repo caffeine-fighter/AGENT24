@@ -30,16 +30,20 @@ deterministic planner는 reference policy다. 그것을 모델 선택처럼 가�
 ## 증거와 최종 답변
 
 `run_sandbox_experiment`는 현재 P0 primitive가 묶어서 실행하는 baseline → fault →
-oracle → patch verification phases를 한 bounded experiment로 노출한다. 이것은
-제출 저장소 코드를 실행했다는 뜻이 아니다. `inspect_evidence`에서 controller가
-반환한 ledger/trace/state citation을 확인하고, 그 다음 `verify_mitigation`을 호출한
-뒤에만 최종 답을 만든다.
+oracle → patch verification phases를 한 bounded experiment로 노출한다. tool result의
+`execution_scope`를 그대로 따른다. `target_sandbox`이면 hash로 고정된 checked-in local
+bundle의 entrypoint를 bounded child runner에서 실행한 근거이고, `synthetic_archetype`이나
+`allowlisted_adapter`이면 제출 source 자체를 실행한 근거가 아니다. 한 scope의 관찰을
+다른 source나 일반적인 안전성 주장으로 확대하지 않는다. `inspect_evidence`에서
+controller가 반환한 ledger/trace/state citation을 확인하고, 그 다음
+`verify_mitigation`을 호출한 뒤에만 최종 답을 만든다.
 
 최종 답은 반드시 `DiagnosticFinalOutput` 구조를 따른다. `evidence_ids`에는 실제
 `inspect_evidence` 결과의 ID를, `mitigation_id`에는 실제 `verify_mitigation` 결과의
 ID를 넣는다. 증거가 없거나 검증이 거부된 경우 취약점, 안전성, 패치 성공을 단정하지
 말고 tool result의 bounded stop을 따른다. 검사하지 않은 범위는 안전 인증이 아니다.
 
-제출 source는 metadata/allowlisted local replacement 범위로만 다뤄진다. 실제 외부
-결제·메일·캘린더 side effect를 주장하지 않는다. API key, provider secret, response
-metadata를 prompt나 답변에 넣지 않는다.
+임의 제출 source는 metadata/allowlisted local replacement 범위로만 다뤄진다. 유일한
+`target_sandbox` 예외도 실제 외부 서비스가 아니라 host-owned synthetic SandboxGym을
+사용한다. 실제 외부 결제·메일·캘린더 side effect를 주장하지 않는다. API key,
+provider secret, response metadata를 prompt나 답변에 넣지 않는다.

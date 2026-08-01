@@ -43,6 +43,16 @@ from agent24.agent.prompts import (
     LIVE_EXPLAINER_INSTRUCTIONS,
     LIVE_EXPLAINER_MAX_TURNS,
 )
+from agent24.agent.sandbox_diagnostic import (
+    LocalSandboxDiagnosticLoop,
+    SandboxDiagnosticError,
+    SandboxDiagnosticEvidence,
+)
+from agent24.agent.sandbox_runner import (
+    LOCAL_BUNDLE_SHA256,
+    LOCAL_BUNDLE_URI,
+    LocalSandboxRunner,
+)
 from agent24.agent.source import GitHubApiRevisionResolver, SourceResolutionError
 from agent24.events import RunChannel
 from agent24.tools import PAYMENT_FIXTURE, SyntheticGym, protected_replay
@@ -64,6 +74,7 @@ NO_TARGET_SCOPE: ExecutionScope = "no_target"
 NO_TARGET_OFFLINE_SCOPE: ExecutionScope = "no_target_offline_demo"
 SYNTHETIC_EXECUTION_SCOPE: ExecutionScope = "synthetic_archetype"
 ALLOWLISTED_EXECUTION_SCOPE: ExecutionScope = "allowlisted_adapter"
+TARGET_SANDBOX_EXECUTION_SCOPE: ExecutionScope = "target_sandbox"
 COMPATIBILITY_EXECUTION_SCOPE: ExecutionScope = "compatibility_only"
 NO_EXECUTION_SCOPE: ExecutionScope = "none"
 
@@ -105,6 +116,11 @@ def _terminal_payload(
         message=message[:500] if message else None,
         experiments_run=experiments_run,
         findings=findings,
+        safety_boundary=(
+            "TARGET_CODE_IN_SANDBOX"
+            if execution_scope == TARGET_SANDBOX_EXECUTION_SCOPE
+            else "SIMULATION_ONLY"
+        ),
     ).model_dump(mode="json", exclude_none=True)
 
 
@@ -144,6 +160,7 @@ class OpenAIWhiteBoxAdapter:
         max_turns: int = DEFAULT_MAX_TURNS,
         preflight: ExternalAgentPreflight | None = None,
         lab_loop: DeterministicLabLoop | None = None,
+        target_runner: LocalSandboxRunner | None = None,
         settings: RuntimeSettings | None = None,
     ) -> None:
         self.gym = gym or SyntheticGym()
@@ -170,6 +187,11 @@ class OpenAIWhiteBoxAdapter:
             ),
         )
         self.lab_loop = lab_loop or DeterministicLabLoop()
+        self.target_lab_loop = (
+            LocalSandboxDiagnosticLoop(runner=target_runner)
+            if target_runner is not None
+            else None
+        )
         # Context is keyed by run_id so concurrent FastAPI runs never share a
         # controller.  The compatibility map also lets existing test seams
         # overriding ``_run_live(query, channel)`` continue to exercise typed
@@ -195,11 +217,25 @@ class OpenAIWhiteBoxAdapter:
         return "live" if self.openai_configured else "offline_demo"
 
     @staticmethod
+    def _is_local_bundle(preflight: ExternalPreflightResult) -> bool:
+        return preflight.source.source_kind == "local_bundle"
+
+    @staticmethod
     def _execution_scope(preflight: ExternalPreflightResult) -> ExecutionScope:
+        if OpenAIWhiteBoxAdapter._is_local_bundle(preflight):
+            return TARGET_SANDBOX_EXECUTION_SCOPE
         return (
             ALLOWLISTED_EXECUTION_SCOPE
             if preflight.adapter_contract is not None
             else SYNTHETIC_EXECUTION_SCOPE
+        )
+
+    def _uses_target_sandbox(self, preflight: ExternalPreflightResult) -> bool:
+        expected_ref = f"{LOCAL_BUNDLE_URI}@sha256:{LOCAL_BUNDLE_SHA256}"
+        return (
+            self.target_lab_loop is not None
+            and self._is_local_bundle(preflight)
+            and preflight.source.source_ref == expected_ref
         )
 
     @staticmethod
@@ -610,7 +646,11 @@ class OpenAIWhiteBoxAdapter:
     @staticmethod
     def _autopsy_steps(result: DiagnosticLoopResult) -> list[dict[str, str]]:
         scope_label = (
-            "allowlisted adapter" if result.execution_scope != SYNTHETIC_SCOPE else "synthetic run"
+            "target code in bounded sandbox"
+            if result.execution_scope == TARGET_SANDBOX_EXECUTION_SCOPE
+            else "allowlisted adapter"
+            if result.execution_scope != SYNTHETIC_SCOPE
+            else "synthetic run"
         )
         steps = [
             {
@@ -668,53 +708,120 @@ class OpenAIWhiteBoxAdapter:
     ) -> DiagnosticLoopResult:
         """Execute one typed plan and optionally defer confirmation artifacts."""
 
+        target_sandbox = self._uses_target_sandbox(preflight)
+        if self._is_local_bundle(preflight) and not target_sandbox:
+            raise SandboxDiagnosticError(
+                "runner_not_configured",
+                "the reviewed local bundle has no explicitly injected sandbox runner",
+            )
         channel.publish(
             "phase.changed",
             {"phase": "CRASH"},
             summary=(
-                "allowlisted adapter fault run"
-                if preflight.adapter_contract is not None
-                else "synthetic fault run"
+                "reviewed local AUT fault run"
+                if target_sandbox
+                else (
+                    "allowlisted adapter fault run"
+                    if preflight.adapter_contract is not None
+                    else "synthetic fault run"
+                )
             ),
         )
-        result = await self.lab_loop.run(
-            manifest=preflight.manifest,
-            profile=preflight.profile,
-            mission=preflight.mission,
-            plan=plan,
-            adapter_contract=preflight.adapter_contract,
-        )
+        if target_sandbox:
+            assert self.target_lab_loop is not None
+            channel.publish(
+                "target.execution.plan",
+                {
+                    "execution_scope": TARGET_SANDBOX_EXECUTION_SCOPE,
+                    "target_agent": "ExampleCakeAgent",
+                    "target_model": "deterministic_python",
+                    "source_ref": preflight.source.source_ref,
+                    "entrypoint": preflight.manifest.entrypoint,
+                    "service_boundary": "synthetic_local_replacement",
+                    "network_access": "disabled",
+                    "external_side_effect": "none",
+                    "runs": [
+                        "baseline",
+                        "vulnerable",
+                        "vulnerable_replay × 2",
+                        "protected_replay × 3",
+                        "neighbor",
+                        "benign_control",
+                        "blanket_block_control",
+                        "minimized_counterexample",
+                    ],
+                    "experiments_run": 11,
+                    "seed": plan.scenario.seed,
+                },
+                summary="actual target entrypoint · bounded child",
+            )
+
+            def publish_target_event(event_type: str, payload: dict[str, Any]) -> None:
+                channel.publish(event_type, payload, summary=payload.get("execution_kind"))
+
+            result = await self.target_lab_loop.run(
+                manifest=preflight.manifest,
+                profile=preflight.profile,
+                mission=preflight.mission,
+                plan=plan,
+                run_id=channel.run_id,
+                expected_source_ref=preflight.source.source_ref,
+                event_sink=publish_target_event,
+            )
+        else:
+            result = await self.lab_loop.run(
+                manifest=preflight.manifest,
+                profile=preflight.profile,
+                mission=preflight.mission,
+                plan=plan,
+                adapter_contract=preflight.adapter_contract,
+            )
         channel.publish(
             "gym.baseline.completed",
             {
-                "execution_scope": (
-                    "allowlisted_adapter"
-                    if preflight.adapter_contract is not None
-                    else "synthetic_archetype"
-                ),
+                "execution_scope": self._execution_scope(preflight),
                 "scope_note": result.execution_scope,
                 "scenario_id": result.baseline.scenario.scenario_id,
                 "seed": result.baseline.scenario.seed,
                 "run_digest": f"sha256:{run_digest(result.baseline)}",
                 "trace_events": len(result.baseline.trace),
                 "ledger_entries": len(result.baseline.ledger),
+                "target_model": "deterministic_python" if target_sandbox else None,
+                "service_boundary": (
+                    "synthetic_local_replacement" if target_sandbox else "synthetic_gym"
+                ),
             },
             summary="healthy twin baseline",
         )
-        for trace_event in result.perturbed.trace:
-            if trace_event.kind == "tool_call" and trace_event.call is not None:
-                channel.publish(
-                    "gym.tool_call",
-                    trace_event.call,
-                    summary=trace_event.call.tool,
-                )
-            elif trace_event.kind == "tool_result" and trace_event.result is not None:
-                channel.publish(
-                    "gym.tool_result",
-                    trace_event.result,
-                    summary=trace_event.result.status,
-                )
-        channel.publish("oracle.report", result.observed, summary="controller ground truth")
+        if isinstance(result.sandbox_evidence, SandboxDiagnosticEvidence):
+            channel.publish(
+                "sandbox.evidence",
+                result.sandbox_evidence.to_dict(),
+                summary=result.sandbox_evidence.evidence_id,
+            )
+        if not target_sandbox:
+            for trace_event in result.perturbed.trace:
+                if trace_event.kind == "tool_call" and trace_event.call is not None:
+                    channel.publish(
+                        "gym.tool_call",
+                        trace_event.call,
+                        summary=trace_event.call.tool,
+                    )
+                elif trace_event.kind == "tool_result" and trace_event.result is not None:
+                    channel.publish(
+                        "gym.tool_result",
+                        trace_event.result,
+                        summary=trace_event.result.status,
+                    )
+        oracle_payload: Any = result.observed
+        if target_sandbox:
+            oracle_payload = {
+                **result.observed.model_dump(mode="json"),
+                "execution_scope": TARGET_SANDBOX_EXECUTION_SCOPE,
+                "world_source": "actual_target_sandbox",
+                "target_model": "deterministic_python",
+            }
+        channel.publish("oracle.report", oracle_payload, summary="controller ground truth")
 
         if result.observed.violations:
             failed_world = self._world_view(result.perturbed)
@@ -723,13 +830,20 @@ class OpenAIWhiteBoxAdapter:
                 "damage.updated",
                 {
                     "label": (
-                        "ALLOWLISTED ADAPTER INVARIANT VIOLATION"
-                        if preflight.adapter_contract is not None
-                        else "SYNTHETIC INVARIANT VIOLATION"
+                        "REVIEWED LOCAL AUT INVARIANT VIOLATION"
+                        if target_sandbox
+                        else (
+                            "ALLOWLISTED ADAPTER INVARIANT VIOLATION"
+                            if preflight.adapter_contract is not None
+                            else "SYNTHETIC INVARIANT VIOLATION"
+                        )
                     ),
                     "headline": f"{len(violation_ids)}개 invariant 위반 측정",
                     "detail": f"{', '.join(violation_ids)} · {result.execution_scope}",
                     "world": failed_world,
+                    "world_source": (
+                        "actual_target_sandbox" if target_sandbox else "synthetic_world"
+                    ),
                 },
             )
 
@@ -769,6 +883,7 @@ class OpenAIWhiteBoxAdapter:
         channel.publish("phase.changed", {"phase": "REPLAY"}, summary="protected replay")
         if result.verification is not None:
             verification = result.verification
+            sandbox_evidence = result.sandbox_evidence
             checks = {
                 "budget": not any(
                     violation.invariant_id == "task.total_spend"
@@ -786,18 +901,57 @@ class OpenAIWhiteBoxAdapter:
                 "benign": bool(verification.benign)
                 and all(gate.passed for gate in verification.benign),
             }
+            if isinstance(sandbox_evidence, SandboxDiagnosticEvidence):
+                checks["blanket_block"] = bool(
+                    sandbox_evidence.blanket_block_control.agent_result
+                    and sandbox_evidence.blanket_block_control.agent_result.get("status")
+                    == "failed"
+                    and not sandbox_evidence.blanket_block_control.ledger
+                )
             channel.publish("verification.updated", {"checks": checks})
             channel.publish(
                 "replay.completed",
                 {
                     "success": verification.accepted,
                     "world": self._world_view(result.protected or result.perturbed),
+                    "execution_scope": self._execution_scope(preflight),
+                    "world_source": (
+                        "actual_target_sandbox"
+                        if isinstance(sandbox_evidence, SandboxDiagnosticEvidence)
+                        else "synthetic_world"
+                    ),
+                    "target_model": (
+                        "deterministic_python"
+                        if isinstance(sandbox_evidence, SandboxDiagnosticEvidence)
+                        else None
+                    ),
                     "checks": checks,
+                    "evidence_id": (
+                        sandbox_evidence.evidence_id
+                        if isinstance(sandbox_evidence, SandboxDiagnosticEvidence)
+                        else None
+                    ),
                 },
                 summary="accepted" if verification.accepted else "rejected",
             )
 
-        if (
+        if isinstance(result.sandbox_evidence, SandboxDiagnosticEvidence):
+            replay = result.sandbox_evidence.replay_summary()
+            replay["accepted"] = bool(
+                result.verification is not None and result.verification.accepted
+            )
+            replay["world_source"] = "actual_target_sandbox"
+            replay["target_model"] = "deterministic_python"
+            channel.publish(
+                "protected_replay",
+                replay,
+                summary=(
+                    "reviewed local AUT replay accepted"
+                    if replay["accepted"]
+                    else "reviewed local AUT replay rejected"
+                ),
+            )
+        elif (
             preflight.adapter_contract is None
             and scenario.faults
             and scenario.faults[0].fault.value == "commit_then_timeout"
@@ -841,8 +995,23 @@ class OpenAIWhiteBoxAdapter:
                 else "allowlisted adapter replay rejected",
             )
 
-        channel.publish("finding_report", result.report, summary=result.report.status.value)
-        channel.publish("lab_report", result.lab_report, summary=result.report.status.value)
+        finding_payload: Any = result.report
+        lab_payload: Any = result.lab_report
+        if isinstance(result.sandbox_evidence, SandboxDiagnosticEvidence):
+            finding_payload = {
+                **result.report.model_dump(mode="json"),
+                "execution_scope": TARGET_SANDBOX_EXECUTION_SCOPE,
+                "world_source": "actual_target_sandbox",
+                "target_model": "deterministic_python",
+            }
+            lab_payload = {
+                **result.lab_report.model_dump(mode="json"),
+                "execution_scope": TARGET_SANDBOX_EXECUTION_SCOPE,
+                "world_source": "actual_target_sandbox",
+                "target_model": "deterministic_python",
+            }
+        channel.publish("finding_report", finding_payload, summary=result.report.status.value)
+        channel.publish("lab_report", lab_payload, summary=result.report.status.value)
         return result
 
     async def _run_reference_fallback(
@@ -886,9 +1055,13 @@ class OpenAIWhiteBoxAdapter:
     ) -> str:
         context = {
             "execution_scope": (
-                "allowlisted_adapter"
-                if preflight.adapter_contract is not None
-                else "synthetic_archetype"
+                "target_sandbox"
+                if isinstance(result.sandbox_evidence, SandboxDiagnosticEvidence)
+                else (
+                    "allowlisted_adapter"
+                    if preflight.adapter_contract is not None
+                    else "synthetic_archetype"
+                )
             ),
             "scope_note": result.execution_scope,
             "source_ref": preflight.source.source_ref,

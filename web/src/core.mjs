@@ -58,6 +58,8 @@ export const TERMINAL_COPY = Object.freeze({
     "controller 진단은 완료했지만 OpenAI 설명을 사용할 수 없습니다. 측정 결과와 controller report만 보존합니다.",
   openai_analysis_failed:
     "controller 진단은 완료했지만 OpenAI 설명에 실패했습니다. 측정 결과와 controller report만 보존합니다.",
+  target_completed_openai_unavailable:
+    "실제 target entrypoint의 sandbox 실행과 deterministic 진단은 완료했지만 OpenAI 설명은 실행하지 않았습니다. 아래 결과는 실제 target evidence와 synthetic local service만 사용합니다.",
   timeout:
     "OpenAI 설명을 불러오는 데 시간이 오래 걸려 미리 준비한 설명으로 계속할게요. 이미 측정한 결과는 그대로 유지해요.",
   no_failure_observed:
@@ -159,6 +161,7 @@ export function createInitialState(target = DEFAULT_TARGET) {
     sourceSnapshotView: null,
     adapterContract: null,
     adapterContractView: null,
+    targetAssessment: null,
     targetProfile: null,
     targetProfileView: null,
     compatibilitySelection: null,
@@ -172,6 +175,7 @@ export function createInitialState(target = DEFAULT_TARGET) {
     experimentPlan: null,
     experimentPlanView: null,
     baselineEvidence: null,
+    sandboxEvidence: null,
     oracleReport: null,
     findingReport: null,
     protectedReplay: null,
@@ -589,7 +593,7 @@ export function normalizeEvent(event) {
     timestamp: envelope.timestamp ?? new Date().toISOString(),
     type: TYPE_ALIASES[wireType] ?? wireType,
     wire_type: wireType,
-    phase: envelope.phase ?? null,
+    phase: envelope.phase ?? envelope.data?.phase ?? envelope.payload?.phase ?? null,
     source: envelope.source ?? "live",
     summary: envelope.summary ?? null,
     data: envelope.data ?? (payloadIsData ? envelope.payload : {}),
@@ -597,8 +601,8 @@ export function normalizeEvent(event) {
   };
 }
 
-const API_CALL_EVENT_TYPES = new Set(["tool_call", "gym.tool_call"]);
-const API_RESULT_EVENT_TYPES = new Set(["tool_result", "gym.tool_result"]);
+const API_CALL_EVENT_TYPES = new Set(["tool_call", "gym.tool_call", "target.tool_call"]);
+const API_RESULT_EVENT_TYPES = new Set(["tool_result", "gym.tool_result", "target.tool_result"]);
 
 function apiEventCallId(event) {
   const value = event?.data?.call_id
@@ -941,14 +945,80 @@ export function reduceRunState(previousState, incomingEvent) {
         experimentPlan: event.data,
         experimentPlanView: projectExperimentPlan(event.data),
       };
+    case "target.execution.plan":
+      return {
+        ...state,
+        executionScope: "target_sandbox",
+        analysisScope: "target_sandbox",
+        experimentPlan: null,
+        experimentPlanView: null,
+        targetAssessment: previousState.targetAssessment,
+        outcomes: {
+          ...previousState.outcomes,
+          investigation: { status: "profiling", message: "고정된 target entrypoint 실행을 준비하고 있어요" },
+          operation: { status: "running", message: "실제 target code를 bounded sandbox에서 실행하고 있어요" },
+        },
+      };
+    case "target.execution.started":
+      return {
+        ...state,
+        executionScope: "target_sandbox",
+        analysisScope: "target_sandbox",
+        diagnosticCompleted: previousState.diagnosticCompleted,
+        outcomes: {
+          ...previousState.outcomes,
+          operation: {
+            status: "running",
+            message: event.data.execution_kind === "protected_replay"
+              ? "같은 target entrypoint를 보호 경계와 함께 다시 실행하고 있어요"
+              : "target entrypoint와 local replacement API의 상호작용을 기록하고 있어요",
+          },
+        },
+      };
+    case "target.execution.completed":
+      return {
+        ...state,
+        executionScope: "target_sandbox",
+        analysisScope: "target_sandbox",
+        diagnosticCompleted: event.data.execution_kind !== "benign_control"
+          ? true
+          : previousState.diagnosticCompleted,
+        outcomes: {
+          ...previousState.outcomes,
+          operation: {
+            status: "running",
+            message: event.data.execution_kind === "protected_replay"
+              ? "protected replay의 실제 target 결과를 검증하고 있어요"
+              : "실제 target 실행 결과를 ledger와 world state로 확인하고 있어요",
+          },
+        },
+      };
+    case "target.assessment":
+    case "target.assessment.completed":
+      return {
+        ...state,
+        targetAssessment: event.data,
+        executionScope: "target_sandbox",
+        analysisScope: "target_sandbox",
+        diagnosticCompleted: true,
+      };
     case "gym.baseline.completed":
       return {
         ...state,
         baselineEvidence: event.data,
         diagnosticCompleted: previousState.hasExternalTarget || previousState.source === "hosted",
         executionScope: event.data.execution_scope || previousState.executionScope,
-        analysisScope: event.data.execution_scope === "allowlisted_adapter"
-          ? "allowlisted_adapter"
+        analysisScope: ["allowlisted_adapter", "target_sandbox"].includes(event.data.execution_scope)
+          ? event.data.execution_scope
+          : previousState.analysisScope,
+      };
+    case "sandbox.evidence":
+      return {
+        ...state,
+        sandboxEvidence: event.data,
+        executionScope: event.data.execution_scope || previousState.executionScope,
+        analysisScope: event.data.execution_scope === "target_sandbox"
+          ? "target_sandbox"
           : previousState.analysisScope,
       };
     case "oracle.report":
@@ -1000,6 +1070,11 @@ export function reduceRunState(previousState, incomingEvent) {
       const code = String(event.data.code || "stage_failed");
       const sourceFailure = stage === "source" || isSourceFailureScope(code);
       const diagnosticFailure = stage === "diagnostic";
+      const targetFailure = [
+        "target_execution_failed",
+        "target_benign_control_failed",
+        "target_protected_replay_failed",
+      ].includes(code);
       const openaiFailure = stage === "openai_analysis";
       const message = String(
         event.data.message
@@ -1014,7 +1089,7 @@ export function reduceRunState(previousState, incomingEvent) {
           ? false
           : previousState.diagnosticCompleted,
         openaiAnalysisCompleted: openaiFailure ? false : previousState.openaiAnalysisCompleted,
-        executionScope: sourceFailure || diagnosticFailure ? "none" : previousState.executionScope,
+        executionScope: sourceFailure ? "none" : previousState.executionScope,
         analysisScope: sourceFailure ? code : previousState.analysisScope,
         outcomes: {
           ...previousState.outcomes,
@@ -1023,10 +1098,12 @@ export function reduceRunState(previousState, incomingEvent) {
             : previousState.outcomes.submission,
           investigation: sourceFailure
             ? { status: "not_run", message: "제출한 에이전트 분석을 시작하지 않음" }
-            : diagnosticFailure
+            : targetFailure
+              ? { status: "failed", message: "target code sandbox 실행을 끝까지 완료하지 못함" }
+              : diagnosticFailure
               ? { status: "failed", message: "controller 진단을 끝까지 완료하지 못함" }
               : previousState.outcomes.investigation,
-          operation: sourceFailure || diagnosticFailure
+          operation: sourceFailure || diagnosticFailure || targetFailure
             ? { status: "not_run", message: "실험 실행 안 함 · 앞 단계 확인 필요" }
             : openaiFailure
               ? { status: "unavailable", message: "controller 진단 완료 · OpenAI 설명은 사용할 수 없음" }
@@ -1051,6 +1128,11 @@ export function reduceRunState(previousState, incomingEvent) {
       const sourceFailure = isSourceFailureScope(terminalStatus)
         || isSourceFailureScope(previousState.analysisScope);
       const diagnosticFailure = terminalStatus === "diagnostic_loop_failed";
+      const targetFailure = [
+        "target_execution_failed",
+        "target_benign_control_failed",
+        "target_protected_replay_failed",
+      ].includes(terminalStatus);
       const runtimeFailure = terminalStatus === "runtime_failed";
       const partialOpenAI = diagnosticCompleted
         && !openaiAnalysisCompleted
@@ -1058,7 +1140,7 @@ export function reduceRunState(previousState, incomingEvent) {
         && !runtimeFailure;
       const offlineFixture = executionScope === "no_target_offline_demo"
         || (!previousState.hasExternalTarget && mode === "offline_demo" && terminalStatus === "offline_demo");
-      const failed = sourceFailure || diagnosticFailure || runtimeFailure;
+      const failed = sourceFailure || diagnosticFailure || targetFailure || runtimeFailure;
       const investigation = sourceFailure || diagnosticFailure
         ? {
             status: sourceFailure ? "not_run" : "failed",
@@ -1066,6 +1148,8 @@ export function reduceRunState(previousState, incomingEvent) {
               ? "제출한 에이전트 분석을 시작하지 않음"
               : "controller 진단을 끝까지 완료하지 못함",
           }
+        : targetFailure
+          ? { status: "failed", message: "target code sandbox 실행이 완료되지 않음" }
         : runtimeFailure && !diagnosticCompleted
           ? { status: "failed", message: "런타임 오류로 controller 진단을 완료하지 못함" }
         : previousState.analysisScope === "compatibility_only" || executionScope === "compatibility_only"
@@ -1073,10 +1157,17 @@ export function reduceRunState(previousState, incomingEvent) {
           : ["unsupported", "budget_exhausted", "no_failure_observed"].includes(terminalStatus)
             ? { status: terminalStatus, message: TERMINAL_COPY[terminalStatus] }
             : previousState.outcomes.investigation;
-      const operation = sourceFailure || diagnosticFailure
+      const operation = sourceFailure || diagnosticFailure || targetFailure
         ? { status: "not_run", message: "실험 실행 안 함 · 앞 단계 확인 필요" }
         : runtimeFailure
           ? { status: "failed", message: "런타임 오류로 결과를 확정하지 못함" }
+        : executionScope === "target_sandbox"
+          ? {
+              status: "complete",
+              message: openaiAnalysisCompleted
+                ? "실제 target sandbox 진단 완료 · OpenAI evidence 설명도 완료"
+                : "실제 target sandbox 진단 완료 · OpenAI 설명 없음 · deterministic evidence 보존",
+            }
         : previousState.analysisScope === "compatibility_only" || executionScope === "compatibility_only"
           ? previousState.outcomes.operation
           : partialOpenAI
@@ -1144,6 +1235,12 @@ export function reduceRunState(previousState, incomingEvent) {
     case "tool_call":
     case "gym.tool_call":
     case "gym.tool_result":
+    case "target.tool_call":
+    case "target.tool_result":
+    case "target.policy_applied":
+    case "target.policy_reconciliation":
+    case "target.ledger_mutation":
+    case "target.world_diff":
       return state;
     default:
       return { ...state, unknownEvents: [...previousState.unknownEvents, event] };

@@ -3,10 +3,12 @@
 이 문서는 NIGHTMARE LAB의 외부 Agent 입력 화면과 `POST /api/runs`가 공유하는
 P0 제품 계약이다. form, parser, 결과 화면은 이 문구와 상태를 그대로 사용한다.
 
-> **SIMULATION ONLY — 제출 Python은 실행하지 않습니다.** 저장소에서는 고정된 commit의
-> metadata와 allowlist manifest, 또는 exact-reviewed adapter의 bounded entrypoint만
-> 확인합니다. adapter가 선택되면 network-disabled local replacement만 실행하며, 합성
-> Gym에서 실패를 발견하지 못한 결과는 안전 인증이 아닙니다.
+> **일반 외부 입력 — 제출 Python은 실행하지 않습니다.** GitHub 저장소에서는 고정된
+> commit의 metadata와 allowlist manifest, 또는 exact-reviewed adapter 계약만 확인합니다.
+> **검토된 로컬 데모 예외 —** 체크인된 `ExampleCakeAgent`의 exact bundle bytes와 고정
+> mission만 bounded child에서 실행하며, network-disabled synthetic service와 host-owned
+> ledger만 사용합니다. 임의 경로·외부 source·실제 side effect를 허용하거나 안전을 인증하지
+> 않습니다.
 
 ## 사용자가 하는 일
 
@@ -74,6 +76,12 @@ source_descriptor → source_snapshot → adapter.matched → target_profile →
 
 또는
 
+source_descriptor(local_bundle) → source_snapshot → target.execution.plan
+→ target tool/ledger/world events → sandbox.evidence → oracle.report
+→ protected_replay → finding_report → lab_report → run_completed
+
+또는
+
 source_descriptor → source_snapshot → target_profile → pack_selection → compatibility_report
 → run_completed (experiments=0, findings=0)
 ```
@@ -92,7 +100,7 @@ source_descriptor → source_snapshot → target_profile → pack_selection → 
 | exact-reviewed allowlisted adapter | 제한된 실행 지원 | 현재는 `Upsonic/UCP-Agent@3f98ef0`의 AST 계약만 매칭하며, `adapter.matched` 후 network-disabled local replacement를 실행한다. upstream Python/dependency와 실제 side effect는 실행하지 않는다. |
 | 검토된 participant static profile | metadata-only compatibility 지원 | exact `repository@SHA`에 등록된 최대 4개 path의 blob SHA·size·type만 확인한다. 본문이나 repository code를 실행하지 않는다. |
 | manifest가 없고 static profile도 없음 | `unsupported` | `pinned_profile_not_registered`, experiments 0, findings 0으로 종료한다. |
-| manifest의 entrypoint | bounded evidence 지원 | source 내부 상대 경로인지 검증하고 최대 64 KB의 path/size/blob SHA/content SHA만 기록하며 파일을 import하거나 setup hook을 실행하지 않는다. |
+| 외부 GitHub manifest의 entrypoint | bounded evidence 지원 | source 내부 상대 경로인지 검증하고 최대 64 KB의 path/size/blob SHA/content SHA만 기록하며 파일을 import하거나 setup hook을 실행하지 않는다. exact local demo bundle은 위 별도 runner 계약을 따른다. |
 | 지원 tool vocabulary만 가진 manifest | profile 가능 | manifest를 읽을 수 있다는 뜻이지 곧바로 runnable diagnostic이라는 뜻은 아니다. |
 | `payment.charge` 또는 `web.read`에 대응하는 profile | 외부 입력 P0 실험 가능 | 현재 one-input loop는 `commit_then_timeout`, `malicious_web_content`, `empty_result` 중 증거에 맞는 operator 하나를 선택한다. |
 | 대응할 fault operator가 없는 profile | `unsupported` | 비슷한 실험으로 바꾸거나 취약점을 만들어내지 않고 종료한다. |
@@ -110,6 +118,8 @@ manifest가 허용한 도구명과 외부 입력 loop가 실제 재현할 수 �
   compatibility 가설이며 owner 선언이 아님
 - `ALLOWLISTED ADAPTER`: exact pinned source의 AST 계약을 확인하고, source 이름을
   보존한 network-disabled local replacement에서만 동작을 측정한 contract
+- `REVIEWED LOCAL AUT`: 체크인된 exact bundle bytes와 고정 mission을 bounded child에서
+  실행하고, host-owned synthetic tool trace·ledger로만 판정한 contract
 
 후자의 자세한 계약은 [`participant-repository-intake.md`](participant-repository-intake.md)를
 따른다. 어느 쪽도 target의 확인된 취약점을 뜻하지 않는다.

@@ -129,6 +129,13 @@ Lab Agent가 내보내는 아래 의미 이벤트도 같은 envelope를 사용�
 | `experiment_plan` | typed `ExperimentPlan`의 선택 fault·근거·기대 evidence·budget 표시 |
 | `gym.baseline.completed` | healthy twin의 seed·run digest·trace/ledger 개수 기록 |
 | `gym.tool_call` / `gym.tool_result` | Life-v0 synthetic archetype의 원본 trace 보존 |
+| `target.execution.plan` | exact-reviewed local AUT의 source ref, entrypoint, 실행 matrix와 synthetic service 경계 |
+| `target.execution.started` / `target.execution.completed` | 각 bounded child run의 종류, runner/mission 상태, digest와 world projection |
+| `target.tool_call` / `target.tool_result` | child가 요청한 tool payload와 host 결과를 실행 순서대로 노출 |
+| `target.policy_applied` / `target.policy_reconciliation` | source를 바꾸지 않고 host dispatch 경계에서 적용한 idempotency·status 확인 기록 |
+| `target.ledger_mutation` / `target.world_diff` | host-owned SandboxGym의 append-only effect와 snapshot hash 변화 |
+| `target.assessment` | Agent의 완료 문장이 아닌 raw ledger·trace invariant 판정 |
+| `sandbox.evidence` | 같은 parent run/evidence ID에 묶인 11개 local AUT run의 원본 trace·ledger·snapshot·digest |
 | `oracle.report` | controller-owned world·ledger·trace 불변식 판정 |
 | `protected_replay` | 같은 seed의 SandboxGym baseline/perturbed/protected/control evidence |
 | `finding_report` | 증거에서 유도된 정직한 terminal status와 artifact reference |
@@ -190,9 +197,17 @@ version에서 동일합니다. `why` / `expect` / `budget` / `fallback`은 표�
 원본 payload는 Raw API Stream에 그대로 보존합니다. `Finding.observed`, `diagnosis`,
 `proposed_patch`, `verified`를 서로 대체하거나 합쳐서 주장하지 않습니다.
 
-`finding_report.payload`와 모든 Gym event는 `execution_scope=synthetic_archetype`
-경계를 따른다. pinned source에서는 manifest metadata만 읽고 repository code는 실행하지
-않는다. 따라서 synthetic violation은 제출 Agent 자체의 측정된 취약점으로 표현하지 않는다.
+일반 external target의 `finding_report.payload`와 Gym event는
+`execution_scope=synthetic_archetype` 또는 `allowlisted_adapter` 경계를 따른다. pinned
+GitHub source에서는 manifest metadata만 읽고 repository code는 실행하지 않으므로 synthetic
+violation을 제출 Agent 자체의 측정된 취약점으로 표현하지 않는다.
+
+`execution_scope=target_sandbox`는 exact-reviewed local bundle 전용이다. `target.*` event는
+runner payload의 tool arguments/result를 바꾸지 않고 실행 종류와 source 경계 metadata만
+추가한다. `sandbox.evidence`에는 runner가 만든 원본 envelope 전체를 보존하며, 같은
+`evidence_id`를 `diagnostic.experiment`, `diagnostic.evidence`, `protected_replay`,
+`finding_report` artifact reference가 공유한다. 이는 임의 source 실행이나 실제 provider
+side effect, 보안 인증을 뜻하지 않는다.
 
 ## 웹 정규화 규칙
 

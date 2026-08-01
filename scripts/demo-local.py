@@ -1,10 +1,10 @@
 """Run the full NIGHTMARE LAB demo locally.
 
-By default this is the deterministic rehearsal path for the checked-in
-ExampleCakeAgent bundle. ``--live-github`` switches the source boundary to the production
-metadata/content fetchers so the browser can accept a real public GitHub path,
-including an allowlisted external Agent adapter. Neither mode imports or
-executes a submitted entrypoint.
+By default this runs the checked-in ExampleCakeAgent entrypoint in the reviewed
+bounded child sandbox. ``--live-github`` switches the source boundary to the
+production metadata/content fetchers so the browser can accept a real public
+GitHub path, including an allowlisted external Agent adapter. External GitHub
+source remains metadata-only; only the reviewed local example is executable.
 """
 
 from __future__ import annotations
@@ -14,9 +14,11 @@ import hashlib
 import json
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 
+from agent24.agent.sandbox_runner import LocalSandboxRunner
 from agent24.agent.source import (
     GitHubApiRevisionResolver,
     MappingRevisionResolver,
@@ -139,6 +141,7 @@ def build_app(
     live_github: bool = False,
     example_agent: bool = False,
     settings: RuntimeSettings | None = None,
+    openai_client: Any | None = None,
 ):
     settings = settings or RuntimeSettings()
     if live_github:
@@ -147,7 +150,11 @@ def build_app(
             manifest_fetcher=GitHubContentsManifestFetcher(token=settings.github_token),
             source_file_fetcher=GitHubContentsSourceFetcher(token=settings.github_token),
         )
-        runtime = OpenAIWhiteBoxAdapter(settings=settings, preflight=preflight)
+        runtime = OpenAIWhiteBoxAdapter(
+            settings=settings,
+            preflight=preflight,
+            openai_client=openai_client,
+        )
         return create_app(runtime=runtime, web_root=repository_root / "web")
 
     if example_agent:
@@ -166,7 +173,12 @@ def build_app(
             ),
             source_file_fetcher=MappingSourceFileFetcher({entrypoint: entrypoint_bytes}),
         )
-        runtime = OpenAIWhiteBoxAdapter(settings=settings, preflight=preflight)
+        runtime = OpenAIWhiteBoxAdapter(
+            settings=settings,
+            preflight=preflight,
+            target_runner=LocalSandboxRunner(repository_root),
+            openai_client=openai_client,
+        )
         return create_app(runtime=runtime, web_root=repository_root / "web")
 
     manifest_path = repository_root / ".agent24" / "manifest.json"
@@ -193,7 +205,11 @@ def build_app(
         ),
         source_file_fetcher=MappingSourceFileFetcher({entrypoint: entrypoint_bytes}),
     )
-    runtime = OpenAIWhiteBoxAdapter(settings=settings, preflight=preflight)
+    runtime = OpenAIWhiteBoxAdapter(
+        settings=settings,
+        preflight=preflight,
+        openai_client=openai_client,
+    )
     return create_app(runtime=runtime, web_root=repository_root / "web")
 
 
@@ -225,9 +241,10 @@ def main() -> None:
         del manifest_bytes, entrypoint_bytes
         print(f"NIGHTMARE LAB local demo: {EXAMPLE_SOURCE_URL}@sha256:{bundle_sha}")
         print("SOURCE: local-bundle · checked-in standalone participant Agent")
+        print("TARGET: checked-in ExampleCakeAgent entrypoint executes in a bounded child sandbox")
         print(
-            "GYM: network-disabled local replacement; the bundle entrypoint is not imported "
-            "or executed"
+            "GYM: network-disabled synthetic local replacement; "
+            "no real payment/calendar side effect"
         )
         print("BROWSER: /index.html · ExampleCakeAgent is the default form target")
     elif args.live_github:
