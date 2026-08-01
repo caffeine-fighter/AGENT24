@@ -65,7 +65,7 @@ uv sync --extra dev
 .\scripts\demo.ps1
 ```
 
-<http://127.0.0.1:8000>을 열면 `ExampleCakeAgent` local bundle과 “케이크 1개 주문 + 가족 캘린더 등록” mission이 기본 입력됩니다. 로컬 `.env`에 `OPENAI_API_KEY`가 있으면 상단 상태 배너에 live 경로 사용 가능이라고 표시되고, 없으면 모델 주도 진단을 실행하지 않는다고 명시됩니다. 기본 target은 고정된 entrypoint를 bounded child에서 실제 실행하며, deterministic reference plan은 OpenAI 모델 제어가 불가능할 때만 같은 target에 대해 명시적으로 사용됩니다. target 없는 입력에서만 `offline_demo` fixture를 사용합니다.
+<http://127.0.0.1:8000>을 열면 `ExampleCakeAgent` local bundle과 “케이크 1개 주문 + 가족 캘린더 등록” mission이 기본 입력됩니다. provider가 설정된 실행에서는 먼저 `ExampleCakeAgent LLM` 대상 Agent가 기본 모델 `gpt-5.6-luna`으로 목표를 수행하며 manifest의 SandboxGym tool을 직접 호출합니다. 이 초기 `target.observation.*` stream에는 raw tool call/result, ledger, world diff와 오류가 남고, 그 뒤에야 기본 LLM controller가 source/manifest와 초기 trace를 분석해 allowlisted Gym 실험과 fault를 선택합니다. 계획 이후의 baseline·fault·protected replay는 `target.execution.*`으로 분리된 host-owned reference verification입니다. `OPENAI_MODEL`로 모델을 명시적으로 override할 수 있습니다. key/provider가 없으면 초기 LLM Agent 대신 `reference_source_child`가 명시적으로 실행되고, controller 단계도 same-target reference fallback으로 닫힙니다. target 없는 입력에서만 `offline_demo` fixture를 사용합니다.
 
 macOS/Linux에서도 기본 launcher가 검토된 `ExampleCakeAgent` bundle을 고정 SHA-256으로
 입력해 전체 preflight → Gym → report 경로를 실행합니다.
@@ -74,10 +74,34 @@ macOS/Linux에서도 기본 launcher가 검토된 `ExampleCakeAgent` bundle을 �
 uv run python scripts/demo-local.py
 ```
 
-이 경로는 화면에 `local-bundle`과 manifest/entrypoint bounded 경계를 표시하며, 고정된
-`ExampleCakeAgent` entrypoint를 `python -I -S` child에서 실제 실행합니다. child는
-network-disabled host-owned local replacement API만 호출하고, 실제 외부 결제·캘린더
-side effect는 없습니다. 실행하지 않은 외부 GitHub source를 이 결과로 대신하지 않습니다.
+이 경로는 화면에 `local-bundle`과 manifest/entrypoint bounded 경계를 표시합니다. provider가
+있으면 첫 단계에서 대상 LLM Agent가 manifest에 선언된 네 도구로 실제 목표를 수행하고,
+그 관찰이 끝난 뒤에야 controller가 분석·실험 선택을 시작합니다. 대상 tool 경계와 Gym은
+network-disabled이고 모델 provider 호출만 host-owned 경계에서 처리됩니다. key가 없으면
+같은 순서를 보존한 `reference_source_child` fallback으로 표시합니다. 어느 경우에도 실제
+외부 결제·캘린더 side effect는 없습니다. 실행하지 않은 외부 GitHub source를 이 결과로
+대신하지 않습니다.
+
+Research/Stock target Agent를 같은 방식으로 확인하려면 domain CLI를 사용합니다. 각 target은
+선택된 read-only Gym function tools만 받아 실제 tool call/result를 만들고, 그 관찰 뒤에
+controller가 same-fixture protected replay를 실행합니다. 기본 target model은
+`gpt-5.6-luna`입니다.
+
+```bash
+uv run python scripts/demo-domain.py --domain research
+uv run python scripts/demo-domain.py --domain stock
+```
+
+위 기본 명령은 API key 없이도 `reference_fallback`임을 명시한 surface/replay 확인을 합니다.
+`.env`의 `OPENAI_API_KEY`를 사용하는 실제 LLM target 호출은 다음처럼 명시적으로 켭니다.
+
+```bash
+uv run python scripts/demo-domain.py --domain research --live
+uv run python scripts/demo-domain.py --domain stock --live
+```
+
+이 경로도 실제 외부 연구·시세 조회·거래를 수행하지 않습니다. target Agent와 도구는
+host-owned synthetic Gym 안에서만 실행되고, provider 호출만 OpenAI API로 나갑니다.
 
 기존처럼 AGENT24 checkout 자체를 target으로 리허설하려면 다음 명령을 사용합니다.
 

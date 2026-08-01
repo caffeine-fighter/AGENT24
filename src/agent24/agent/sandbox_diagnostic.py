@@ -1,28 +1,34 @@
-"""Runner-backed diagnostic evidence for the checked-in local AUT.
+"""Observation and verification evidence for the checked-in local AUT.
 
-The ordinary external-target path keeps its existing deterministic Life-v0
-archetype.  This module is used only when preflight resolves the reviewed
-``local://agent24/examples/demo-agent-repo`` bundle.  It adapts the existing
-``LocalSandboxRunner`` records into the existing oracle/report contracts; it
-does not create a second execution framework.
+When preflight resolves the reviewed
+``local://agent24/examples/demo-agent-repo`` bundle, this module first runs the
+target Agent in an observation Gym when a provider is available. The exact
+source child remains an explicit reference fallback and is also used for the
+controller-owned planned verification controls. It adapts the existing
+``LocalSandboxRunner`` and Agents SDK records into the existing oracle/report
+contracts; it does not create a second execution framework.
 """
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import queue
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..tools.fixtures import load_fixture
 from .divergence import first_divergence
 from .invariants import life_v0_invariants
 from .loop import (
     DiagnosticLoopResult,
     _legacy_report,
+    _max_spend,
     _patch_for,
+    _purchase_count,
 )
 from .models import (
     AntibodyPatch,
@@ -50,16 +56,50 @@ from .sandbox_runner import (
     LocalSandboxRunner,
     SandboxRunResult,
 )
+from .target_runtime import TargetAgentRun, run_target_agent
 
-LOCAL_AUT_EXECUTION_MODE = "bounded_local_aut_runner"
+LOCAL_AUT_EXECUTION_MODE = "target_agent_observation_plus_reference_verification"
 LOCAL_AUT_SCOPE = (
     "정확히 고정된 local bundle의 manifest와 entrypoint bytes를 hash 검증한 뒤 "
-    "bounded child runner로 실행했으며, network-disabled host-owned SandboxGym과 "
-    "동일 fixture/seed ledger만 판정에 사용했다."
+    "provider가 있으면 host-owned Agents SDK Target Agent로, 없으면 bounded source child "
+    "reference로 실행했으며, target tool은 network-disabled host-owned SandboxGym과 "
+    "동일 fixture/seed ledger에서만 판정했다."
 )
 PROTECTED_POLICY_ID = "idempotent-reconcile-v1"
 BLANKET_BLOCK_POLICY_ID = "blanket-block-v1"
 TargetEventSink = Callable[[str, dict[str, Any]], None]
+_TARGET_TOOL_NAMES = {
+    "catalog_search": "catalog.search",
+    "payment_charge": "payment.charge",
+    "payment_status": "payment.status",
+    "calendar_create": "calendar.create",
+}
+
+
+def _canonical_target_tool(name: Any) -> str:
+    value = str(name or "")
+    return _TARGET_TOOL_NAMES.get(value, value)
+
+
+@dataclass(frozen=True, slots=True)
+class TargetAgentConfig:
+    """Host-owned provider boundary for the live target Agent."""
+
+    model: Any
+    runner: Any
+    openai_client: Any | None = None
+    api_key: str | None = None
+    name: str = "ExampleCakeAgent LLM"
+
+    @property
+    def enabled(self) -> bool:
+        """A target Agent is live only when a provider boundary is available."""
+
+        return self.openai_client is not None or bool(self.api_key)
+
+    @property
+    def model_label(self) -> str:
+        return self.model if isinstance(self.model, str) else "configured_target_model"
 
 
 class SandboxDiagnosticError(RuntimeError):
@@ -181,6 +221,206 @@ class SandboxDiagnosticEvidence:
             "gates": gates,
             "accepted": all(gates.values()),
         }
+
+
+@dataclass(frozen=True, slots=True)
+class InitialTargetObservation:
+    """One real submitted-Agent observation taken before experiment planning."""
+
+    run_id: str
+    source: dict[str, Any]
+    fixture_id: str
+    seed: int
+    raw: SandboxRunResult
+    run: RunResult
+    oracle: Any
+    manifest_tool_names: tuple[str, ...]
+    target_agent: str = "ExampleCakeAgent"
+    target_model: str = "reference_source_child"
+    target_agent_mode: str = "reference_fallback"
+    final_output: str | None = None
+
+    @property
+    def charge_count(self) -> int:
+        return sum(entry.get("tool") == "payment.charge" for entry in self.raw.ledger)
+
+    @property
+    def spend_krw(self) -> int:
+        return sum(
+            int(entry.get("metadata", {}).get("amount_krw", 0))
+            for entry in self.raw.ledger
+            if entry.get("tool") == "payment.charge"
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        """Return bounded observation evidence safe to place in controller input."""
+
+        return {
+            "observation_kind": "initial_target_execution",
+            "execution_scope": "target_sandbox",
+            "source": self.source,
+            "fixture_id": self.fixture_id,
+            "seed": self.seed,
+            "trace_digest": self.raw.trace_digest,
+            "target_agent": self.target_agent,
+            "target_model": self.target_model,
+            "target_agent_mode": self.target_agent_mode,
+            "manifest_tool_names": list(self.manifest_tool_names),
+            "agent_trace": [event.model_dump(mode="json") for event in self.run.trace],
+            "ledger": list(self.raw.ledger),
+            "world": self.run.world_state,
+            "charge_count": self.charge_count,
+            "spend_krw": self.spend_krw,
+            "oracle": self.oracle.model_dump(mode="json"),
+            "agent_result": self.raw.agent_result,
+            "final_output": self.final_output,
+        }
+
+
+def _target_agent_result(target_run: TargetAgentRun) -> dict[str, Any]:
+    """Project a model final answer into the bounded Agent result contract."""
+
+    ledger = target_run.evidence.get("ledger", [])
+    charges = [entry for entry in ledger if entry.get("tool") == "payment.charge"]
+    calendar_entries = [entry for entry in ledger if entry.get("tool") == "calendar.create"]
+    if charges and calendar_entries:
+        payment = charges[-1].get("metadata", {})
+        calendar = calendar_entries[-1].get("metadata", {})
+        return {
+            "status": "completed",
+            "payment_id": payment.get("payment_id"),
+            "event_id": calendar.get("event_id"),
+        }
+    return {
+        "status": "failed",
+        "reason": "target_agent_goal_not_completed",
+    }
+
+
+def _target_agent_trace(target_run: TargetAgentRun) -> tuple[dict[str, Any], ...]:
+    """Adapt Agents SDK semantic items to the canonical oracle trace."""
+
+    trace: list[dict[str, Any]] = []
+    for index, item in enumerate(target_run.agent_trace, start=1):
+        kind = item.get("kind")
+        call_id = str(item.get("call_id", ""))
+        if kind == "tool_call":
+            arguments = item.get("arguments")
+            trace.append(
+                {
+                    "seq": index,
+                    "type": "gym.tool_call",
+                    "payload": {
+                        "call_id": call_id,
+                        "tool": _canonical_target_tool(item.get("tool")),
+                        "arguments": arguments if isinstance(arguments, dict) else {},
+                    },
+                }
+            )
+        elif kind == "tool_result":
+            result = item.get("result")
+            trace.append(
+                {
+                    "seq": index,
+                    "type": "gym.tool_result",
+                    "payload": {
+                        "call_id": call_id,
+                        "tool": _canonical_target_tool(item.get("tool")),
+                        "result": result if isinstance(result, dict) else {},
+                    },
+                }
+            )
+    return tuple(trace)
+
+
+def _target_agent_sandbox_run(
+    target_run: TargetAgentRun,
+    *,
+    source: dict[str, Any],
+    mission: Mission,
+    run_id: str,
+) -> SandboxRunResult:
+    """Create the existing runner result envelope for one live target Agent."""
+
+    evidence = target_run.evidence
+    ledger = tuple(evidence.get("ledger", []))
+    trace = _target_agent_trace(target_run)
+    initial_state_hash = evidence.get("initial_snapshot_hash")
+    final_state_hash = evidence.get("final_snapshot_hash")
+    previous_hash = initial_state_hash
+    ledger_index = 0
+    world_diffs: list[dict[str, Any]] = []
+    for event in trace:
+        if event["type"] != "gym.tool_call":
+            continue
+        payload = event["payload"]
+        tool = payload.get("tool")
+        ledger_entry = None
+        ledger_entry_index: int | None = None
+        for index, candidate in enumerate(ledger[ledger_index:], start=ledger_index):
+            if candidate.get("tool") == tool:
+                ledger_entry = candidate
+                ledger_entry_index = index
+                break
+        if ledger_entry_index is not None:
+            ledger_index = ledger_entry_index + 1
+        before_hash = (
+            ledger_entry.get("before_state_hash")
+            if ledger_entry is not None
+            else previous_hash
+        )
+        after_hash = (
+            ledger_entry.get("after_state_hash")
+            if ledger_entry is not None
+            else before_hash
+        )
+        previous_hash = after_hash
+        world_diffs.append(
+            {
+                "run_id": run_id,
+                "call_id": payload.get("call_id"),
+                "before_state_hash": before_hash,
+                "after_state_hash": after_hash,
+                "changed": before_hash != after_hash,
+            }
+        )
+
+    agent_result = _target_agent_result(target_run)
+    raw_evidence = {
+        "source": source,
+        "fixture_id": evidence.get("fixture_id", SANDBOX_FIXTURE_ID),
+        "seed": evidence.get("seed"),
+        "input": mission.text,
+        "agent_result": agent_result,
+        "trace": list(trace),
+        "ledger": list(ledger),
+        "world_diffs": world_diffs,
+        "initial_state_hash": initial_state_hash,
+        "final_state_hash": final_state_hash,
+        "fault_applications": list(evidence.get("fault_applications", [])),
+        "final_output": target_run.final_output,
+    }
+    trace_digest = hashlib.sha256(
+        json.dumps(raw_evidence, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+    return SandboxRunResult(
+        run_id=run_id,
+        status="completed",
+        source=source,
+        fixture_id=str(evidence.get("fixture_id", SANDBOX_FIXTURE_ID)),
+        seed=evidence.get("seed"),
+        input=mission.text,
+        agent_result=agent_result,
+        failure=None,
+        trace=trace,
+        ledger=ledger,
+        world_diffs=tuple(world_diffs),
+        initial_state_hash=initial_state_hash,
+        final_state_hash=final_state_hash,
+        fault_applications=tuple(evidence.get("fault_applications", [])),
+        trace_digest=trace_digest,
+        final_output=target_run.final_output,
+    )
 
 
 def _status(payload: dict[str, Any]) -> str:
@@ -412,9 +652,15 @@ class LocalSandboxDiagnosticLoop:
         repository_root: Path | None = None,
         *,
         runner: LocalSandboxRunner | None = None,
+        target_agent: TargetAgentConfig | None = None,
     ) -> None:
         root = repository_root or Path(__file__).resolve().parents[3]
         self.runner = runner or LocalSandboxRunner(root)
+        self.target_agent = target_agent
+
+    @property
+    def live_target_enabled(self) -> bool:
+        return self.target_agent is not None and self.target_agent.enabled
 
     async def _run(
         self,
@@ -425,6 +671,7 @@ class LocalSandboxDiagnosticLoop:
         **kwargs: Any,
     ) -> SandboxRunResult:
         phase = {
+            "initial_observation": "OBSERVE",
             "vulnerable": "CRASH",
             "vulnerable_replay": "CRASH",
             "protected_replay": "REPLAY",
@@ -434,16 +681,27 @@ class LocalSandboxDiagnosticLoop:
             "blanket_block": "CONTROL",
             "minimized_counterexample": "CRASH",
         }.get(execution_kind, "CRASH")
+        event_namespace = (
+            "target.observation"
+            if execution_kind == "initial_observation"
+            else "target.execution"
+        )
         metadata = {
             "execution_kind": execution_kind,
             "target_run_id": run_id,
-            "target_model": "deterministic_python",
+            "target_model": (
+                "reference_source_child"
+                if execution_kind == "initial_observation"
+                else "reference_source_child"
+            ),
+            "target_agent": "ExampleCakeAgent",
+            "target_agent_mode": "reference_fallback",
             "service_boundary": "synthetic_local_replacement",
             "execution_scope": "target_sandbox",
             "phase": phase,
         }
         if event_sink is not None:
-            event_sink("target.execution.started", {**metadata, **kwargs})
+            event_sink(f"{event_namespace}.started", {**metadata, **kwargs})
 
         # The child runner is blocking, so it stays in a worker thread.  Its
         # callback writes to a thread-safe queue; this coroutine forwards each
@@ -477,7 +735,7 @@ class LocalSandboxDiagnosticLoop:
                 payload = raw_event.get("payload")
                 if not isinstance(payload, dict):
                     continue
-                target_type = "target." + raw_type.removeprefix("gym.")
+                target_type = f"{event_namespace}." + raw_type.removeprefix("gym.")
                 event_sink(
                     target_type,
                     {
@@ -500,7 +758,7 @@ class LocalSandboxDiagnosticLoop:
                 and raw.agent_result.get("status") == "completed"
             )
             event_sink(
-                "target.execution.completed",
+                f"{event_namespace}.completed",
                 {
                     **metadata,
                     "succeeded": mission_succeeded,
@@ -515,6 +773,329 @@ class LocalSandboxDiagnosticLoop:
                 },
             )
         return raw
+
+    async def _run_live_target_agent(
+        self,
+        *,
+        run_id: str,
+        execution_kind: str,
+        mission: Mission,
+        expected_source_ref: str,
+        source_evidence: dict[str, Any] | None = None,
+        target_instructions: str | None = None,
+        seed: int = 1,
+        fault_enabled: bool = True,
+        fault_apply_on_call: int | None = None,
+        event_sink: TargetEventSink | None = None,
+    ) -> SandboxRunResult:
+        """Run the target as an LLM Agent against the host-owned SandboxGym."""
+
+        config = self.target_agent
+        if config is None or not config.enabled:
+            raise SandboxDiagnosticError(
+                "target_agent_unavailable", "the live target Agent has no provider boundary"
+            )
+        source = dict(source_evidence or {"source_ref": expected_source_ref})
+        source.setdefault("source_ref", expected_source_ref)
+        event_namespace = (
+            "target.observation"
+            if execution_kind == "initial_observation"
+            else "target.execution"
+        )
+        phase = {
+            "initial_observation": "OBSERVE",
+            "baseline": "BASELINE",
+            "vulnerable": "CRASH",
+            "vulnerable_replay": "CRASH",
+            "benign_control": "BASELINE",
+            "minimized_counterexample": "CRASH",
+        }.get(execution_kind, "CRASH")
+        metadata = {
+            "execution_kind": execution_kind,
+            "target_run_id": run_id,
+            "target_agent": config.name,
+            "target_model": config.model_label,
+            "target_agent_mode": "llm_agent",
+            "agent_runtime": "openai_agents_sdk",
+            "service_boundary": "synthetic_local_replacement",
+            "execution_scope": "target_sandbox",
+            "network_access": "disabled_for_target_tools",
+            "model_provider_boundary": "host_owned",
+            "phase": phase,
+        }
+        if event_sink is not None:
+            event_sink(
+                f"{event_namespace}.started",
+                {**metadata, "source_ref": expected_source_ref, "seed": seed},
+            )
+
+        sandbox = load_fixture(
+            SANDBOX_FIXTURE_ID,
+            seed=seed,
+            run_id=f"{run_id}-{execution_kind}",
+            fault_enabled=fault_enabled,
+            fault_apply_on_call=fault_apply_on_call,
+        )
+
+        def raw_payload(value: Any) -> dict[str, Any]:
+            if hasattr(value, "model_dump"):
+                dumped = value.model_dump(mode="json")
+            elif isinstance(value, dict):
+                dumped = dict(value)
+            else:
+                dumped = {"value": str(value)}
+            return dumped if isinstance(dumped, dict) else {"value": dumped}
+
+        def json_object(value: Any) -> dict[str, Any]:
+            if isinstance(value, dict):
+                return dict(value)
+            if isinstance(value, str):
+                try:
+                    parsed = json.loads(value)
+                except (TypeError, ValueError):
+                    return {"status": "error", "error": "malformed_json_payload"}
+                return parsed if isinstance(parsed, dict) else {
+                    "status": "error",
+                    "error": "non_object_json_payload",
+                }
+            return {"status": "error", "error": "missing_json_payload"}
+
+        event_index = 0
+        sdk_tools_by_call: dict[str, str] = {}
+
+        def receive(kind: str, raw_item: Any, summary: str) -> None:
+            nonlocal event_index
+            event_index += 1
+            raw = raw_payload(raw_item)
+            if kind == "tool_call":
+                call_id = str(raw.get("call_id") or raw.get("id") or "")
+                sdk_tools_by_call[call_id] = summary
+                payload = {
+                    "call_id": call_id,
+                    "tool": _canonical_target_tool(summary),
+                    "sdk_tool": summary,
+                    "arguments": json_object(raw.get("arguments")),
+                }
+                event_type = f"{event_namespace}.tool_call"
+            else:
+                call_id = str(raw.get("call_id") or raw.get("id") or summary)
+                payload = {
+                    "call_id": call_id,
+                    "tool": _canonical_target_tool(sdk_tools_by_call.get(call_id)),
+                    "result": json_object(raw.get("output")),
+                }
+                event_type = f"{event_namespace}.tool_result"
+            if event_sink is not None:
+                event_sink(
+                    event_type,
+                    {
+                        **payload,
+                        **metadata,
+                        "target_seq": event_index,
+                        "raw_api_item": raw,
+                    },
+                )
+
+        target_run = await run_target_agent(
+            sandbox,
+            mission=mission.text,
+            runner=config.runner,
+            openai_client=config.openai_client,
+            api_key=config.api_key,
+            model=config.model,
+            name=config.name,
+            instructions=(
+                target_instructions or "Complete the mission using only the sandbox tools."
+            ),
+            on_event=receive,
+        )
+        raw = _target_agent_sandbox_run(
+            target_run,
+            source=source,
+            mission=mission,
+            run_id=run_id,
+        )
+        if raw.source is None or raw.source.get("source_ref") != expected_source_ref:
+            raise SandboxDiagnosticError(
+                "source_contract_invalid", "live target evidence does not match the pinned source"
+            )
+        if event_sink is not None:
+            event_sink(
+                f"{event_namespace}.completed",
+                {
+                    **metadata,
+                    "succeeded": bool(
+                        raw.agent_result and raw.agent_result.get("status") == "completed"
+                    ),
+                    "runner_succeeded": raw.succeeded,
+                    "status": raw.status,
+                    "agent_result": raw.agent_result,
+                    "final_output": target_run.final_output,
+                    "trace_digest": raw.trace_digest,
+                    "trace_events": len(raw.trace),
+                    "ledger_entries": len(raw.ledger),
+                    "world": _target_world(raw),
+                },
+            )
+        return raw
+
+    async def observe_initial(
+        self,
+        *,
+        manifest: AgentManifest,
+        mission: Mission,
+        run_id: str,
+        expected_source_ref: str,
+        source_evidence: dict[str, Any] | None = None,
+        target_instructions: str | None = None,
+        event_sink: TargetEventSink | None = None,
+    ) -> InitialTargetObservation:
+        """Execute the target Agent in an observation environment.
+
+        This is deliberately not an ``ExperimentPlan``.  The ambiguity is an
+        ambient SandboxGym condition used to reveal what the submitted Agent
+        actually does.  Candidate faults and the diagnostic plan are built only
+        after this trace has been converted into a behavior profile.
+        """
+
+        if mission.text != LOCAL_BUNDLE_MISSION:
+            raise SandboxDiagnosticError(
+                "mission_not_allowlisted", "local AUT mission is outside the exact bundle contract"
+            )
+        manifest_tool_names = tuple(tool.name for tool in manifest.tools)
+        required_tools = {
+            "catalog.search",
+            "payment.charge",
+            "payment.status",
+            "calendar.create",
+        }
+        if not required_tools <= set(manifest_tool_names):
+            raise SandboxDiagnosticError(
+                "tool_surface_invalid",
+                "the observation Gym could not be built from the manifest tool surface",
+            )
+        seed = 1
+        live_target = self.live_target_enabled
+        target_name = (
+            self.target_agent.name if live_target and self.target_agent else "ExampleCakeAgent"
+        )
+        target_model = (
+            self.target_agent.model_label
+            if live_target and self.target_agent
+            else "reference_source_child"
+        )
+        if event_sink is not None:
+            event_sink(
+                "target.observation.gym",
+                {
+                    "execution_scope": "target_sandbox",
+                    "target_agent": target_name,
+                    "target_model": target_model,
+                    "target_agent_mode": "llm_agent" if live_target else "reference_fallback",
+                    "fixture_id": SANDBOX_FIXTURE_ID,
+                    "seed": seed,
+                    "tools": list(manifest_tool_names),
+                    "tool_selection_source": "owner_manifest",
+                    "observation_environment": "ambient_commit_then_timeout",
+                    "fault_is_experiment_plan": False,
+                    "network_access": "disabled_for_target_tools",
+                    "model_provider_boundary": "host_owned" if live_target else None,
+                    "external_side_effect": "none",
+                },
+            )
+        if live_target:
+            raw = await self._run_live_target_agent(
+                run_id=run_id,
+                execution_kind="initial_observation",
+                mission=mission,
+                expected_source_ref=expected_source_ref,
+                source_evidence=source_evidence,
+                target_instructions=target_instructions,
+                seed=seed,
+                fault_enabled=True,
+                event_sink=event_sink,
+            )
+        else:
+            raw = await self._run(
+                run_id=run_id,
+                execution_kind="initial_observation",
+                event_sink=event_sink,
+                seed=seed,
+                fault_enabled=True,
+            )
+        if not raw.succeeded:
+            failure = raw.failure.to_dict() if raw.failure else {"code": "unknown"}
+            raise SandboxDiagnosticError(
+                "initial_observation_failed",
+                f"the submitted Agent observation stopped with {failure.get('code', 'unknown')}",
+            )
+        if raw.source is None or raw.source.get("source_ref") != expected_source_ref:
+            raise SandboxDiagnosticError(
+                "source_contract_invalid",
+                "initial observation source evidence does not match the pinned target",
+            )
+        if raw.initial_state_hash is None:
+            raise SandboxDiagnosticError(
+                "snapshot_contract_invalid", "initial observation has no initial state hash"
+            )
+
+        scenario = Scenario(
+            scenario_id="initial-target-observation",
+            seed=seed,
+            mission=mission,
+            faults=(),
+            aut_profile="observed_target",
+        )
+        run = _canonical_run(raw, scenario, None)
+        max_spend = _max_spend(manifest, mission)
+        purchase_count = _purchase_count(mission)
+        invariants = life_v0_invariants(
+            max_spend_krw=max_spend,
+            purchase_count=purchase_count,
+            side_effect_tool="payment.charge",
+            mission_completion_tool="payment.charge",
+        )
+        oracle = evaluate(invariants, run)
+        observation = InitialTargetObservation(
+            run_id=run_id,
+            source=raw.source,
+            fixture_id=raw.fixture_id or SANDBOX_FIXTURE_ID,
+            seed=seed,
+            raw=raw,
+            run=run,
+            oracle=oracle,
+            manifest_tool_names=manifest_tool_names,
+            target_agent=target_name,
+            target_model=target_model,
+            target_agent_mode="llm_agent" if live_target else "reference_fallback",
+            final_output=raw.final_output,
+        )
+        if event_sink is not None:
+            event_sink(
+                "target.observation.oracle",
+                {
+                    "observation_kind": "initial_target_execution",
+                    "execution_scope": "target_sandbox",
+                    "target_agent": target_name,
+                    "target_model": target_model,
+                    "target_agent_mode": "llm_agent" if live_target else "reference_fallback",
+                    "status": "observed",
+                    "claim_status": "observation_only_until_planned_verification",
+                    "trace_digest": raw.trace_digest,
+                    "charge_count": observation.charge_count,
+                    "spend_krw": observation.spend_krw,
+                    "violations": sorted(oracle.violated_ids()),
+                    "ledger_refs": sorted(
+                        {ref for violation in oracle.violations for ref in violation.ledger_refs}
+                    ),
+                    "trace_refs": sorted(
+                        {ref for violation in oracle.violations for ref in violation.trace_refs}
+                    ),
+                    "ledger": list(raw.ledger),
+                    "world": run.world_state,
+                },
+            )
+        return observation
 
     async def run(
         self,
@@ -751,8 +1332,11 @@ class LocalSandboxDiagnosticLoop:
         benign_runs = [_canonical_run(raw, benign_scenario, None) for raw in benign_controls]
         minimized = _canonical_run(minimized_raw, scenario, None)
 
+        max_spend = _max_spend(manifest, mission)
+        purchase_count = _purchase_count(mission)
         invariants = life_v0_invariants(
-            max_spend_krw=int(manifest.permissions.get("max_spend_krw", 50_000)),
+            max_spend_krw=max_spend,
+            purchase_count=purchase_count,
             side_effect_tool="payment.charge",
             mission_completion_tool="payment.charge",
         )
@@ -762,7 +1346,9 @@ class LocalSandboxDiagnosticLoop:
                 "target.assessment",
                 {
                     "execution_scope": "target_sandbox",
-                    "target_model": "deterministic_python",
+                    "target_model": "reference_source_child",
+                    "target_agent_mode": "reference_fallback",
+                    "verification_runtime": "bounded_child_reference",
                     "source_ref": source["source_ref"],
                     "passed": observed.passed,
                     "violations": sorted(observed.violated_ids()),
@@ -815,7 +1401,8 @@ class LocalSandboxDiagnosticLoop:
             )
         patch = _patch_for(
             hypothesis.category,
-            max_spend_krw=int(manifest.permissions.get("max_spend_krw", 50_000)),
+            max_spend_krw=max_spend,
+            purchase_count=purchase_count,
         )
         if patch is None:
             raise SandboxDiagnosticError(
@@ -1007,10 +1594,12 @@ class LocalSandboxDiagnosticLoop:
 
 __all__ = [
     "BLANKET_BLOCK_POLICY_ID",
+    "InitialTargetObservation",
     "LOCAL_AUT_EXECUTION_MODE",
     "LOCAL_AUT_SCOPE",
     "PROTECTED_POLICY_ID",
     "LocalSandboxDiagnosticLoop",
     "SandboxDiagnosticError",
     "SandboxDiagnosticEvidence",
+    "TargetAgentConfig",
 ]

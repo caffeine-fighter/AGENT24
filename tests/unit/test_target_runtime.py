@@ -16,18 +16,28 @@ from openai.types.responses import (
 )
 
 from agent24.agent.manifest import load_manifest
+from agent24.agent.sandbox_runner import (
+    LOCAL_BUNDLE_ENTRYPOINT,
+    LOCAL_BUNDLE_SHA256,
+    LOCAL_BUNDLE_URI,
+)
 from agent24.agent.source import SourceDescriptor
 from agent24.agent.target_runtime import (
+    LOCAL_TARGET_AGENT_NAME,
+    LOCAL_TARGET_REPOSITORY,
     TARGET_ADAPTER_HASH,
     TARGET_ENTRYPOINT,
     TARGET_PROMPT_HASH,
     TARGET_REPOSITORY,
     TARGET_RUNTIME_HASH,
     TARGET_RUNTIME_ID,
+    build_local_target_instructions,
     build_target_agent,
     is_target_runtime_supported,
     run_protected_target_replay,
     run_target_agent,
+    target_runtime_kind,
+    target_runtime_provenance,
 )
 from agent24.tools import SandboxGym
 
@@ -56,6 +66,40 @@ def test_repository_manifest_selects_only_the_reviewed_target_runtime() -> None:
 
     other_source = _source().model_copy(update={"repository": "example/other-agent"})
     assert not is_target_runtime_supported(other_source, manifest)
+
+
+def test_local_bundle_selects_reviewed_target_runtime_at_fixed_revision() -> None:
+    root = Path(__file__).resolve().parents[2]
+    source = SourceDescriptor(
+        repository=LOCAL_TARGET_REPOSITORY,
+        repository_url=LOCAL_BUNDLE_URI,
+        source_url=LOCAL_BUNDLE_URI,
+        requested_ref=LOCAL_BUNDLE_SHA256,
+        resolved_sha=LOCAL_BUNDLE_SHA256,
+        retrieved_at="2026-08-02T03:21:00+09:00",
+        resolver="fixture",
+        source_kind="local_bundle",
+        source_path="examples/demo-agent-repo",
+        revision_kind="bundle_sha256",
+        bundle_sha256=LOCAL_BUNDLE_SHA256,
+    )
+    manifest = load_manifest(root / "examples/demo-agent-repo", source)
+
+    assert manifest.entrypoint == LOCAL_BUNDLE_ENTRYPOINT
+    assert target_runtime_kind(source, manifest) == "local"
+    assert is_target_runtime_supported(source, manifest)
+    assert target_runtime_provenance(
+        "local", manifest=manifest, instructions=manifest.system_prompt
+    )["prompt_hash"].startswith("sha256:")
+    local_prompt = build_local_target_instructions(manifest.system_prompt)
+    assert "max_price_krw=50000" in local_prompt
+    assert manifest.system_prompt in local_prompt
+    assert LOCAL_TARGET_AGENT_NAME != "Cake Buyer AUT"
+
+    tampered = source.model_copy(
+        update={"bundle_sha256": "0" * 64, "resolved_sha": "0" * 64}
+    )
+    assert not is_target_runtime_supported(tampered, manifest)
 
 
 def test_target_agent_exposes_sandbox_tools_not_controller_tools() -> None:

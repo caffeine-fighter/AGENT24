@@ -73,6 +73,10 @@ class DiagnosticPreflightLike(Protocol):
     profile: BehaviorProfile
     decision: ExperimentPlan | StopDecision
     adapter_contract: Any | None
+    initial_observation: dict[str, Any] | None
+    manifest: Any
+    source_snapshot: Any
+    entrypoint_source: str | None
 
 
 class DiagnosticDecisionArtifact(BaseModel):
@@ -251,20 +255,54 @@ class DiagnosticToolController:
         assert self.state.reference_plan is not None
         return self.state.reference_plan
 
+    def _source_analysis_payload(self) -> dict[str, Any]:
+        """Return bounded source/manifest evidence for model analysis.
+
+        These values are untrusted data. ``render_input`` places the complete
+        payload inside the fenced block; execution, tool dispatch, and oracle
+        state remain host-owned.
+        """
+
+        manifest = getattr(self.preflight, "manifest", None)
+        snapshot = getattr(self.preflight, "source_snapshot", None)
+        return {
+            "source_snapshot": (
+                snapshot.model_dump(mode="json")
+                if hasattr(snapshot, "model_dump")
+                else snapshot
+            ),
+            "manifest": (
+                manifest.model_dump(mode="json")
+                if hasattr(manifest, "model_dump")
+                else manifest
+            ),
+            "entrypoint_source": getattr(self.preflight, "entrypoint_source", None),
+        }
+
     def render_input(self, query: str) -> str:
-        """Give the model only target intake; experiment evidence comes from tools."""
+        """Give the model intake plus the real pre-plan target observation."""
 
         payload = {
             "target_ref": self.preflight.source.source_ref,
             "mission": self.preflight.mission.model_dump(mode="json"),
             "execution_scope": self.execution_scope,
             "controller_budget_units": DIAGNOSTIC_MAX_BUDGET_UNITS,
-            "reference_policy": "deterministic_reference_only_until_live_selection",
+            "reference_policy": (
+                "reference_plan_was_compiled_after_initial_observation; "
+                "live_selection_still_required"
+            ),
+            "source_analysis": self._source_analysis_payload(),
+            "initial_target_observation": getattr(
+                self.preflight, "initial_observation", None
+            ),
         }
         return (
-            f"{query}\n\nDIAGNOSTIC CONTROLLER INPUT (no experiment has run yet):\n"
+            f"{query}\n\n"
+            "DIAGNOSTIC CONTROLLER INPUT (initial target observation already ran; "
+            "no planned experiment has run yet):\n"
             f"{fence_untrusted(payload)}\n"
-            "Start by calling inspect_target with the exact target_ref."
+            "Use the initial observation as evidence about the submitted Agent, then "
+            "call inspect_target with the exact target_ref."
         )
 
     def _publish_state(self) -> None:
@@ -372,6 +410,10 @@ class DiagnosticToolController:
                 },
             },
             "reference_plan_id": self.reference_plan.plan_id,
+            "source_analysis": self._source_analysis_payload(),
+            "initial_target_observation": getattr(
+                self.preflight, "initial_observation", None
+            ),
         }
 
     async def _inspect_target(

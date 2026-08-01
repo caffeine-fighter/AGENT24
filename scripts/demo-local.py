@@ -1,10 +1,13 @@
 """Run the full NIGHTMARE LAB demo locally.
 
-By default this runs the checked-in ExampleCakeAgent entrypoint in the reviewed
-bounded child sandbox. ``--live-github`` switches the source boundary to the
-production metadata/content fetchers so the browser can accept a real public
-GitHub path, including an allowlisted external Agent adapter. External GitHub
-source remains metadata-only; only the reviewed local example is executable.
+By default this runs the reviewed local ExampleCakeAgent target in the
+manifest-selected SandboxGym. With a provider it is an Agents SDK Agent using
+the default ``gpt-5.6-luna`` model; without one the exact source child is an
+explicit reference fallback. ``--live-github`` switches the source boundary to
+the production metadata/content fetchers so the browser can accept a real
+public GitHub path, including an allowlisted external Agent adapter. External
+GitHub source remains metadata-only; only the reviewed local example is
+executable.
 """
 
 from __future__ import annotations

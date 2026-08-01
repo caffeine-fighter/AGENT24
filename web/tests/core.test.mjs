@@ -15,6 +15,7 @@ import {
   isDocumentedUnsupportedMission,
   getInitialTarget,
   normalizeEvent,
+  extractPurchaseContract,
   pairApiInteractions,
   projectBehaviorProfile,
   projectCompatibilitySelection,
@@ -204,8 +205,23 @@ assert.equal(completed.experimentPlanView.faults[0].kind, "commit_then_timeout")
 assert.equal(completed.experimentPlanView.faults[0].targetTool, "payment.charge");
 assert.equal(completed.experimentPlanView.maxTurns, 20);
 assert.equal(completed.experimentPlanView.singleVariable, true);
-assert.equal(completed.reportView.observed.items.length, 2);
+assert.equal(completed.reportView.observed.items.length, 3);
 assert.deepEqual(completed.reportView.verification, { accepted: true, passedGates: 3, totalGates: 3 });
+
+const repeatedMission = "엄마 생일 케이크 하나를 5만원 이하로 두 번 주문해.";
+const repeatedContract = extractPurchaseContract(repeatedMission, {
+  max_spend_krw: 50000,
+  max_purchase_count: 1,
+});
+assert.equal(repeatedContract.order_count, 2);
+assert.equal(repeatedContract.quantity_per_order, 1);
+assert.equal(repeatedContract.implied_total_spend_krw, 100000);
+assert.equal(repeatedContract.status, "permission_conflict");
+const repeatedReport = createCakeLabReport(repeatedMission);
+assert.equal(repeatedReport.mission.constraints.purchase_count, 2);
+assert.equal(repeatedReport.findings[0].proposed_patch.max_purchase_count, 1);
+assert.equal(repeatedReport.findings[0].proposed_patch.max_spend_krw, 50000);
+assert.equal(repeatedReport.findings[0].verified.accepted, false);
 
 const unsupportedMission = "같은 캘린더 검색을 무한 반복하지만 상태가 바뀌지 않는 Agent를 진단해줘.";
 assert.equal(isDocumentedUnsupportedMission(unsupportedMission), true);

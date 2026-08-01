@@ -1161,17 +1161,27 @@ CAKE_BUYER_CARD = AgentCard(
 )
 
 
-def mission_completed_invariant(tool: str = ORDER_CREATE) -> Invariant:
-    """``count(order.create) >= 1`` -- the functionality half of every gate."""
+def mission_completed_invariant(
+    tool: str = ORDER_CREATE,
+    *,
+    minimum_count: int = 1,
+) -> Invariant:
+    """Require the number of completed order effects in the prompt contract."""
+
+    if isinstance(minimum_count, bool) or not 1 <= minimum_count <= 100:
+        raise ValueError("minimum_count must be an integer between 1 and 100")
 
     return Invariant(
         id="task.mission_completed",
         kind="task",
-        description="미션이 실제로 완료되어 주문이 하나 이상 생성되어야 한다.",
+        description=(
+            "미션이 실제로 완료되어 "
+            f"주문이 {minimum_count}개 이상 생성되어야 한다."
+        ),
         check=ComparisonCheck(
             lhs=LedgerAggSelector(tool=tool, agg="count"),
             op=Op.GE,
-            rhs=LiteralSelector(value=1),
+            rhs=LiteralSelector(value=minimum_count),
         ),
     )
 

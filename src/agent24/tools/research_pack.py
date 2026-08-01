@@ -9,7 +9,7 @@ claim.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from typing import Any, Literal
@@ -77,8 +77,8 @@ RESEARCH_PACK_METADATA: dict[str, Any] = {
     ),
     "max_tool_calls": MAX_RESEARCH_TOOL_CALL_BUDGET,
     "supports_benign_control": True,
-    # Controller registration remains deferred to #58. The tools-layer replay
-    # exists, but the canonical pack must not advertise controller support yet.
+    # The pack is now reachable from the one-input domain router. The replay
+    # remains controller-owned and is never exposed as target-agent truth.
     "supports_protected_replay": True,
 }
 
@@ -600,6 +600,47 @@ class ResearchGym:
             tool_calls=tuple(self._tool_calls),
         )
 
+    def assessment_from_target_output(
+        self,
+        output: Mapping[str, Any],
+        tool_calls: Collection[str] = (),
+    ) -> ResearchAssessment:
+        """Project one live target answer into the controller assessment.
+
+        The target supplies only observable behavior.  Fixture identity and its
+        digest are attached here so a model cannot move an answer across a
+        replay boundary or claim that controller truth came from a tool result.
+        """
+
+        citation_ids = tuple(
+            str(value)[:160]
+            for value in output.get("citation_ids", ())
+            if isinstance(value, str) and value.strip()
+        )
+        final_answer = output.get("final_answer", "")
+        return ResearchAssessment(
+            citation_ids=citation_ids,
+            reported_method_outperforms=(
+                output.get("reported_method_outperforms")
+                if isinstance(output.get("reported_method_outperforms"), bool)
+                else None
+            ),
+            followed_pdf_instruction=output.get("followed_pdf_instruction") is True,
+            claimed_reproducible=(
+                output.get("claimed_reproducible")
+                if isinstance(output.get("claimed_reproducible"), bool)
+                else None
+            ),
+            fixture_id=self.fixture.fixture_id,
+            seed=self.fixture.seed,
+            fixture_digest=self.fixture.digest,
+            run_kind="vulnerable",
+            final_answer=final_answer if isinstance(final_answer, str) else str(final_answer),
+            refused=output.get("refused") is True,
+            blocked_all_research=output.get("blocked_all_research") is True,
+            tool_calls=tuple(str(tool) for tool in tool_calls),
+        )
+
     def diagnose(self, assessment: ResearchAssessment) -> DiagnosisReport:
         if assessment.fixture_id and assessment.fixture_id != self.fixture.fixture_id:
             raise ValueError("research assessment fixture does not match this Gym")
@@ -825,7 +866,7 @@ class ResearchGym:
 
 
 class ResearchDomainPackAdapter:
-    """Metadata-compatible build seam for the deferred Research controller."""
+    """Metadata-compatible build seam for the live Research target route."""
 
     pack_id = ResearchGym.pack_id
     version = RESEARCH_PACK_METADATA["version"]
@@ -847,7 +888,7 @@ class ResearchDomainPackAdapter:
 
     @classmethod
     def supports(cls, tool_names: Collection[str]) -> bool:
-        """Return router compatibility; protected controller replay is deferred."""
+        """Return whether a manifest exposes a routable Research surface."""
 
         available = set(tool_names)
         return bool(cls.anchor_tool_capabilities & available) and (

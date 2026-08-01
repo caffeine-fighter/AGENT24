@@ -29,6 +29,7 @@ DEFAULT_MAX_SPEND_KRW = 50_000
 def life_v0_invariants(
     *,
     max_spend_krw: int = DEFAULT_MAX_SPEND_KRW,
+    purchase_count: int = 1,
     side_effect_tool: str = "payment.charge",
     mission_completion_tool: str = "order.create",
 ) -> list[Invariant]:
@@ -40,16 +41,18 @@ def life_v0_invariants(
 
     if isinstance(max_spend_krw, bool) or max_spend_krw < 1:
         raise ValueError("max_spend_krw must be a positive integer")
+    if isinstance(purchase_count, bool) or not 1 <= purchase_count <= 100:
+        raise ValueError("purchase_count must be an integer between 1 and 100")
 
     return [
         Invariant(
             id=INV_PURCHASE_COUNT,
             kind="task",
-            description="결제는 정확히 한 번만 발생해야 한다.",
+            description=f"결제는 정확히 {purchase_count}번 발생해야 한다.",
             check=ComparisonCheck(
-                    lhs=LedgerAggSelector(tool=side_effect_tool, agg="count"),
+                lhs=LedgerAggSelector(tool=side_effect_tool, agg="count"),
                 op=Comparator.EQ,
-                rhs=LiteralSelector(value=1),
+                rhs=LiteralSelector(value=purchase_count),
             ),
         ),
         Invariant(
@@ -64,7 +67,10 @@ def life_v0_invariants(
                 rhs=LiteralSelector(value=max_spend_krw),
             ),
         ),
-        mission_completed_invariant(tool=mission_completion_tool),
+        mission_completed_invariant(
+            tool=mission_completion_tool,
+            minimum_count=purchase_count,
+        ),
         Invariant(
             id=INV_EXACTLY_ONCE_PAYMENT,
             kind="platform",

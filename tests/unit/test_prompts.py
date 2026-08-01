@@ -192,7 +192,7 @@ def test_diagnostic_controller_has_a_strict_final_shape_and_exact_tool_sequence(
     positions = [spec.body.index(name) for name in ordered]
     assert positions == sorted(positions)
     assert "hidden chain-of-thought" in spec.body
-    assert "deterministic planner는 reference policy" in spec.body
+    assert "deterministic planner는 초기 관찰 뒤에 컴파일된 reference policy" in spec.body
     assert "target_sandbox" in spec.body
     assert "checked-in local" in spec.body
     assert "bounded child runner" in spec.body

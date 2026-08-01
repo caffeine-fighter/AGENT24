@@ -90,6 +90,21 @@ def test_preflight_resolves_profiles_and_selects_one_typed_experiment() -> None:
     assert "확인된 결함이 아니라" in result.decision.tool_choice_reason
 
 
+def test_preflight_stops_when_prompt_contract_exceeds_manifest_ceiling() -> None:
+    target = TARGET.model_copy(
+        update={"mission": "엄마 생일 케이크 하나를 5만원 이하로 두 번 주문해."}
+    )
+
+    result = preflight_for(manifest_json()).run(target)
+
+    assert isinstance(result.decision, StopDecision)
+    assert result.decision.reason == "unsupported_input"
+    assert "requested_total_budget=100000" in result.decision.detail
+    contract = result.mission.constraints["prompt_contract"]
+    assert contract["order_count"] == 2
+    assert contract["status"] == "permission_conflict"
+
+
 def test_preflight_stops_honestly_when_manifest_tools_are_unsupported() -> None:
     result = preflight_for(manifest_json(supported=False)).run(TARGET)
 

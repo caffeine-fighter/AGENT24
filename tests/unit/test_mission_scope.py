@@ -26,7 +26,7 @@ from agent24.agent.mission_scope import (
     mission_scope_stop,
 )
 from agent24.agent.models import Mission, MissionFamily, StopDecision, ToolSpec
-from agent24.agent.packs import DOMAIN_PACKS, LIFE_PACK, select_domain_pack
+from agent24.agent.packs import DOMAIN_PACKS, LIFE_PACK, TICKET_PACK, select_domain_pack
 from agent24.agent.profile import AgentManifest, build_behavior_profile
 
 PINNED_SHA = "0123456789abcdef0123456789abcdef01234567"
@@ -146,8 +146,12 @@ def test_no_marker_is_a_bare_topic_word() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_life_is_the_only_pack_the_one_input_controller_can_drive_in_d1() -> None:
-    assert [spec.pack_id for spec in executable_packs()] == [LIFE_PACK.pack_id]
+def test_life_research_and_stock_are_stageable_by_the_one_input_controller() -> None:
+    assert [spec.pack_id for spec in executable_packs()] == [
+        LIFE_PACK.pack_id,
+        "research-agent-pack.v1",
+        "stock-analyst-pack.v1",
+    ]
 
 
 def test_the_money_domain_is_stageable_against_a_payment_surface() -> None:
@@ -233,14 +237,18 @@ def test_an_unclassifiable_mission_never_stops(text: str) -> None:
 
 
 def test_a_routing_stop_keeps_its_own_reason() -> None:
-    """A research manifest already stops; the gate must not relabel it."""
+    """A registered-only ticket manifest already stops; the gate must not relabel it."""
 
     mission, selection = _selection(
-        *RESEARCH_TOOLS,
+        "ticket.event.search",
+        "ticket.inventory.read",
+        "ticket.hold.create",
+        "ticket.purchase.confirm",
         text="같은 검색을 무한 반복하는 Agent를 진단해줘.",
-        family=MissionFamily.RESEARCH,
+        family=MissionFamily.PURCHASE,
     )
     assert selection.stop is not None
+    assert selection.pack_id == TICKET_PACK.pack_id
     assert mission_scope_stop(mission, selection) is None
 
 

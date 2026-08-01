@@ -125,6 +125,7 @@ Lab Agent가 내보내는 아래 의미 이벤트도 같은 envelope를 사용�
 | `pack_selection` | compatibility 상태, selected/candidate domain, WHY/EXPECT/evidence, 0-experiment fallback 표시 |
 | `compatibility_report` | target code를 실행하지 않은 compatibility-only terminal report와 claim boundary 표시 |
 | `behavior_profile` | `profile.BehaviorProfile`의 다섯 판정과 evidence/unknown reason 표시 |
+| `prompt.contract` | Luna Structured Outputs 또는 명시적 fallback으로 추출한 주문 수·수량·예산·permission ceiling 충돌 표시 |
 | `pack.selected` | 어떤 domain Gym을 고를지에 대한 결정적 routing 판단과 그 근거 표시 |
 | `experiment_plan` | typed `ExperimentPlan`의 선택 fault·근거·기대 evidence·budget 표시 |
 | `gym.baseline.completed` | healthy twin의 seed·run digest·trace/ledger 개수 기록 |
@@ -168,6 +169,14 @@ Research candidate 같은 compatibility 주장을 실제 target vulnerability나
 `behavior_profile.payload`는 `src/agent24/agent/profile.py::BehaviorProfile`의
 `model_dump(mode="json")` 결과입니다. live 이벤트의 `source_ref` 끝에 immutable hex SHA가
 있을 때만 상단 resolved SHA에 반영합니다. fixture ref는 실제 resolve 결과로 승격하지 않습니다.
+
+`prompt.contract.payload`는 `src/agent24/agent/prompt_contract.py`의 host projection입니다.
+`source=luna`여도 raw model 응답을 그대로 화면에 노출하지 않고, `order_count`,
+`quantity_per_order`, `max_order_price_krw`, `implied_total_spend_krw`, `budget_scope`,
+`permission_conflicts`만 보존합니다. provider timeout/schema 오류는
+`source=deterministic_fallback`과 `fallback_reason`으로 구분합니다. `permission_conflicts`가
+있으면 `stage.failed(code=prompt_contract_conflict)` 뒤에 target 관찰·side effect를 시작하지
+않습니다.
 
 `pack.selected.payload`는 `src/agent24/agent/packs.py::PackSelection`의
 `model_dump(mode="json")` 결과입니다. `behavior_profile` 직후, `experiment_plan`보다

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from typing import Any, Literal
@@ -67,7 +67,8 @@ STOCK_PACK_METADATA: dict[str, Any] = {
     ),
     "max_tool_calls": MAX_STOCK_TOOL_CALL_BUDGET,
     "supports_benign_control": True,
-    # The tools-layer replay exists, but controller registration remains #59.
+    # The pack is reachable from the one-input domain router; protected replay
+    # remains a controller-owned verification arm.
     "supports_protected_replay": True,
 }
 
@@ -951,6 +952,75 @@ class StockGym:
             tool_calls=(),
         )
 
+    def assessment_from_target_output(
+        self,
+        output: Mapping[str, Any],
+        tool_calls: Collection[str] = (),
+    ) -> StockAssessment:
+        """Project one live target answer into the controller assessment."""
+
+        attributions = tuple(
+            SourceAttribution(str(item.get("record_id", "")), str(item.get("source_id", "")))
+            for item in output.get("source_attributions", ())
+            if isinstance(item, Mapping)
+            and item.get("record_id")
+            and item.get("source_id")
+        )
+        claims = tuple(
+            MarketClaim(item.get("key", ""), item.get("value"))
+            for item in output.get("reported_claims", ())
+            if isinstance(item, Mapping)
+            and isinstance(item.get("key"), str)
+            and item.get("key")
+            and isinstance(item.get("value"), (str, float, int))
+            and not isinstance(item.get("value"), bool)
+        )
+        requested_entity_id = output.get("requested_entity_id")
+        if not isinstance(requested_entity_id, str) or not requested_entity_id:
+            requested_entity_id = self.fixture.target_entity_id
+        final_answer = output.get("final_answer", "")
+        return StockAssessment(
+            ticker_query=(
+                output.get("ticker_query")
+                if isinstance(output.get("ticker_query"), str)
+                else ""
+            ),
+            requested_entity_id=requested_entity_id,
+            selected_security_id=(
+                output.get("selected_security_id")
+                if isinstance(output.get("selected_security_id"), str)
+                else None
+            ),
+            relied_on_record_ids=tuple(
+                str(value)[:160]
+                for value in output.get("relied_on_record_ids", ())
+                if isinstance(value, str) and value.strip()
+            ),
+            source_attributions=attributions,
+            combined_entity_ids=tuple(
+                str(value)[:160]
+                for value in output.get("combined_entity_ids", ())
+                if isinstance(value, str) and value.strip()
+            ),
+            followed_analyst_note_instruction=(
+                output.get("followed_analyst_note_instruction") is True
+            ),
+            reported_claims=claims,
+            fixture_id=self.fixture.fixture_id,
+            seed=self.fixture.seed,
+            fixture_digest=self.fixture.digest,
+            run_kind="vulnerable",
+            analysis_as_of=(
+                output.get("analysis_as_of")
+                if isinstance(output.get("analysis_as_of"), str)
+                else ""
+            ),
+            final_answer=final_answer if isinstance(final_answer, str) else str(final_answer),
+            refused=output.get("refused") is True,
+            blocked_all_analysis=output.get("blocked_all_analysis") is True,
+            tool_calls=tuple(str(tool) for tool in tool_calls),
+        )
+
     def diagnose(self, assessment: StockAssessment) -> DiagnosisReport:
         if assessment.fixture_id and assessment.fixture_id != self.fixture.fixture_id:
             raise ValueError("stock assessment fixture does not match this Gym")
@@ -1322,7 +1392,7 @@ class StockGym:
 
 
 class StockDomainPackAdapter:
-    """Metadata-compatible build seam for the deferred Stock controller."""
+    """Metadata-compatible build seam for the live Stock target route."""
 
     pack_id = StockGym.pack_id
     version = STOCK_PACK_METADATA["version"]
@@ -1344,7 +1414,7 @@ class StockDomainPackAdapter:
 
     @classmethod
     def supports(cls, tool_names: Collection[str]) -> bool:
-        """Return router compatibility; protected controller replay is deferred."""
+        """Return whether a manifest exposes a routable Stock surface."""
 
         available = set(tool_names)
         return bool(cls.anchor_tool_capabilities & available) and (

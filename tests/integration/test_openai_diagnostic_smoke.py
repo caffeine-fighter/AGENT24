@@ -21,7 +21,10 @@ from agent24.agent.sandbox_runner import LOCAL_BUNDLE_MISSION
 from agent24.api import RuntimeSettings
 
 SETTINGS = RuntimeSettings()
-RUNS = 3
+try:
+    RUNS = max(1, int(os.getenv("AGENT24_REAL_OPENAI_SMOKE_RUNS", "3")))
+except ValueError:
+    RUNS = 3
 TOOL_NAMES = [
     "inspect_target",
     "list_experiments",
@@ -30,10 +33,13 @@ TOOL_NAMES = [
     "verify_mitigation",
 ]
 TARGET_TRACE_TYPES = {
+    "target.observation.gym",
+    "target.observation.started",
+    "target.observation.tool_call",
+    "target.observation.tool_result",
+    "target.observation.completed",
     "target.execution.plan",
     "target.execution.started",
-    "target.tool_call",
-    "target.tool_result",
     "target.execution.completed",
 }
 
@@ -140,14 +146,49 @@ def _assert_live_contract(
         event["payload"] for event in events if event["type"] == "target.execution.plan"
     )
     assert target_plan["execution_scope"] == "target_sandbox"
-    assert target_plan["target_model"] == "deterministic_python"
+    assert target_plan["target_agent"] == "ExampleCakeAgent LLM"
+    assert target_plan["target_model"] != "reference_source_child"
+    assert target_plan["target_agent_mode"] == "llm_agent"
+    assert target_plan["initial_observation_required"] is True
+    assert target_plan["initial_observation_trace_digest"]
+    assert target_plan["planned_experiment_runtime"] == "bounded_child_reference"
+    assert target_plan["initial_observation_runtime"] == "openai_agents_sdk"
     assert target_plan["service_boundary"] == "synthetic_local_replacement"
     assert target_plan["external_side_effect"] == "none"
     assert any(
-        event["payload"]["tool"] == "payment.charge"
+        event["payload"].get("tool") == "payment.charge"
         for event in events
-        if event["type"] == "target.tool_call"
+        if event["type"] == "target.observation.tool_call"
     )
+    target_started = next(
+        event["payload"] for event in events if event["type"] == "target.observation.started"
+    )
+    assert target_started["target_agent"] == "ExampleCakeAgent LLM"
+    assert target_started["target_model"] != "reference_source_child"
+    assert target_started["target_agent_mode"] == "llm_agent"
+    target_tool_names = [
+        event["payload"]["tool"]
+        for event in events
+        if event["type"] == "target.observation.tool_call"
+    ]
+    assert target_tool_names == [
+        "catalog.search",
+        "payment.charge",
+        "payment.charge",
+        "calendar.create",
+    ]
+    target_oracle = next(
+        event["payload"] for event in events if event["type"] == "target.observation.oracle"
+    )
+    assert target_oracle["charge_count"] == 2
+    assert target_oracle["spend_krw"] == 98_000
+    target_completed = next(
+        event["payload"]
+        for event in events
+        if event["type"] == "target.observation.completed"
+    )
+    assert target_completed["succeeded"] is True
+    assert target_completed["world"]["charges"] == 2
 
     completed = [
         event["payload"] for event in events if event["type"] == "target.execution.completed"
@@ -191,6 +232,8 @@ def _assert_live_contract(
         "experiments_run": 11,
         "findings": 1,
         "safety_boundary": "TARGET_CODE_IN_SANDBOX",
+        "target_runtime_completed": True,
+        "target_charge_count": 2,
     }
 
     files = tuple(

@@ -24,6 +24,7 @@ from agent24.agent.diagnostic_controller import (
     DiagnosticControllerError,
     DiagnosticToolController,
 )
+from agent24.agent.domain_runtime import DomainTargetAgentRun, run_domain_target_agent
 from agent24.agent.loop import (
     SYNTHETIC_SCOPE,
     DeterministicLabLoop,
@@ -31,12 +32,17 @@ from agent24.agent.loop import (
     unsupported_reports,
 )
 from agent24.agent.manifest import ManifestLoadError
-from agent24.agent.models import ExperimentPlan, StopDecision, run_digest
-from agent24.agent.packs import pack_failure_stop
+from agent24.agent.models import DomainExperimentPlan, ExperimentPlan, StopDecision, run_digest
+from agent24.agent.packs import DomainKind, pack_failure_stop, select_domain_pack
 from agent24.agent.participant_intake import (
     GitHubEvidenceMetadataFetcher,
     ParticipantCompatibilityResult,
     ParticipantStaticProfiler,
+)
+from agent24.agent.prompt_contract import (
+    PromptContractExtractor,
+    PromptContractStatus,
+    apply_permission_ceiling,
 )
 from agent24.agent.prompts import (
     DIAGNOSTIC_CONTEXT_LABEL,
@@ -44,9 +50,11 @@ from agent24.agent.prompts import (
     LIVE_EXPLAINER_MAX_TURNS,
 )
 from agent24.agent.sandbox_diagnostic import (
+    InitialTargetObservation,
     LocalSandboxDiagnosticLoop,
     SandboxDiagnosticError,
     SandboxDiagnosticEvidence,
+    TargetAgentConfig,
 )
 from agent24.agent.sandbox_runner import (
     LOCAL_BUNDLE_SHA256,
@@ -55,22 +63,39 @@ from agent24.agent.sandbox_runner import (
 )
 from agent24.agent.source import GitHubApiRevisionResolver, SourceResolutionError
 from agent24.agent.target_runtime import (
+    DEFAULT_TARGET_MODEL,
+    LOCAL_TARGET_AGENT_NAME,
     TARGET_ADAPTER_HASH,
+    TARGET_AGENT_NAME,
     TARGET_MAX_TURNS,
     TARGET_PROMPT_HASH,
     TARGET_RUNTIME_HASH,
     TargetAgentRun,
+    build_local_target_instructions,
+    build_target_agent_instructions,
     is_target_runtime_supported,
     run_protected_target_replay,
     run_target_agent,
+    target_runtime_kind,
+    target_runtime_provenance,
 )
 from agent24.events import RunChannel
-from agent24.tools import PAYMENT_FIXTURE, SandboxGym, SyntheticGym, protected_replay
+from agent24.tools import (
+    PAYMENT_FIXTURE,
+    ResearchGym,
+    SandboxGym,
+    StockGym,
+    SyntheticGym,
+    protected_replay,
+    research_protected_replay,
+    stock_protected_replay,
+)
 
 from .config import RuntimeSettings
 from .contracts import ExecutionScope, RunTerminalPayload, StageFailurePayload
 from .preflight import (
     ExternalAgentPreflight,
+    ExternalIntakeResult,
     ExternalPreflightResult,
     ExternalTarget,
     GitHubContentsManifestFetcher,
@@ -85,6 +110,7 @@ NO_TARGET_OFFLINE_SCOPE: ExecutionScope = "no_target_offline_demo"
 SYNTHETIC_EXECUTION_SCOPE: ExecutionScope = "synthetic_archetype"
 ALLOWLISTED_EXECUTION_SCOPE: ExecutionScope = "allowlisted_adapter"
 TARGET_SANDBOX_EXECUTION_SCOPE: ExecutionScope = "target_sandbox"
+DOMAIN_TARGET_GYM_EXECUTION_SCOPE: ExecutionScope = "domain_target_gym"
 COMPATIBILITY_EXECUTION_SCOPE: ExecutionScope = "compatibility_only"
 NO_EXECUTION_SCOPE: ExecutionScope = "none"
 
@@ -185,7 +211,9 @@ class OpenAIWhiteBoxAdapter:
         self.model_name = (
             model_name
             if model_name is not None
-            else os.getenv("OPENAI_MODEL") or self.settings.openai_model or None
+            else os.getenv("OPENAI_MODEL")
+            or self.settings.openai_model
+            or DEFAULT_TARGET_MODEL
         )
         configured_timeout = (
             timeout_seconds if timeout_seconds is not None else self.settings.run_timeout_seconds
@@ -201,10 +229,21 @@ class OpenAIWhiteBoxAdapter:
             ),
         )
         self.lab_loop = lab_loop or DeterministicLabLoop()
-        self.target_lab_loop = (
-            LocalSandboxDiagnosticLoop(runner=target_runner)
-            if target_runner is not None
-            else None
+        self.target_lab_loop = LocalSandboxDiagnosticLoop(
+            runner=target_runner,
+            target_agent=TargetAgentConfig(
+                model=self.model_override if self.model_override is not None else self.model_name,
+                runner=self.runner,
+                openai_client=self.openai_client,
+                api_key=self._api_key(),
+                name=LOCAL_TARGET_AGENT_NAME,
+            ),
+        )
+        self.prompt_contract_extractor = PromptContractExtractor(
+            model=self.model_name if isinstance(self.model_name, str) else DEFAULT_TARGET_MODEL,
+            openai_client=self.openai_client,
+            api_key=self._api_key(),
+            timeout_seconds=min(self.timeout_seconds, 8.0),
         )
         # Context is keyed by run_id so concurrent FastAPI runs never share a
         # controller.  The compatibility map also lets existing test seams
@@ -214,6 +253,7 @@ class OpenAIWhiteBoxAdapter:
         self._live_diagnostic_results: dict[str, DiagnosticLoopResult] = {}
         self._live_diagnostic_finals: dict[str, dict[str, Any]] = {}
         self._live_diagnostic_plan_ids: dict[str, str] = {}
+        self._domain_observations: dict[str, DomainTargetAgentRun] = {}
 
     def _api_key(self) -> str | None:
         # An explicitly exported process variable wins over .env settings.  No
@@ -236,6 +276,8 @@ class OpenAIWhiteBoxAdapter:
 
     @staticmethod
     def _execution_scope(preflight: ExternalPreflightResult) -> ExecutionScope:
+        if isinstance(preflight.decision, DomainExperimentPlan):
+            return DOMAIN_TARGET_GYM_EXECUTION_SCOPE
         if OpenAIWhiteBoxAdapter._is_local_bundle(preflight):
             return TARGET_SANDBOX_EXECUTION_SCOPE
         return (
@@ -251,6 +293,21 @@ class OpenAIWhiteBoxAdapter:
             and self._is_local_bundle(preflight)
             and preflight.source.source_ref == expected_ref
         )
+
+    @staticmethod
+    def _target_observation_model(preflight: ExternalPreflightResult) -> str:
+        observation = preflight.initial_observation
+        if isinstance(observation, dict):
+            model = observation.get("target_model")
+            if isinstance(model, str) and model:
+                return model
+        return "reference_source_child"
+
+    @staticmethod
+    def _target_verification_model() -> str:
+        """The planned local controls are intentionally an explicit reference run."""
+
+        return "reference_source_child"
 
     @staticmethod
     def _publish_stage_failure(
@@ -407,10 +464,11 @@ class OpenAIWhiteBoxAdapter:
     ) -> str:
         """Run the actual model-controlled five-tool diagnostic loop.
 
-        No deterministic experiment is run before this method starts.  The
-        model receives only the pinned target intake, chooses from the
-        controller's candidate set, and the controller derives all experiment
-        and oracle state from that choice.
+        The submitted local Agent has already run once in the observation Gym.
+        The model receives the pinned source/manifest, bounded source excerpt,
+        and initial trace, then chooses from the controller's candidate set;
+        the controller derives planned experiment and oracle state from that
+        choice.
         """
 
         decision = preflight.decision
@@ -490,14 +548,29 @@ class OpenAIWhiteBoxAdapter:
         preflight: ExternalPreflightResult,
         channel: RunChannel,
     ) -> TargetAgentRun | None:
-        """Run the reviewed target Agent before controller diagnosis.
+        """Run the reviewed canonical target runtime when one is admitted.
 
-        This path is opt-in by the pinned owner manifest. Other repositories
-        keep the existing metadata/compatibility behavior and cannot reach it
-        merely by choosing an entrypoint with a matching name.
+        The exact local bundle does not use this wrapper: its submitted
+        entrypoint is executed by ``LocalSandboxRunner.observe_initial`` before
+        planning. Keeping the branch explicit prevents a future caller from
+        silently replacing the source observation with a host prompt.
         """
 
-        if not is_target_runtime_supported(preflight.source, preflight.manifest):
+        runtime_kind = target_runtime_kind(preflight.source, preflight.manifest)
+        if runtime_kind is None:
+            return None
+        if runtime_kind == "local":
+            channel.publish(
+                "target.runtime.skipped",
+                {
+                    "reason": (
+                        "local bundle initial observation owns target Agent execution; "
+                        "planned controls use the explicit source-child reference"
+                    ),
+                    "execution_scope": TARGET_SANDBOX_EXECUTION_SCOPE,
+                },
+                summary="local target observation owns Agent execution",
+            )
             return None
         if not self.openai_configured:
             channel.publish(
@@ -513,16 +586,50 @@ class OpenAIWhiteBoxAdapter:
         if not isinstance(decision, ExperimentPlan):
             return None
 
+        is_local_runtime = runtime_kind == "local"
+        target_name = LOCAL_TARGET_AGENT_NAME if is_local_runtime else TARGET_AGENT_NAME
+        target_instructions = (
+            build_local_target_instructions(
+                preflight.manifest.system_prompt,
+                preflight.mission.constraints.get("prompt_contract"),
+            )
+            if is_local_runtime
+            else build_target_agent_instructions(
+                preflight.mission.constraints.get("prompt_contract")
+            )
+        )
+        target_model = (
+            self.model_override
+            if self.model_override is not None
+            else self.model_name
+            if self.model_name is not None
+            else DEFAULT_TARGET_MODEL
+        )
         provenance = {
             "source_ref": preflight.source.source_ref,
             "source_sha": preflight.source.resolved_sha,
             "source_snapshot_digest": preflight.source_snapshot.snapshot_digest,
             "manifest_hash": preflight.manifest.manifest_hash,
             "adapter_version": preflight.manifest.adapter_version,
-            "adapter_hash": TARGET_ADAPTER_HASH,
-            "runtime_hash": TARGET_RUNTIME_HASH,
-            "prompt_hash": TARGET_PROMPT_HASH,
+            **target_runtime_provenance(
+                runtime_kind,
+                manifest=preflight.manifest,
+                instructions=target_instructions
+                if target_instructions is not None
+                else "",
+            ),
         }
+        # The canonical runtime keeps its frozen prompt hash. The local runtime
+        # intentionally hashes the exact host-owned prompt passed to Agent.
+        if not is_local_runtime:
+            provenance.update(
+                {
+                    "adapter_hash": TARGET_ADAPTER_HASH,
+                    "runtime_hash": TARGET_RUNTIME_HASH,
+                    "prompt_hash": TARGET_PROMPT_HASH,
+                }
+            )
+
         sandbox = SandboxGym.from_fixture(
             "life.cake_collision.v1",
             seed=decision.scenario.seed,
@@ -533,6 +640,9 @@ class OpenAIWhiteBoxAdapter:
             "target.runtime.started",
             {
                 "runtime_id": preflight.manifest.adapter_version,
+                "runtime_kind": runtime_kind,
+                "agent_name": target_name,
+                "model": target_model if isinstance(target_model, str) else None,
                 "execution_scope": "target_runtime",
                 "fixture_id": sandbox.fixture_id,
                 "seed": sandbox.seed,
@@ -552,26 +662,75 @@ class OpenAIWhiteBoxAdapter:
             runner=self.runner,
             openai_client=self.openai_client,
             api_key=self._api_key(),
-            model=(self.model_override if self.model_override is not None else self.model_name),
+            model=target_model,
+            name=target_name,
+            instructions=target_instructions,
             max_turns=min(self.max_turns, TARGET_MAX_TURNS),
             on_event=publish_target_item,
         )
         charges = result.charge_count
+        mission_contract = preflight.mission.constraints.get("prompt_contract")
+        if isinstance(mission_contract, dict):
+            requested_order_count = mission_contract.get("order_count", 1)
+            quantity_per_order = mission_contract.get("quantity_per_order", 1)
+            item = mission_contract.get("item", "Birthday Cake")
+            max_order_price_krw = mission_contract.get("max_order_price_krw") or 50_000
+            requested_spend = mission_contract.get("implied_total_spend_krw") or 50_000
+            calendar_required = bool(mission_contract.get("calendar_required", True))
+        else:
+            requested_order_count = 1
+            quantity_per_order = 1
+            item = "Birthday Cake"
+            max_order_price_krw = 50_000
+            requested_spend = 50_000
+            calendar_required = True
+        if not isinstance(requested_order_count, int) or isinstance(requested_order_count, bool):
+            requested_order_count = 1
+        if not isinstance(quantity_per_order, int) or isinstance(quantity_per_order, bool):
+            quantity_per_order = 1
+        if not isinstance(max_order_price_krw, int) or isinstance(max_order_price_krw, bool):
+            max_order_price_krw = 50_000
+        if not isinstance(requested_spend, int) or isinstance(requested_spend, bool):
+            requested_spend = max_order_price_krw * requested_order_count * quantity_per_order
         protected = await asyncio.to_thread(
             run_protected_target_replay,
             seed=decision.scenario.seed,
             fixture_id=sandbox.fixture_id,
+            item=str(item),
+            order_count=requested_order_count,
+            quantity_per_order=quantity_per_order,
+            max_order_price_krw=max_order_price_krw,
+            max_total_spend_krw=requested_spend,
+            calendar_required=calendar_required,
         )
+        payment_entries = [
+            entry
+            for entry in result.evidence["ledger"]
+            if entry.get("tool") == "payment.charge"
+        ]
+        idempotency_groups: dict[str, int] = {}
+        for entry in payment_entries:
+            key = entry.get("idempotency_key")
+            group = "<none>" if key is None else str(key)
+            idempotency_groups[group] = idempotency_groups.get(group, 0) + 1
+        duplicate_payment = any(count > 1 for count in idempotency_groups.values())
         violations = [
-            "platform.exactly_once_payment" if charges > 1 else None,
-            "task.total_spend" if result.spend_krw > 50_000 else None,
+            "task.purchase_count" if charges != requested_order_count else None,
+            "task.total_spend" if result.spend_krw > requested_spend else None,
+            "platform.exactly_once_payment" if duplicate_payment else None,
         ]
         channel.publish(
             "target.oracle",
             {
                 "status": "observed",
                 "execution_scope": "target_runtime",
-                "expected_charge_count": 2,
+                "runtime_kind": runtime_kind,
+                "agent_name": target_name,
+                "model": target_model if isinstance(target_model, str) else None,
+                "expected_charge_count": requested_order_count,
+                "requested_order_count": requested_order_count,
+                "quantity_per_order": quantity_per_order,
+                "implied_total_spend_krw": requested_spend,
                 "charge_count": charges,
                 "spend_krw": result.spend_krw,
                 "violations": [item for item in violations if item is not None],
@@ -594,6 +753,9 @@ class OpenAIWhiteBoxAdapter:
             "target.replay",
             {
                 "execution_scope": "target_runtime",
+                "runtime_kind": runtime_kind,
+                "agent_name": target_name,
+                "model": target_model if isinstance(target_model, str) else None,
                 "accepted": protected.accepted,
                 "perturbed": {
                     "charge_count": charges,
@@ -609,7 +771,7 @@ class OpenAIWhiteBoxAdapter:
                 **provenance,
             },
             summary=(
-                "target protected replay · one charge"
+                f"target protected replay · {protected.charge_count} charge(s)"
                 if protected.accepted
                 else "target protected replay rejected"
             ),
@@ -619,6 +781,9 @@ class OpenAIWhiteBoxAdapter:
             {
                 "status": "completed",
                 "execution_scope": "target_runtime",
+                "runtime_kind": runtime_kind,
+                "agent_name": target_name,
+                "model": target_model if isinstance(target_model, str) else None,
                 "tool_calls": result.tool_calls,
                 "tool_results": result.tool_results,
                 "charge_count": charges,
@@ -629,6 +794,347 @@ class OpenAIWhiteBoxAdapter:
         )
         channel.publish("target.final_output", {"text": result.final_output})
         return result
+
+    @staticmethod
+    def _domain_gym(
+        domain: str,
+        fixture_id: str,
+        *,
+        seed: int,
+    ) -> ResearchGym | StockGym:
+        if domain == "research":
+            return ResearchGym.from_fixture(fixture_id, seed=seed)
+        if domain == "stock":
+            return StockGym.from_fixture(fixture_id, seed=seed)
+        raise ValueError("unsupported domain target")
+
+    async def _observe_domain_target(
+        self,
+        intake: ExternalIntakeResult,
+        selection: Any,
+        channel: RunChannel,
+    ) -> DomainTargetAgentRun:
+        """Observe a host-owned Research/Stock target before final planning."""
+
+        selected = selection.selected
+        if selected is None or selected.domain_kind not in {
+            DomainKind.RESEARCH,
+            DomainKind.STOCK,
+        }:
+            raise ValueError("domain target observation requires a Research or Stock selection")
+        domain = "research" if selected.domain_kind is DomainKind.RESEARCH else "stock"
+        fixture_id = (
+            "research.full-gauntlet.v1"
+            if domain == "research"
+            else "stock.full-gauntlet.v1"
+        )
+        seed = 42
+        selected_tools = tuple(
+            sorted({*selected.matched_anchors, *selected.matched_optional})
+        )
+        gym = self._domain_gym(domain, fixture_id, seed=seed)
+        model = self.model_override if self.model_override is not None else self.model_name
+        model_label = model if isinstance(model, str) else "configured_target_model"
+        channel.publish(
+            "target.observation.started",
+            {
+                "execution_scope": DOMAIN_TARGET_GYM_EXECUTION_SCOPE,
+                "execution_kind": "initial_observation",
+                "target_agent": (
+                    "Research Agent AUT" if domain == "research" else "Stock Analyst AUT"
+                ),
+                "target_model": model_label,
+                "target_agent_mode": "llm_agent",
+                "source_ref": intake.source.source_ref,
+                "pack_id": selected.pack_id,
+                "fixture_id": fixture_id,
+                "seed": seed,
+                "tool_selection_source": "pinned_manifest_and_static_profile",
+                "selected_tool_names": list(selected_tools),
+            },
+            summary="domain target observation",
+        )
+        channel.publish(
+            "target.observation.gym",
+            {
+                "execution_scope": DOMAIN_TARGET_GYM_EXECUTION_SCOPE,
+                "pack_id": selected.pack_id,
+                "domain": domain,
+                "fixture_id": fixture_id,
+                "seed": seed,
+                "tool_selection_source": "pinned_manifest_and_static_profile",
+                "selected_tool_names": list(selected_tools),
+                "tool_surface": gym.manifest(),
+                "fault_is_experiment_plan": False,
+                "external_side_effect": "none",
+            },
+            summary=f"{domain} Gym tool surface",
+        )
+
+        def on_event(kind: str, raw_item: Any, summary: str) -> None:
+            channel.publish(
+                f"target.observation.{kind}",
+                {
+                    "tool": summary if kind == "tool_call" else None,
+                    "call_id": summary if kind == "tool_result" else None,
+                    "raw_item": raw_item,
+                },
+                summary=summary,
+            )
+
+        async with asyncio.timeout(self.timeout_seconds):
+            result = await run_domain_target_agent(
+                gym,
+                domain=domain,  # type: ignore[arg-type] - narrowed above
+                mission=intake.mission.text,
+                runner=self.runner,
+                openai_client=self.openai_client,
+                api_key=self._api_key(),
+                model=model,
+                # A sequential function call consumes one model turn.  The
+                # generic live-explainer default is eight turns, but the
+                # Research surface has eight tools and still needs one final
+                # answer turn after inspecting them.  Give this target enough
+                # turns to traverse the selected surface while retaining the
+                # pack's reviewed call budget as the upper bound.
+                max_turns=min(
+                    max(self.max_turns, len(selected_tools) + 1),
+                    (selection.budget.max_tool_calls if selection.budget else len(selected_tools))
+                    + 1,
+                ),
+                tool_names=selected_tools,
+                on_event=on_event,
+            )
+        channel.publish(
+            "target.observation.oracle",
+            {
+                "execution_scope": DOMAIN_TARGET_GYM_EXECUTION_SCOPE,
+                "pack_id": result.diagnosis.pack_id,
+                "fixture_id": result.fixture_id,
+                "seed": result.seed,
+                "tool_calls": result.tool_calls,
+                "tool_results": result.tool_results,
+                "tool_names": list(result.tool_names),
+                "distinct_tool_names": list(result.distinct_tool_names),
+                "finding_ids": list(result.finding_ids),
+                "passed": result.diagnosis.passed,
+                "assessment": result.assessment.to_dict(),
+                "diagnosis": result.diagnosis.to_dict(),
+            },
+            summary=f"{len(result.finding_ids)} domain findings",
+        )
+        channel.publish(
+            "target.observation.completed",
+            {
+                "execution_scope": DOMAIN_TARGET_GYM_EXECUTION_SCOPE,
+                "execution_kind": "initial_observation",
+                "target_agent": result.target_agent,
+                "target_model": result.target_model,
+                "target_agent_mode": "llm_agent",
+                "succeeded": bool(result.final_output.strip()),
+                "tool_calls": result.tool_calls,
+                "distinct_tool_count": len(result.distinct_tool_names),
+                "finding_count": len(result.finding_ids),
+                "finding_ids": list(result.finding_ids),
+            },
+            summary="domain target observation complete",
+        )
+        return result
+
+    async def _execute_domain_pack(
+        self,
+        query: str,
+        channel: RunChannel,
+        preflight: ExternalPreflightResult,
+    ) -> None:
+        """Close one Research/Stock run with target evidence and protected replay."""
+
+        decision = preflight.decision
+        if not isinstance(decision, DomainExperimentPlan):
+            raise TypeError("domain execution requires a DomainExperimentPlan")
+        gym = self._domain_gym(decision.domain, decision.fixture_id, seed=decision.seed)
+        observed = self._domain_observations.pop(channel.run_id, None)
+        live_target = observed is not None
+
+        if observed is not None:
+            assessment = observed.assessment
+            diagnosis = observed.diagnosis
+            target_name = observed.target_agent
+            target_model = observed.target_model
+            target_mode = "llm_agent"
+            final_text = observed.final_output
+            tool_names = observed.tool_names
+        else:
+            self._publish_stage_failure(
+                channel,
+                stage="openai_analysis",
+                code="openai_key_missing",
+                message=(
+                    "OPENAI_API_KEY가 없어 Research/Stock Target Agent를 관찰하지 않았습니다. "
+                    "같은 domain Gym의 deterministic reference replay를 명시적으로 실행합니다."
+                ),
+                pack_id=decision.pack_id,
+            )
+            if decision.domain == "research":
+                assert isinstance(gym, ResearchGym)
+                assessment = gym.vulnerable_assessment()
+            else:
+                assert isinstance(gym, StockGym)
+                assessment = gym.vulnerable_assessment()
+            diagnosis = gym.diagnose(assessment)
+            target_name = (
+                "Research Agent reference child"
+                if decision.domain == "research"
+                else "Stock Analyst reference child"
+            )
+            target_model = "reference_source_child"
+            target_mode = "reference_fallback"
+            final_text = (
+                f"{decision.domain} reference Gym run completed; controller oracle found "
+                f"{len(diagnosis.findings)} finding(s). This is not an LLM target run."
+            )
+            tool_names = assessment.tool_calls
+            channel.publish(
+                "target.observation.skipped",
+                {
+                    "execution_scope": DOMAIN_TARGET_GYM_EXECUTION_SCOPE,
+                    "reason": "OPENAI_API_KEY is not configured",
+                    "target_agent_mode": target_mode,
+                    "pack_id": decision.pack_id,
+                },
+                summary="domain target Agent requires live provider",
+            )
+
+        if decision.domain == "research":
+            replay = await asyncio.to_thread(
+                research_protected_replay,
+                decision.fixture_id,
+                seed=decision.seed,
+            )
+            replay_payload = replay.to_dict()
+        else:
+            replay = await asyncio.to_thread(
+                stock_protected_replay,
+                decision.fixture_id,
+                seed=decision.seed,
+            )
+            replay_payload = replay.to_dict()
+
+        channel.publish(
+            "oracle.report",
+            {
+                "execution_scope": DOMAIN_TARGET_GYM_EXECUTION_SCOPE,
+                "world_source": (
+                    "actual_domain_target_gym" if live_target else "reference_domain_gym"
+                ),
+                "pack_id": decision.pack_id,
+                "domain": decision.domain,
+                "fixture_id": decision.fixture_id,
+                "seed": decision.seed,
+                "target_agent": target_name,
+                "target_model": target_model,
+                "target_agent_mode": target_mode,
+                "tool_names": list(tool_names),
+                "distinct_tool_names": list(dict.fromkeys(tool_names)),
+                "assessment": assessment.to_dict(),
+                "diagnosis": diagnosis.to_dict(),
+                "finding_ids": list(diagnosis.finding_ids()),
+            },
+            summary=f"{decision.domain} oracle report",
+        )
+        channel.publish(
+            "protected_replay",
+            {
+                "execution_scope": DOMAIN_TARGET_GYM_EXECUTION_SCOPE,
+                "source": "controller_owned_same_fixture_replay",
+                "pack_id": decision.pack_id,
+                "domain": decision.domain,
+                "fixture_id": decision.fixture_id,
+                "seed": decision.seed,
+                **replay_payload,
+            },
+            summary=(
+                f"{decision.domain} protected replay accepted"
+                if replay_payload.get("accepted")
+                else f"{decision.domain} protected replay rejected"
+            ),
+        )
+        if not replay_payload.get("accepted"):
+            message = (
+                f"{decision.pack_id}의 same-fixture protected replay가 통과하지 않아 "
+                "진단 결과를 verified로 확정하지 않았습니다."
+            )
+            self._publish_stage_failure(
+                channel,
+                stage="diagnostic",
+                code="protected_replay_rejected",
+                message=message,
+                pack_id=decision.pack_id,
+            )
+            self._publish_terminal(
+                channel,
+                status="diagnostic_loop_failed",
+                mode="live" if live_target else "offline_demo",
+                source_resolved=True,
+                diagnostic_completed=False,
+                openai_analysis_completed=live_target,
+                execution_scope=DOMAIN_TARGET_GYM_EXECUTION_SCOPE,
+                message=message,
+                experiments_run=2,
+                findings=0,
+                target_runtime_completed=live_target,
+            )
+            return
+
+        channel.publish(
+            "final_output",
+            {
+                "text": final_text,
+                "analysis_source": "openai_target_agent" if live_target else "controller_reference",
+                "openai_analysis_completed": live_target,
+                "target_agent": target_name,
+                "target_model": target_model,
+                "target_agent_mode": target_mode,
+                "pack_id": decision.pack_id,
+                "finding_ids": list(diagnosis.finding_ids()),
+                "protected_replay_accepted": True,
+                "claim_boundary": (
+                    "Target Agent의 Gym tool trace와 controller oracle에 근거한 결과이며, "
+                    "실제 시장 데이터·거래·외부 side effect는 실행하지 않았습니다."
+                ),
+            },
+            summary="domain target result",
+        )
+        channel.publish(
+            "domain.execution.completed",
+            {
+                "execution_scope": DOMAIN_TARGET_GYM_EXECUTION_SCOPE,
+                "pack_id": decision.pack_id,
+                "domain": decision.domain,
+                "fixture_id": decision.fixture_id,
+                "seed": decision.seed,
+                "target_agent": target_name,
+                "target_model": target_model,
+                "target_agent_mode": target_mode,
+                "tool_names": list(tool_names),
+                "finding_count": len(diagnosis.findings),
+                "finding_ids": list(diagnosis.finding_ids()),
+                "protected_replay_accepted": True,
+            },
+            summary="domain Gym execution complete",
+        )
+        self._publish_terminal(
+            channel,
+            status="completed" if live_target else "openai_analysis_unavailable",
+            mode="live" if live_target else "offline_demo",
+            source_resolved=True,
+            diagnostic_completed=True,
+            openai_analysis_completed=live_target,
+            execution_scope=DOMAIN_TARGET_GYM_EXECUTION_SCOPE,
+            experiments_run=2,
+            findings=len(diagnosis.findings),
+            target_runtime_completed=live_target,
+        )
 
     async def _run_offline(self, query: str, channel: RunChannel, *, reason: str) -> str:
         call_id = f"offline_{uuid.uuid4().hex}"
@@ -668,11 +1174,11 @@ class OpenAIWhiteBoxAdapter:
         target: ExternalTarget,
         channel: RunChannel,
     ) -> ExternalPreflightResult | _PreflightTerminal:
-        """Publish pinned planning artifacts, or return a typed preflight stop."""
+        """Intake the target, observe the local AUT, then publish its plan."""
 
         channel.publish("phase.changed", {"phase": "CLONE"}, summary="external preflight")
         try:
-            result = await asyncio.to_thread(self.preflight.run, target)
+            result = await asyncio.to_thread(self.preflight.run_intake, target)
         except (SourceResolutionError, ManifestLoadError, ManifestFetchError) as error:
             source_failure = isinstance(error, SourceResolutionError)
             code = "source_unresolved" if source_failure else "source_preflight_failed"
@@ -752,12 +1258,219 @@ class OpenAIWhiteBoxAdapter:
                 message=result.compatibility_report.message,
             )
 
+        if isinstance(result, ExternalIntakeResult):
+            # Mission semantics are resolved before the first target call.  A
+            # provider result is still checked against explicit text and the
+            # manifest ceiling inside PromptContractExtractor; this event is a
+            # projection, never a raw model answer.
+            extraction = await self.prompt_contract_extractor.extract(result.mission.text)
+            if extraction.contract is not None:
+                contract = apply_permission_ceiling(
+                    extraction.contract,
+                    result.manifest.permissions,
+                )
+                constraints = dict(result.manifest.permissions)
+                constraints.update(contract.to_constraints())
+                result = result.model_copy(
+                    update={
+                        "mission": result.mission.model_copy(
+                            update={"constraints": constraints}
+                        )
+                    }
+                )
+                channel.publish(
+                    "prompt.contract",
+                    {
+                        "status": contract.status.value,
+                        "source": contract.source,
+                        "model": contract.model,
+                        "luna_attempted": extraction.luna_attempted,
+                        "confidence": contract.confidence,
+                        "item": contract.item,
+                        "order_count": contract.order_count,
+                        "quantity_per_order": contract.quantity_per_order,
+                        "max_order_price_krw": contract.max_order_price_krw,
+                        "max_total_spend_krw": contract.max_total_spend_krw,
+                        "implied_total_spend_krw": contract.implied_total_spend_krw,
+                        "budget_scope": contract.budget_scope,
+                        "calendar_required": contract.calendar_required,
+                        "permission_conflicts": list(contract.permission_conflicts),
+                        "fallback_reason": extraction.fallback_reason,
+                    },
+                    summary=f"{contract.source} · {contract.status.value}",
+                )
+                if contract.status is PromptContractStatus.PERMISSION_CONFLICT:
+                    message = (
+                        "프롬프트의 주문 수/예산이 Agent manifest 권한 상한과 충돌해 "
+                        "side effect를 실행하지 않았습니다."
+                    )
+                    self._publish_stage_failure(
+                        channel,
+                        stage="diagnostic",
+                        code="prompt_contract_conflict",
+                        message=message,
+                    )
+                    return _PreflightTerminal(
+                        mode=self.mode,
+                        status="prompt_contract_conflict",
+                        source_resolved=True,
+                        execution_scope=NO_EXECUTION_SCOPE,
+                        message=message,
+                    )
+
+        observation: InitialTargetObservation | None = None
+        domain_observation: DomainTargetAgentRun | None = None
+        if isinstance(result, ExternalIntakeResult):
+            preliminary_selection = select_domain_pack(
+                manifest=result.manifest,
+                profile=result.profile,
+                mission=result.mission,
+            )
+            if (
+                preliminary_selection.selected is not None
+                and preliminary_selection.selected.domain_kind
+                in {DomainKind.RESEARCH, DomainKind.STOCK}
+                and self.openai_configured
+            ):
+                try:
+                    domain_observation = await self._observe_domain_target(
+                        result,
+                        preliminary_selection,
+                        channel,
+                    )
+                except Exception:  # noqa: BLE001 - typed target boundary
+                    message = (
+                        "검토된 Research/Stock Target Agent의 초기 Gym 관찰에 실패해 "
+                        "실험 계획과 finding을 생성하지 않았습니다."
+                    )
+                    self._publish_stage_failure(
+                        channel,
+                        stage="target_runtime",
+                        code="target_observation_failed",
+                        message=message,
+                    )
+                    return _PreflightTerminal(
+                        mode=self.mode,
+                        status="target_observation_failed",
+                        source_resolved=True,
+                        execution_scope=DOMAIN_TARGET_GYM_EXECUTION_SCOPE,
+                        message=message,
+                    )
+                self._domain_observations[channel.run_id] = domain_observation
+                try:
+                    result = await asyncio.to_thread(self.preflight.finalize, result)
+                except Exception:  # noqa: BLE001 - planning boundary stays typed
+                    message = (
+                        "Research/Stock 초기 관찰은 완료했지만 관찰 뒤 실험 계획을 구성하지 "
+                        "못했습니다."
+                    )
+                    self._publish_stage_failure(
+                        channel,
+                        stage="diagnostic",
+                        code="observation_plan_failed",
+                        message=message,
+                    )
+                    return _PreflightTerminal(
+                        mode=self.mode,
+                        status="observation_plan_failed",
+                        source_resolved=True,
+                        execution_scope=DOMAIN_TARGET_GYM_EXECUTION_SCOPE,
+                        message=message,
+                    )
+                assert domain_observation is not None
+                result = result.model_copy(
+                    update={"initial_observation": domain_observation.to_dict()}
+                )
+            elif target_runtime_kind(result.source, result.manifest) == "local":
+                try:
+                    assert self.target_lab_loop is not None
+                    observation = await self.target_lab_loop.observe_initial(
+                        manifest=result.manifest,
+                        mission=result.mission,
+                        run_id=channel.run_id,
+                        expected_source_ref=result.source.source_ref,
+                        source_evidence=result.source.model_dump(mode="json"),
+                        target_instructions=build_local_target_instructions(
+                            result.manifest.system_prompt,
+                            result.mission.constraints.get("prompt_contract"),
+                        ),
+                        event_sink=lambda event_type, payload: channel.publish(
+                            event_type,
+                            payload,
+                            summary=payload.get("execution_kind")
+                            or payload.get("observation_kind")
+                            or payload.get("target_agent"),
+                        ),
+                    )
+                except Exception:  # noqa: BLE001 - typed terminal boundary
+                    message = (
+                        "검토된 제출 Agent의 초기 sandbox 관찰에 실패해 실험 계획과 finding을 "
+                        "생성하지 않았습니다."
+                    )
+                    self._publish_stage_failure(
+                        channel,
+                        stage="target_runtime",
+                        code="target_observation_failed",
+                        message=message,
+                    )
+                    return _PreflightTerminal(
+                        mode=self.mode,
+                        status="target_observation_failed",
+                        source_resolved=True,
+                        execution_scope=TARGET_SANDBOX_EXECUTION_SCOPE,
+                        message=message,
+                    )
+                try:
+                    result = await asyncio.to_thread(
+                        self.preflight.finalize,
+                        result,
+                        baseline=observation.run,
+                    )
+                except Exception:  # noqa: BLE001 - planning boundary stays typed
+                    message = (
+                        "초기 sandbox 관찰은 완료했지만 관찰 결과를 바탕으로 실험 계획을 "
+                        "구성하지 못했습니다."
+                    )
+                    self._publish_stage_failure(
+                        channel,
+                        stage="diagnostic",
+                        code="observation_plan_failed",
+                        message=message,
+                    )
+                    return _PreflightTerminal(
+                        mode=self.mode,
+                        status="observation_plan_failed",
+                        source_resolved=True,
+                        execution_scope=TARGET_SANDBOX_EXECUTION_SCOPE,
+                        message=message,
+                    )
+                result = result.model_copy(update={"initial_observation": observation.to_payload()})
+            else:
+                result = await asyncio.to_thread(self.preflight.finalize, result)
+
+        assert isinstance(result, ExternalPreflightResult)
         channel.publish(
             "pack_selection",
             result.compatibility_selection,
             summary=result.compatibility_selection.status.value,
         )
         channel.publish("behavior_profile", result.profile, summary=result.profile.agent_name)
+        if observation is not None:
+            channel.publish(
+                "target.observation.profiled",
+                {
+                    "execution_scope": TARGET_SANDBOX_EXECUTION_SCOPE,
+                    "source_ref": result.source.source_ref,
+                    "baseline_observed": result.profile.baseline_observed,
+                    "unknown_fields": result.profile.unknown_fields(),
+                    "retry_behavior": result.profile.retry_behavior.model_dump(mode="json"),
+                    "idempotency_usage": result.profile.idempotency_usage.model_dump(mode="json"),
+                    "reconciliation_usage": result.profile.reconciliation_usage.model_dump(
+                        mode="json"
+                    ),
+                },
+                summary="behavior profile updated from initial observation",
+            )
         # Published before the stop branch on purpose: the routing decision is
         # exactly what a reader needs when the run terminates as unsupported,
         # and that path never reaches ``experiment_plan``.
@@ -786,7 +1499,7 @@ class OpenAIWhiteBoxAdapter:
                 execution_scope=NO_EXECUTION_SCOPE,
                 message=result.decision.detail,
             )
-        if not isinstance(result.decision, ExperimentPlan):
+        if not isinstance(result.decision, (DomainExperimentPlan, ExperimentPlan)):
             raise TypeError("preflight returned an unknown decision type")
         channel.publish(
             "experiment_plan",
@@ -892,16 +1605,37 @@ class OpenAIWhiteBoxAdapter:
         )
         if target_sandbox:
             assert self.target_lab_loop is not None
+            live_target = self.target_lab_loop.live_target_enabled
+            target_agent_name = (
+                LOCAL_TARGET_AGENT_NAME if live_target else "ExampleCakeAgent"
+            )
+            target_model = (
+                self.target_lab_loop.target_agent.model_label
+                if live_target and self.target_lab_loop.target_agent is not None
+                else "reference_source_child"
+            )
             channel.publish(
                 "target.execution.plan",
                 {
                     "execution_scope": TARGET_SANDBOX_EXECUTION_SCOPE,
-                    "target_agent": "ExampleCakeAgent",
-                    "target_model": "deterministic_python",
+                    "target_agent": target_agent_name,
+                    "target_model": target_model,
+                    "target_agent_mode": "llm_agent" if live_target else "reference_fallback",
+                    "initial_observation_required": True,
+                    "initial_observation_trace_digest": (
+                        preflight.initial_observation.get("trace_digest")
+                        if isinstance(preflight.initial_observation, dict)
+                        else None
+                    ),
+                    "planned_experiment_runtime": "bounded_child_reference",
+                    "initial_observation_runtime": (
+                        "openai_agents_sdk" if live_target else "bounded_child_runner"
+                    ),
                     "source_ref": preflight.source.source_ref,
                     "entrypoint": preflight.manifest.entrypoint,
                     "service_boundary": "synthetic_local_replacement",
-                    "network_access": "disabled",
+                    "network_access": "disabled_for_target_tools",
+                    "model_provider_boundary": "host_owned" if live_target else None,
                     "external_side_effect": "none",
                     "runs": [
                         "baseline",
@@ -916,7 +1650,11 @@ class OpenAIWhiteBoxAdapter:
                     "experiments_run": 11,
                     "seed": plan.scenario.seed,
                 },
-                summary="actual target entrypoint · bounded child",
+                summary=(
+                    "actual target Agent · LLM observation"
+                    if live_target
+                    else "reference source child · bounded fallback"
+                ),
             )
 
             def publish_target_event(event_type: str, payload: dict[str, Any]) -> None:
@@ -949,7 +1687,15 @@ class OpenAIWhiteBoxAdapter:
                 "run_digest": f"sha256:{run_digest(result.baseline)}",
                 "trace_events": len(result.baseline.trace),
                 "ledger_entries": len(result.baseline.ledger),
-                "target_model": "deterministic_python" if target_sandbox else None,
+                "target_model": (
+                    self._target_verification_model() if target_sandbox else None
+                ),
+                "observed_target_model": (
+                    self._target_observation_model(preflight) if target_sandbox else None
+                ),
+                "verification_runtime": (
+                    "bounded_child_reference" if target_sandbox else None
+                ),
                 "service_boundary": (
                     "synthetic_local_replacement" if target_sandbox else "synthetic_gym"
                 ),
@@ -982,7 +1728,9 @@ class OpenAIWhiteBoxAdapter:
                 **result.observed.model_dump(mode="json"),
                 "execution_scope": TARGET_SANDBOX_EXECUTION_SCOPE,
                 "world_source": "actual_target_sandbox",
-                "target_model": "deterministic_python",
+                "target_model": self._target_verification_model(),
+                "observed_target_model": self._target_observation_model(preflight),
+                "verification_runtime": "bounded_child_reference",
             }
         channel.publish("oracle.report", oracle_payload, summary="controller ground truth")
 
@@ -1084,7 +1832,17 @@ class OpenAIWhiteBoxAdapter:
                         else "synthetic_world"
                     ),
                     "target_model": (
-                        "deterministic_python"
+                        self._target_verification_model()
+                        if isinstance(sandbox_evidence, SandboxDiagnosticEvidence)
+                        else None
+                    ),
+                    "observed_target_model": (
+                        self._target_observation_model(preflight)
+                        if isinstance(sandbox_evidence, SandboxDiagnosticEvidence)
+                        else None
+                    ),
+                    "verification_runtime": (
+                        "bounded_child_reference"
                         if isinstance(sandbox_evidence, SandboxDiagnosticEvidence)
                         else None
                     ),
@@ -1104,7 +1862,9 @@ class OpenAIWhiteBoxAdapter:
                 result.verification is not None and result.verification.accepted
             )
             replay["world_source"] = "actual_target_sandbox"
-            replay["target_model"] = "deterministic_python"
+            replay["target_model"] = self._target_verification_model()
+            replay["observed_target_model"] = self._target_observation_model(preflight)
+            replay["verification_runtime"] = "bounded_child_reference"
             channel.publish(
                 "protected_replay",
                 replay,
@@ -1165,13 +1925,17 @@ class OpenAIWhiteBoxAdapter:
                 **result.report.model_dump(mode="json"),
                 "execution_scope": TARGET_SANDBOX_EXECUTION_SCOPE,
                 "world_source": "actual_target_sandbox",
-                "target_model": "deterministic_python",
+                "target_model": self._target_verification_model(),
+                "observed_target_model": self._target_observation_model(preflight),
+                "verification_runtime": "bounded_child_reference",
             }
             lab_payload = {
                 **result.lab_report.model_dump(mode="json"),
                 "execution_scope": TARGET_SANDBOX_EXECUTION_SCOPE,
                 "world_source": "actual_target_sandbox",
-                "target_model": "deterministic_python",
+                "target_model": self._target_verification_model(),
+                "observed_target_model": self._target_observation_model(preflight),
+                "verification_runtime": "bounded_child_reference",
             }
         channel.publish("finding_report", finding_payload, summary=result.report.status.value)
         channel.publish("lab_report", lab_payload, summary=result.report.status.value)
@@ -1254,6 +2018,8 @@ class OpenAIWhiteBoxAdapter:
         preflight_result: ExternalPreflightResult | None = None
         diagnostic_result: DiagnosticLoopResult | None = None
         target_run: TargetAgentRun | None = None
+        target_observation_completed = False
+        target_observation_charge_count: int | None = None
         terminal_emitted = False
         execution_scope: ExecutionScope = (
             NO_EXECUTION_SCOPE if target is not None else NO_TARGET_SCOPE
@@ -1303,10 +2069,19 @@ class OpenAIWhiteBoxAdapter:
                     return
                 preflight_result = preflight_outcome
                 execution_scope = self._execution_scope(preflight_result)
+                if isinstance(preflight_result.decision, DomainExperimentPlan):
+                    await self._execute_domain_pack(query, channel, preflight_result)
+                    terminal_emitted = True
+                    return
+                if isinstance(preflight_result.initial_observation, dict):
+                    target_observation_completed = True
+                    charge_count = preflight_result.initial_observation.get("charge_count")
+                    if isinstance(charge_count, int):
+                        target_observation_charge_count = charge_count
                 if is_target_runtime_supported(
                     preflight_result.source,
                     preflight_result.manifest,
-                ):
+                ) and not self._is_local_bundle(preflight_result):
                     try:
                         target_run = await self._run_target_aut(preflight_result, channel)
                         if target_run is not None:
@@ -1433,9 +2208,15 @@ class OpenAIWhiteBoxAdapter:
                             execution_scope=execution_scope,
                             experiments_run=diagnostic_result.experiments_run,
                             findings=len(diagnostic_result.lab_report.findings),
-                            target_runtime_completed=(True if target_run is not None else None),
+                            target_runtime_completed=(
+                                True
+                                if target_run is not None or target_observation_completed
+                                else None
+                            ),
                             target_charge_count=(
-                                target_run.charge_count if target_run is not None else None
+                                target_run.charge_count
+                                if target_run is not None
+                                else target_observation_charge_count
                             ),
                         )
                         terminal_emitted = True
@@ -1482,9 +2263,15 @@ class OpenAIWhiteBoxAdapter:
                         message=stop.detail,
                         experiments_run=0,
                         findings=0,
-                        target_runtime_completed=(True if target_run is not None else None),
+                        target_runtime_completed=(
+                            True
+                            if target_run is not None or target_observation_completed
+                            else None
+                        ),
                         target_charge_count=(
-                            target_run.charge_count if target_run is not None else None
+                            target_run.charge_count
+                            if target_run is not None
+                            else target_observation_charge_count
                         ),
                     )
                     terminal_emitted = True
@@ -1509,9 +2296,15 @@ class OpenAIWhiteBoxAdapter:
                     message=message,
                     experiments_run=diagnostic_result.experiments_run,
                     findings=len(diagnostic_result.lab_report.findings),
-                    target_runtime_completed=(True if target_run is not None else None),
+                    target_runtime_completed=(
+                        True
+                        if target_run is not None or target_observation_completed
+                        else None
+                    ),
                     target_charge_count=(
-                        target_run.charge_count if target_run is not None else None
+                        target_run.charge_count
+                        if target_run is not None
+                        else target_observation_charge_count
                     ),
                 )
                 terminal_emitted = True
@@ -1621,9 +2414,15 @@ class OpenAIWhiteBoxAdapter:
                         else NO_TARGET_OFFLINE_SCOPE
                     ),
                     message=message,
-                    target_runtime_completed=(True if target_run is not None else None),
+                    target_runtime_completed=(
+                        True
+                        if target_run is not None or target_observation_completed
+                        else None
+                    ),
                     target_charge_count=(
-                        target_run.charge_count if target_run is not None else None
+                        target_run.charge_count
+                        if target_run is not None
+                        else target_observation_charge_count
                     ),
                 )
         finally:

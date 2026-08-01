@@ -125,9 +125,15 @@ uv run python scripts/demo-local.py
 ```
 
 이 명령은 `examples/demo-agent-repo`의 manifest와 entrypoint bytes를 64자 bundle SHA-256으로
-고정한다. 정확히 검토된 이 bundle과 고정 mission에 한해서 entrypoint를 `python -I -S`
-child에서 실행하며, 모든 tool call은 network-disabled host-owned SandboxGym으로 전달한다.
-임의 로컬 경로와 외부 GitHub source는 실행하지 않고 실제 서비스 side effect도 만들지 않는다.
+고정한다. provider가 있으면 정확히 검토된 이 bundle의 `ExampleCakeAgent LLM` 대상 Agent가
+고정 mission을 수행하며, manifest의 tool call은 network-disabled host-owned SandboxGym으로
+전달된다. `target.observation.*`에는 대상 Agent의 실제 tool call/result, ledger mutation,
+world diff가 남고, 이 단계에는 아직 planned experiment가 없다. provider가 없으면
+`reference_source_child`가 같은 event contract로 명시적인 fallback observation을 수행한다.
+관찰 trace가 끝난 뒤 기본 `gpt-5.6-luna` LLM controller가 source/manifest/trace를 분석하고
+다섯 strict controller tool을 통해 allowlisted Gym 실험을 선택한다. 계획된 source 실행은
+`target.execution.*` event scope로 별도 남긴다. 임의 로컬 경로와 외부 GitHub source는
+실행하지 않고 실제 서비스 side effect도 만들지 않는다.
 
 예시 participant Agent repo로 self-contained 데모를 할 때는 다음 명령을 사용한다.
 
@@ -174,7 +180,7 @@ child에는 key를 전달하지 않는다. Raw JSONL은 pytest의 임시 디렉�
 
 ```bash
 AGENT24_RUN_REAL_OPENAI_SMOKE=1 \
-AGENT24_REAL_OPENAI_MODEL=gpt-5.4-mini \
+AGENT24_REAL_OPENAI_MODEL=gpt-5.6-luna \
 uv run pytest -q \
   tests/integration/test_openai_diagnostic_smoke.py
 ```
@@ -187,7 +193,11 @@ vulnerable/protected trace digest와 각 3회 replay digest를 만들었다. 매
 - `/health`: `status=ok`, `mode=live`, `openai_configured=true`; secret 비노출
 - raw model tools: `inspect_target → list_experiments → run_sandbox_experiment →
   inspect_evidence → verify_mitigation` 정확히 5개
-- local AUT trace: `target.execution.plan/started/tool_call/tool_result/completed`
+- initial local AUT observation: manifest-selected `catalog.search → payment.charge →
+  payment.charge → calendar.create`, `target.observation.oracle` 취약 ledger 2 charge
+  (observation-only until planned verification)
+- local AUT planned trace: `target.execution.plan/started/tool_call/tool_result/completed`,
+  followed by protected replay 1 charge
 - controller evidence: 취약 charge 2건, 보호 후 1건, `sandbox.evidence`, `oracle.report`
 - replay/final: `protected_replay.accepted=true`, OpenAI `final_output`, 마지막
   `run_completed(status=completed, mode=live, execution_scope=target_sandbox)`

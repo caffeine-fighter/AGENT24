@@ -31,8 +31,16 @@ from agent24.agent.external_adapters import (
 )
 from agent24.agent.manifest import ALLOWED_MANIFEST_PATHS, load_manifest
 from agent24.agent.mission_scope import domain_support, mission_domain, mission_scope_stop
-from agent24.agent.models import ExperimentPlan, FaultKind, Mission, MissionFamily, StopDecision
-from agent24.agent.packs import PackSelection, select_domain_pack
+from agent24.agent.models import (
+    DomainExperimentPlan,
+    ExperimentPlan,
+    FaultKind,
+    Mission,
+    MissionFamily,
+    RunResult,
+    StopDecision,
+)
+from agent24.agent.packs import DomainKind, PackSelection, select_domain_pack
 from agent24.agent.participant_intake import (
     ParticipantCompatibilityResult,
     ParticipantStaticProfiler,
@@ -48,6 +56,7 @@ from agent24.agent.participant_intake import (
 )
 from agent24.agent.planner import select_p0_experiment
 from agent24.agent.profile import AgentManifest, BehaviorProfile, build_behavior_profile
+from agent24.agent.prompt_contract import PromptContractStatus, contract_constraints
 from agent24.agent.source import (
     GitHubApiRevisionResolver,
     RevisionResolver,
@@ -58,6 +67,23 @@ from agent24.agent.source import (
 GITHUB_API = "https://api.github.com"
 MAX_MANIFEST_BYTES = 256_000
 MAX_ENTRYPOINT_BYTES = 64_000
+MAX_CONTROLLER_SOURCE_CHARS = 24_000
+DOMAIN_PLAN_SEED = 42
+
+
+def _bounded_entrypoint_source(content: bytes) -> str:
+    """Decode only a bounded text excerpt for the controller's source analysis."""
+
+    try:
+        source = content.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise SourceFileFetchError("pinned owner entrypoint is not UTF-8 text") from error
+    if len(source) <= MAX_CONTROLLER_SOURCE_CHARS:
+        return source
+    return (
+        source[:MAX_CONTROLLER_SOURCE_CHARS]
+        + "\n\n[controller source excerpt truncated at the bounded limit]"
+    )
 
 
 class ExternalTarget(BaseModel):
@@ -242,8 +268,25 @@ class MappingSourceFileFetcher:
         return content
 
 
+class ExternalIntakeResult(BaseModel):
+    """Pinned source and manifest artifacts, before any plan is constructed."""
+
+    model_config = ConfigDict(frozen=True)
+
+    source: SourceDescriptor
+    source_snapshot: SourceSnapshot
+    target_profile: ParticipantTargetProfile
+    compatibility_selection: TargetPackSelection
+    compatibility_report: TargetCompatibilityReport
+    manifest: AgentManifest
+    mission: Mission
+    profile: BehaviorProfile
+    adapter_contract: UCPShoppingAdapterContract | None = None
+    entrypoint_source: str | None = None
+
+
 class ExternalPreflightResult(BaseModel):
-    """Auditable artifacts produced before any AUT execution."""
+    """Auditable artifacts produced after observation-driven planning."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -256,8 +299,10 @@ class ExternalPreflightResult(BaseModel):
     mission: Mission
     profile: BehaviorProfile
     pack_selection: PackSelection
-    decision: ExperimentPlan | StopDecision
+    decision: DomainExperimentPlan | ExperimentPlan | StopDecision
     adapter_contract: UCPShoppingAdapterContract | None = None
+    initial_observation: dict[str, object] | None = None
+    entrypoint_source: str | None = None
 
 
 class ExternalAgentPreflight:
@@ -307,7 +352,14 @@ class ExternalAgentPreflight:
         mission = Mission(
             text=target.mission,
             family=manifest.mission_family,
-            constraints=dict(manifest.permissions),
+            # ``run_intake`` is synchronous and may also be used by offline
+            # callers.  Seed the mission with the typed deterministic
+            # projection; the API runtime may replace its source with Luna
+            # before any target observation or side effect is allowed.
+            constraints=contract_constraints(
+                target.mission,
+                permissions=manifest.permissions,
+            ),
         )
         profile = build_behavior_profile(manifest, baseline=None)
         pack_selection = select_domain_pack(
@@ -332,11 +384,28 @@ class ExternalAgentPreflight:
             pack_selection=pack_selection,
             decision=decision,
             adapter_contract=contract,
+            entrypoint_source=_bounded_entrypoint_source(entrypoint_bytes),
         )
 
     def run(
         self, target: ExternalTarget
     ) -> ExternalPreflightResult | ParticipantCompatibilityResult:
+        intake = self.run_intake(target)
+        if isinstance(intake, (ExternalPreflightResult, ParticipantCompatibilityResult)):
+            return intake
+        return self.finalize(intake)
+
+    def run_intake(
+        self, target: ExternalTarget
+    ) -> ExternalIntakeResult | ExternalPreflightResult | ParticipantCompatibilityResult:
+        """Resolve and inspect the target without choosing an experiment.
+
+        The local reviewed bundle uses this split to execute the submitted Agent
+        once before a domain pack, fault, or experiment plan exists.  Existing
+        metadata-only and allowlisted-adapter paths keep their historical
+        terminal behavior when no owner manifest is available.
+        """
+
         source = resolve_source(
             target.repository_url,
             ref=target.requested_ref,
@@ -358,8 +427,10 @@ class ExternalAgentPreflight:
             manifest = load_manifest(root, source, manifest_path=manifest_path)
 
         downloaded_files: tuple[SourceSnapshotFile, ...] = ()
+        entrypoint_source: str | None = None
         if self.source_file_fetcher is not None and manifest.entrypoint != manifest_path:
             entrypoint_bytes = self.source_file_fetcher.fetch(source, manifest.entrypoint)
+            entrypoint_source = _bounded_entrypoint_source(entrypoint_bytes)
             downloaded_files = (
                 SourceSnapshotFile(
                     path=manifest.entrypoint,
@@ -381,9 +452,40 @@ class ExternalAgentPreflight:
         mission = Mission(
             text=target.mission,
             family=manifest.mission_family,
-            constraints=dict(manifest.permissions),
+            # Keep synchronous callers safe with the same deterministic
+            # projection used by the adapter path.  The API runtime may
+            # replace the source with Luna before any target observation, but
+            # it must never start from fixed one-purchase semantics.
+            constraints=contract_constraints(
+                target.mission,
+                permissions=manifest.permissions,
+            ),
         )
         profile = build_behavior_profile(manifest, baseline=None)
+
+        return ExternalIntakeResult(
+            source=source,
+            source_snapshot=compatibility.source_snapshot,
+            target_profile=compatibility.target_profile,
+            compatibility_selection=compatibility.pack_selection,
+            compatibility_report=compatibility.compatibility_report,
+            manifest=manifest,
+            mission=mission,
+            profile=profile,
+            adapter_contract=None,
+            entrypoint_source=entrypoint_source,
+        )
+
+    def finalize(
+        self,
+        intake: ExternalIntakeResult,
+        *,
+        baseline: RunResult | None = None,
+    ) -> ExternalPreflightResult:
+        """Build the pack and experiment plan after optional AUT observation."""
+
+        profile = build_behavior_profile(intake.manifest, baseline=baseline)
+        mission = intake.mission
 
         # Which gym before which fault.  ``select_p0_experiment`` only knows the
         # Life-v0 operator table, so asking it about a Research or Stock agent
@@ -391,7 +493,7 @@ class ExternalAgentPreflight:
         # The router names the domain first, and only the Life pack continues
         # into the operator selection below.
         pack_selection = select_domain_pack(
-            manifest=manifest, profile=profile, mission=mission
+            manifest=intake.manifest, profile=profile, mission=mission
         )
         # Which gym, then whether the submitted mission is inside that gym's
         # scope, then which fault.  The scope check runs after routing and never
@@ -399,11 +501,28 @@ class ExternalAgentPreflight:
         # this into the router would make ``selection_digest`` depend on prose.
         # A routing stop that already fired keeps its own reason.
         scope_stop = mission_scope_stop(mission, pack_selection)
-        decision: ExperimentPlan | StopDecision
+        decision: DomainExperimentPlan | ExperimentPlan | StopDecision
         if pack_selection.stop is not None:
             decision = pack_selection.stop
         elif scope_stop is not None:
             decision = scope_stop
+        elif (
+            isinstance(mission.constraints.get("prompt_contract"), Mapping)
+            and mission.constraints["prompt_contract"].get("status")
+            == PromptContractStatus.PERMISSION_CONFLICT.value
+        ):
+            conflicts = mission.constraints["prompt_contract"].get(
+                "permission_conflicts", []
+            )
+            detail = "; ".join(str(item) for item in conflicts)[:500]
+            decision = StopDecision(
+                stop=True,
+                reason="unsupported_input",
+                detail=(
+                    "prompt contract exceeds the manifest permission ceiling"
+                    + (f": {detail}" if detail else "")
+                ),
+            )
         else:
             # Once the scope gate says a documented failure domain is
             # stageable, run only the fault family that earned that verdict.
@@ -414,33 +533,70 @@ class ExternalAgentPreflight:
             allowed_faults = None
             domain = mission_domain(mission.text)
             selected = pack_selection.selected
-            if domain is not None and selected is not None:
-                observed = (*selected.matched_anchors, *selected.matched_optional)
-                support = domain_support(domain, tools=observed)
-                if support.supported and support.fault_family:
-                    if domain.value == "communication":
-                        planning_mission = mission.model_copy(
-                            update={"family": MissionFamily.EMAIL}
-                        )
-                    allowed_faults = frozenset({FaultKind(support.fault_family)})
-            decision = select_p0_experiment(
-                profile,
-                planning_mission,
-                allowed_faults=allowed_faults,
-            )
-            mission = planning_mission
+            if selected is not None and selected.domain_kind in {
+                DomainKind.RESEARCH,
+                DomainKind.STOCK,
+            }:
+                fixture_id = (
+                    "research.full-gauntlet.v1"
+                    if selected.domain_kind is DomainKind.RESEARCH
+                    else "stock.full-gauntlet.v1"
+                )
+                decision = DomainExperimentPlan(
+                    plan_id=(
+                        f"{selected.pack_id}:target-gym:{fixture_id}:"
+                        f"seed-{DOMAIN_PLAN_SEED}"
+                    ),
+                    pack_id=selected.pack_id,
+                    domain=(
+                        "research"
+                        if selected.domain_kind is DomainKind.RESEARCH
+                        else "stock"
+                    ),
+                    fixture_id=fixture_id,
+                    seed=DOMAIN_PLAN_SEED,
+                    tool_names=tuple(
+                        sorted({*selected.matched_anchors, *selected.matched_optional})
+                    ),
+                    max_tool_calls=pack_selection.budget.max_tool_calls
+                    if pack_selection.budget is not None
+                    else 1,
+                    mission=mission.text,
+                    rationale=(
+                        "manifest tool surface routed to the matching read-only Gym; "
+                        "the target Agent receives only this selected surface"
+                    ),
+                )
+            else:
+                if domain is not None and selected is not None:
+                    observed = (*selected.matched_anchors, *selected.matched_optional)
+                    support = domain_support(domain, tools=observed)
+                    if support.supported and support.fault_family:
+                        if domain.value == "communication":
+                            planning_mission = mission.model_copy(
+                                update={"family": MissionFamily.EMAIL}
+                            )
+                        allowed_faults = frozenset({FaultKind(support.fault_family)})
+                decision = select_p0_experiment(
+                    profile,
+                    planning_mission,
+                    allowed_faults=allowed_faults,
+                )
+                mission = planning_mission
 
         return ExternalPreflightResult(
-            source=source,
-            source_snapshot=compatibility.source_snapshot,
-            target_profile=compatibility.target_profile,
-            compatibility_selection=compatibility.pack_selection,
-            compatibility_report=compatibility.compatibility_report,
-            manifest=manifest,
+            source=intake.source,
+            source_snapshot=intake.source_snapshot,
+            target_profile=intake.target_profile,
+            compatibility_selection=intake.compatibility_selection,
+            compatibility_report=intake.compatibility_report,
+            manifest=intake.manifest,
             mission=mission,
             profile=profile,
             pack_selection=pack_selection,
             decision=decision,
+            adapter_contract=intake.adapter_contract,
+            entrypoint_source=intake.entrypoint_source,
         )
 
 
@@ -448,6 +604,7 @@ __all__ = [
     "GITHUB_API",
     "MAX_MANIFEST_BYTES",
     "ExternalAgentPreflight",
+    "ExternalIntakeResult",
     "ExternalPreflightResult",
     "ExternalTarget",
     "GitHubContentsManifestFetcher",

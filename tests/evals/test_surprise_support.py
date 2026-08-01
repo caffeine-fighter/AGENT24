@@ -20,7 +20,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent24.agent.models import StopDecision
-from agent24.agent.packs import DOMAIN_PACKS, LIFE_PACK
+from agent24.agent.packs import DOMAIN_PACKS, LIFE_PACK, RESEARCH_PACK, STOCK_PACK
 from agent24.agent.source import MappingRevisionResolver
 from agent24.api import (
     ExternalAgentPreflight,
@@ -212,8 +212,12 @@ def test_the_unsupported_domains_are_unsupported_because_no_pack_stages_them() -
         assert not (DOMAIN_REQUIREMENTS[domain].fault_families & registered)
 
 
-def test_life_is_the_only_pack_the_one_input_controller_can_drive_in_d1() -> None:
-    assert [spec.pack_id for spec in executable_packs()] == [LIFE_PACK.pack_id]
+def test_life_research_and_stock_are_pack_paths_the_controller_can_drive() -> None:
+    assert [spec.pack_id for spec in executable_packs()] == [
+        LIFE_PACK.pack_id,
+        RESEARCH_PACK.pack_id,
+        STOCK_PACK.pack_id,
+    ]
 
 
 # --------------------------------------------------------------------------

@@ -41,6 +41,7 @@ from .models import (
 from .oracle import canonical_report, evaluate
 from .planner import hypothesis_for
 from .profile import AgentManifest, BehaviorProfile
+from .prompt_contract import PromptContractStatus
 from .report import ArtifactRef, FindingReport, build_report, report_from_stop_decision
 
 SYNTHETIC_SCOPE = (
@@ -107,17 +108,44 @@ def unsupported_reports(
 
 
 def _max_spend(manifest: AgentManifest, mission: Mission) -> int:
-    for source in (manifest.permissions, mission.constraints):
-        value = source.get("max_spend_krw")
-        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
-            return value
-    return DEFAULT_MAX_SPEND_KRW
+    contract = mission.constraints.get("prompt_contract")
+    implied_total = (
+        contract.get("implied_total_spend_krw")
+        if isinstance(contract, dict)
+        else None
+    )
+    declared = manifest.permissions.get("max_total_spend_krw")
+    if not isinstance(declared, int) or isinstance(declared, bool) or declared < 1:
+        declared = manifest.permissions.get("max_spend_krw")
+    if not isinstance(declared, int) or isinstance(declared, bool) or declared < 1:
+        declared = DEFAULT_MAX_SPEND_KRW
+    status = contract.get("status") if isinstance(contract, dict) else None
+    if (
+        status != PromptContractStatus.PERMISSION_CONFLICT.value
+        and isinstance(implied_total, int)
+        and not isinstance(implied_total, bool)
+        and implied_total > 0
+    ):
+        return min(declared, implied_total)
+    return declared
+
+
+def _purchase_count(mission: Mission) -> int:
+    contract = mission.constraints.get("prompt_contract")
+    value = contract.get("order_count") if isinstance(contract, dict) else None
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 100:
+        return value
+    value = mission.constraints.get("purchase_count")
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 100:
+        return value
+    return 1
 
 
 def _patch_for(
     category: FailureCategory,
     *,
     max_spend_krw: int,
+    purchase_count: int = 1,
     side_effect_tool: str = "payment.charge",
     reconcile_with: str = "payment.status",
 ) -> AntibodyPatch | None:
@@ -125,7 +153,7 @@ def _patch_for(
         return AntibodyPatch(
             patch_id="pt-duplicate-payment",
             max_spend_krw=max_spend_krw,
-            max_purchase_count=1,
+            max_purchase_count=purchase_count,
             side_effect_rules=[
                 SideEffectRule(
                     tool=side_effect_tool,
@@ -255,8 +283,10 @@ class DeterministicLabLoop:
         side_effect_tool = "complete_purchase" if adapter_contract is not None else "payment.charge"
         reconcile_tool = "get_order_status" if adapter_contract is not None else "payment.status"
         max_spend = _max_spend(manifest, mission)
+        purchase_count = _purchase_count(mission)
         invariants = life_v0_invariants(
             max_spend_krw=max_spend,
+            purchase_count=purchase_count,
             side_effect_tool=side_effect_tool,
         )
         baseline = await gym.run(_without_faults(plan))
@@ -291,6 +321,7 @@ class DeterministicLabLoop:
             _patch_for(
                 hypothesis.category,
                 max_spend_krw=max_spend,
+                purchase_count=purchase_count,
                 side_effect_tool=side_effect_tool,
                 reconcile_with=reconcile_tool,
             )

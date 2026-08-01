@@ -12,7 +12,7 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <header class="site-header">
+    <!-- <header class="site-header">
       <a class="brand" href="#top" aria-label="NIGHTMARE LAB 홈">
         <span class="brand-mark" aria-hidden="true">N</span>
         <span>
@@ -21,11 +21,19 @@
         </span>
       </a>
       <span class="header-boundary">BOUNDED TARGET CODE · SIMULATION ONLY · 외부 side effect 없음</span>
-    </header>
+    </header> -->
 
     <main id="top" class="app-shell" aria-label="NIGHTMARE LAB AI 에이전트 안전 실험 화면">
+
       <section id="entryPanel" class="entry-screen" aria-labelledby="entryTitle">
         <h1 id="entryTitle" class="sr-only">Agent source 안전 검증 시작</h1>
+        <div class="prism-wordmark" role="img" aria-label="PRISM">
+          <span aria-hidden="true">P</span>
+          <span aria-hidden="true">R</span>
+          <span aria-hidden="true">I</span>
+          <span aria-hidden="true">S</span>
+          <span aria-hidden="true">M</span>
+        </div>
         <form id="missionForm" class="mission-form">
           <label class="repository-field" for="repositoryInput">
             <span>Agent source</span>
@@ -108,6 +116,20 @@
               <p class="conversation-empty">제출한 요청을 준비하고 있습니다.</p>
             </div>
 
+            <details id="conversationDetailsDisclosure" class="assistant-disclosure conversation-details-disclosure" hidden>
+              <summary>
+                <span class="disclosure-summary-copy">
+                  <strong>실행 세부 정보</strong>
+                  <small>공개 이벤트에서 만든 진행 요약</small>
+                </span>
+                <span id="conversationDetailsCount">세부 기록 0개</span>
+              </summary>
+              <div class="disclosure-content">
+                <p class="disclosure-note">비공개 reasoning은 표시하지 않습니다. 아래는 필요할 때 열어볼 수 있는 공개 이벤트 요약입니다.</p>
+                <div id="conversationDetailsList" class="conversation-details-list"></div>
+              </div>
+            </details>
+
             <article id="gymSessionPanel" class="chat-turn assistant-turn session-turn" aria-labelledby="gymTitle">
               <div class="turn-avatar" aria-hidden="true">N</div>
               <div class="turn-content">
@@ -132,8 +154,6 @@
                     <span id="cuaStatusIcon" class="cua-status-icon" aria-hidden="true"></span>
                     <div class="cua-live-copy">
                       <span id="cuaStatusLabel">TARGET AGENT · LIVE</span>
-                      <strong id="autAction">세션을 준비하는 중…</strong>
-                      <p id="autActionDetail">공개 Gym 이벤트가 도착하면 실제 행동 상태를 표시합니다.</p>
                     </div>
                     <div class="cua-live-meta">
                       <span id="gymPhaseLabel">대기</span>
@@ -142,124 +162,104 @@
                   </header>
 
                   <div class="cua-stage">
-                    <section class="computer-frame" aria-labelledby="computerTitle">
+                    <section class="computer-frame sandbox-frame" aria-labelledby="computerTitle">
                       <h3 id="computerTitle" class="sr-only">Target Agent 가상 컴퓨터 화면</h3>
-                      <header class="browser-bar">
-                        <span class="browser-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-                        <span id="cuaAddress" class="browser-address">sandbox://nightmare/session</span>
-                        <span class="browser-boundary">SIMULATED</span>
-                      </header>
-
                       <div id="cuaScreen" class="cua-screen" data-scene="idle">
-                        <header class="merchant-bar">
-                          <strong id="cuaWorkspaceName">Agent workspace</strong>
-                          <span>network blocked</span>
-                        </header>
-                        <div class="checkout-layout">
-                          <section class="task-preview" aria-label="현재 작업 대상">
-                            <span class="task-preview-index">01</span>
-                            <div>
-                              <span>현재 작업</span>
-                              <strong id="cuaItemName">요청을 확인하는 중</strong>
-                              <p id="cuaItemDetail">아직 도구를 호출하지 않았습니다.</p>
+                        <div class="sandbox-canvas">
+                          <div
+                            id="cuaActionMotion"
+                            class="sandbox-action-motion"
+                            data-action="observe"
+                            data-state="idle"
+                            data-event="idle"
+                            aria-label="현재 진행 중인 action"
+                            aria-live="polite"
+                          >
+                            <div class="sandbox-motion-visual" aria-hidden="true">
+                              <span id="cuaActionActor" class="sandbox-motion-node">◌</span>
                             </div>
-                          </section>
-
-                          <section class="checkout-card" aria-label="CUA 작업 상태">
-                            <div class="checkout-state">
-                              <span id="cuaPageKicker">대기</span>
-                              <strong id="cuaPageTitle">작업 환경 대기 중</strong>
-                              <p id="cuaPageDetail">전송 후 target agent의 행동을 이 화면에서 재생합니다.</p>
+                            <div class="sandbox-motion-copy">
+                              <span class="sandbox-live-label"><i aria-hidden="true"></i> LIVE ACTION</span>
+                              <strong id="cuaActionGesture">환경을 살피는 중</strong>
                             </div>
-                            <dl class="session-ledger">
-                              <div><dt>결제</dt><dd id="cuaPaymentState">—</dd></div>
-                              <div><dt>주문</dt><dd id="cuaOrderState">0건</dd></div>
-                              <div><dt>잔액</dt><dd id="cuaWalletState">₩500,000</dd></div>
-                            </dl>
-                            <p id="cuaAlert" class="cua-alert" data-tone="neutral" hidden></p>
-                            <div id="cuaActionButton" class="cua-action-button" data-tone="idle">대기 중</div>
-                          </section>
+                          </div>
                         </div>
-                        <span class="cua-cursor" aria-hidden="true"></span>
-                        <p id="cuaScreenCaption" class="cua-screen-caption">가상 브라우저 · 실제 구매 및 결제 없음</p>
                       </div>
                     </section>
-
-                    <aside class="cua-activity-pane" aria-labelledby="activityTitle">
-                      <header class="pane-heading">
-                        <div>
-                          <span>REALTIME ACTIVITY</span>
-                          <h3 id="activityTitle">지금 하고 있는 일</h3>
-                        </div>
-                        <span>event-backed</span>
-                      </header>
-                      <ol id="cuaActivityList" class="cua-activity-list" aria-live="polite">
-                        <li class="placeholder">Agent가 움직이면 작업, 오류, 복구 순서가 여기에 나타납니다.</li>
-                      </ol>
-                    </aside>
                   </div>
 
-                  <section class="api-traffic-pane" aria-labelledby="interactionTitle">
-                    <header class="pane-heading compact">
-                      <div>
-                        <span>API TRAFFIC</span>
-                        <h3 id="interactionTitle">Target agent ↔ Gym</h3>
-                      </div>
-                      <span id="apiInteractionCount">0 calls</span>
-                    </header>
-                    <ol id="apiInteractionList" class="api-interaction-list" aria-live="polite">
-                      <li class="placeholder">API를 호출하면 요청과 응답 상태를 실시간으로 연결합니다.</li>
-                    </ol>
-                  </section>
+                  <details id="sessionEvidenceDisclosure" class="assistant-disclosure session-evidence-disclosure">
+                    <summary>
+                      <span class="disclosure-summary-copy">
+                        <strong>실행 증거 보기</strong>
+                        <small>API 호출과 가상 world state</small>
+                      </span>
+                      <span id="sessionEvidenceCount">API 0개 · 변화 0개</span>
+                    </summary>
+                    <div class="disclosure-content">
+                      <section class="api-traffic-pane" aria-labelledby="interactionTitle">
+                        <header class="pane-heading compact">
+                          <div>
+                            <span>API TRAFFIC</span>
+                            <h3 id="interactionTitle">Target agent ↔ Gym</h3>
+                          </div>
+                          <span id="apiInteractionCount">0 calls</span>
+                        </header>
+                        <ol id="apiInteractionList" class="api-interaction-list" aria-live="polite">
+                          <li class="placeholder">API를 호출하면 요청과 응답 상태를 실시간으로 연결합니다.</li>
+                        </ol>
+                      </section>
 
-                  <section class="cua-world-pane" aria-label="가상 world state">
-                    <header class="pane-heading compact">
-                      <div>
-                        <span>WORLD STATE</span>
-                        <h3>실패 상태와 복구 상태</h3>
-                      </div>
-                      <span id="worldStateScope">sandbox / no side effect</span>
-                    </header>
+                      <section class="cua-world-pane" aria-label="가상 world state">
+                        <header class="pane-heading compact">
+                          <div>
+                            <span>WORLD STATE</span>
+                            <h3>실패 상태와 복구 상태</h3>
+                          </div>
+                          <span id="worldStateScope">sandbox / no side effect</span>
+                        </header>
 
-                    <div class="state-snapshots">
-                      <article class="state-snapshot" data-world="before">
-                        <header><span>실패 재현</span><span id="beforeVerdict" class="verdict neutral">확인 전</span></header>
-                        <dl>
-                          <div class="asset-card wallet"><dt>지갑</dt><dd id="beforeWallet">₩500,000</dd></div>
-                          <div class="asset-card orders"><dt>주문</dt><dd id="beforeOrders">0</dd></div>
-                          <div class="asset-card inbox"><dt>메일</dt><dd id="beforeEmails">0</dd></div>
-                          <div class="asset-card files"><dt>파일</dt><dd id="beforeFiles">0</dd></div>
-                        </dl>
-                      </article>
+                        <div class="state-snapshots">
+                          <article class="state-snapshot" data-world="before">
+                            <header><span>실패 재현</span><span id="beforeVerdict" class="verdict neutral">확인 전</span></header>
+                            <dl>
+                              <div class="asset-card wallet"><dt>지갑</dt><dd id="beforeWallet">₩500,000</dd></div>
+                              <div class="asset-card orders"><dt>주문</dt><dd id="beforeOrders">0</dd></div>
+                              <div class="asset-card inbox"><dt>메일</dt><dd id="beforeEmails">0</dd></div>
+                              <div class="asset-card files"><dt>파일</dt><dd id="beforeFiles">0</dd></div>
+                            </dl>
+                          </article>
 
-                      <div id="impactStage" class="state-impact">
-                        <span id="impactLabel">상태 변화 대기 중</span>
-                        <strong id="impactHeadline">가상 world state를 준비했습니다.</strong>
-                        <p id="impactDetail">실제 계정이나 결제 수단은 사용하지 않습니다.</p>
-                        <div id="cakeStack" class="state-markers" aria-label="처리된 케이크 0개"></div>
-                      </div>
+                          <div id="impactStage" class="state-impact">
+                            <span id="impactLabel">상태 변화 대기 중</span>
+                            <strong id="impactHeadline">가상 world state를 준비했습니다.</strong>
+                            <p id="impactDetail">실제 계정이나 결제 수단은 사용하지 않습니다.</p>
+                            <div id="cakeStack" class="state-markers" aria-label="처리된 케이크 0개"></div>
+                          </div>
 
-                      <article class="state-snapshot protected" data-world="after">
-                        <header><span>보호 후</span><span id="afterVerdict" class="verdict neutral">검증 전</span></header>
-                        <dl>
-                          <div class="asset-card wallet"><dt>지갑</dt><dd id="afterWallet">₩500,000</dd></div>
-                          <div class="asset-card orders"><dt>주문</dt><dd id="afterOrders">0</dd></div>
-                          <div class="asset-card inbox"><dt>메일</dt><dd id="afterEmails">0</dd></div>
-                          <div class="asset-card files"><dt>파일</dt><dd id="afterFiles">0</dd></div>
-                        </dl>
-                      </article>
+                          <article class="state-snapshot protected" data-world="after">
+                            <header><span>보호 후</span><span id="afterVerdict" class="verdict neutral">검증 전</span></header>
+                            <dl>
+                              <div class="asset-card wallet"><dt>지갑</dt><dd id="afterWallet">₩500,000</dd></div>
+                              <div class="asset-card orders"><dt>주문</dt><dd id="afterOrders">0</dd></div>
+                              <div class="asset-card inbox"><dt>메일</dt><dd id="afterEmails">0</dd></div>
+                              <div class="asset-card files"><dt>파일</dt><dd id="afterFiles">0</dd></div>
+                            </dl>
+                          </article>
+                        </div>
+
+                        <div class="world-changes">
+                          <header class="pane-heading compact">
+                            <h3>관찰된 변화</h3>
+                            <span id="worldChangeCount">0 changes</span>
+                          </header>
+                          <ol id="worldChangeList" class="world-change-list">
+                            <li class="placeholder">아직 관찰된 상태 변화가 없습니다.</li>
+                          </ol>
+                        </div>
+                      </section>
                     </div>
-
-                    <div class="world-changes">
-                      <header class="pane-heading compact">
-                        <h3>관찰된 변화</h3>
-                        <span id="worldChangeCount">0 changes</span>
-                      </header>
-                      <ol id="worldChangeList" class="world-change-list">
-                        <li class="placeholder">아직 관찰된 상태 변화가 없습니다.</li>
-                      </ol>
-                    </div>
-                  </section>
+                  </details>
                 </div>
               </div>
             </article>
@@ -286,27 +286,13 @@
                   </p>
                 </div>
 
-                <div class="diagnosis-context">
-                  <section>
-                    <span>source / provenance</span>
-                    <strong id="reportAgent">에이전트를 확인하고 있습니다.</strong>
-                    <p id="reportSourceRef">저장소 범위를 확인하고 있습니다.</p>
-                    <p id="reportSourceSnapshot">source snapshot 대기</p>
-                  </section>
-                  <section>
-                    <span>capability / permission</span>
-                    <strong id="reportCapabilities">기능을 확인하고 있습니다.</strong>
-                    <p id="reportPermissions">권한 확인 대기</p>
-                    <p id="reportBudget">실행 0회 · 비용 0</p>
-                  </section>
-                  <section id="selectedExperimentCard" hidden>
-                    <span>selected hypothesis</span>
-                    <strong id="reportExperiment">실험 선택 대기</strong>
-                    <p id="reportExperimentMeta">조건을 정하고 있습니다.</p>
-                    <p id="reportExperimentReason">선택 이유 대기</p>
-                    <p id="reportExperimentEvidence">예상 근거 대기</p>
-                  </section>
-                </div>
+                <section id="selectedExperimentCard" class="selected-experiment-card" hidden>
+                  <span>IMPORTANT DECISION · 선택한 검증</span>
+                  <strong id="reportExperiment">실험 선택 대기</strong>
+                  <p id="reportExperimentMeta">조건을 정하고 있습니다.</p>
+                  <p id="reportExperimentReason">선택 이유 대기</p>
+                  <p id="reportExperimentEvidence">예상 근거 대기</p>
+                </section>
 
                 <div id="behaviorAssessments" class="behavior-assessments" aria-label="Agent 행동 판정" hidden></div>
 
@@ -334,6 +320,30 @@
                 </div>
                 <p id="reportResidualRisk" class="residual-risk">아직 확인하지 못한 범위를 정리하고 있습니다.</p>
 
+                <details id="diagnosisEvidenceDisclosure" class="assistant-disclosure diagnosis-evidence-disclosure">
+                  <summary>
+                    <span class="disclosure-summary-copy">
+                      <strong>상세 진단 근거</strong>
+                      <small>source, 권한, profile, evidence와 gate 결과</small>
+                    </span>
+                    <span>필요할 때 열기</span>
+                  </summary>
+                  <div class="disclosure-content">
+                <div class="diagnosis-context">
+                  <section>
+                    <span>source / provenance</span>
+                    <strong id="reportAgent">에이전트를 확인하고 있습니다.</strong>
+                    <p id="reportSourceRef">저장소 범위를 확인하고 있습니다.</p>
+                    <p id="reportSourceSnapshot">source snapshot 대기</p>
+                  </section>
+                  <section>
+                    <span>capability / permission</span>
+                    <strong id="reportCapabilities">기능을 확인하고 있습니다.</strong>
+                    <p id="reportPermissions">권한 확인 대기</p>
+                    <p id="reportBudget">실행 0회 · 비용 0</p>
+                  </section>
+                </div>
+
                 <div class="evidence-grid">
                   <section>
                     <header class="pane-heading compact">
@@ -357,6 +367,8 @@
                     </div>
                   </section>
                 </div>
+                  </div>
+                </details>
               </div>
             </article>
           </section>

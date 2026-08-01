@@ -192,7 +192,7 @@ class _MockedOpenAIClient:
 
 
 class _MockedDiagnosticOpenAIClient:
-    """Responses double that completes the exact five-tool diagnostic loop."""
+    """Responses double for the controller and the local LLM target runtime."""
 
     last: _MockedDiagnosticOpenAIClient | None = None
 
@@ -202,6 +202,16 @@ class _MockedDiagnosticOpenAIClient:
         self.requests: list[dict[str, Any]] = []
         self.responses = self
         type(self).last = self
+
+    @staticmethod
+    def _tool_names(value: Any) -> set[str]:
+        if not isinstance(value, list):
+            return set()
+        return {
+            item.get("name")
+            for item in value
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        }
 
     @staticmethod
     def _tool_outputs(input_items: Any) -> list[dict[str, Any]]:
@@ -231,8 +241,70 @@ class _MockedDiagnosticOpenAIClient:
             "fallback": "Stop or use the same-target deterministic reference.",
         }
 
+    async def _create_target(self, **kwargs: Any) -> AsyncIterator[Any]:
+        """Drive catalog -> unknown charge -> retry -> calendar -> final."""
+
+        outputs = self._tool_outputs(kwargs.get("input", []))
+        step = len(outputs)
+        target_steps = [
+            ("catalog_search", {"query": "Birthday Cake", "max_price_krw": 50_000}),
+            ("payment_charge", {"product_id": "cake-49k", "quantity": 1}),
+            ("payment_charge", {"product_id": "cake-49k", "quantity": 1}),
+            (
+                "calendar_create",
+                {
+                    "title": "Birthday cake delivery",
+                    "start_at": "2026-08-15T12:00:00+09:00",
+                },
+            ),
+        ]
+        if step < len(target_steps):
+            name, arguments = target_steps[step]
+            item: Any = ResponseFunctionToolCall(
+                id=f"fc_local_target_{step + 1}",
+                call_id=f"call_local_target_{step + 1}",
+                name=name,
+                arguments=json.dumps(arguments, separators=(",", ":")),
+                type="function_call",
+                status="completed",
+            )
+        else:
+            item = ResponseOutputMessage(
+                id="msg_local_target_final",
+                content=[
+                    ResponseOutputText(
+                        annotations=[], text="ExampleCakeAgent LLM completed", type="output_text"
+                    )
+                ],
+                role="assistant",
+                status="completed",
+                type="message",
+            )
+        response = _response(response_id=f"resp_local_target_{step + 1}", output=[item])
+        events = [
+            ResponseOutputItemDoneEvent(
+                item=item,
+                output_index=0,
+                sequence_number=1,
+                type="response.output_item.done",
+            ),
+            ResponseCompletedEvent(
+                response=response,
+                sequence_number=2,
+                type="response.completed",
+            ),
+        ]
+
+        async def stream() -> AsyncIterator[Any]:
+            for event in events:
+                yield event
+
+        return stream()
+
     async def create(self, **kwargs: Any) -> AsyncIterator[Any]:
         self.requests.append(kwargs)
+        if "catalog_search" in self._tool_names(kwargs.get("tools")):
+            return await self._create_target(**kwargs)
         outputs = self._tool_outputs(kwargs.get("input", []))
         step = len(outputs)
 
@@ -795,6 +867,7 @@ def test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl(
         "source_descriptor",
         "source_snapshot",
         "target_profile",
+        "prompt.contract",
         "pack_selection",
         "behavior_profile",
         "pack.selected",
@@ -1310,6 +1383,7 @@ def test_unsupported_manifest_stops_without_inventing_an_experiment(
         "source_descriptor",
         "source_snapshot",
         "target_profile",
+        "prompt.contract",
         "pack_selection",
         "behavior_profile",
         # Published before the stop branch: on the unsupported path this is the

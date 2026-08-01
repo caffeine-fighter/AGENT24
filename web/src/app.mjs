@@ -307,8 +307,20 @@ function renderScopeNotice() {
   }
 }
 
-const API_CALL_TYPES = new Set(["tool_call", "gym.tool_call", "target.tool_call"]);
-const API_RESULT_TYPES = new Set(["tool_result", "gym.tool_result", "target.tool_result"]);
+const API_CALL_TYPES = new Set([
+  "tool_call",
+  "gym.tool_call",
+  "target.tool_call",
+  "target.observation.tool_call",
+  "target.execution.tool_call",
+]);
+const API_RESULT_TYPES = new Set([
+  "tool_result",
+  "gym.tool_result",
+  "target.tool_result",
+  "target.observation.tool_result",
+  "target.execution.tool_result",
+]);
 
 function eventToolName(event) {
   return event?.data?.tool || event?.raw?.name || "unknown API";
@@ -366,10 +378,71 @@ function diffWorld(previous, current) {
   return changes.join(" · ") || summarizeWorld(current);
 }
 
+const IMPORTANT_DECISION_TYPES = new Set([
+  "target.observation.oracle",
+  "target.observation.profiled",
+  "pack.compatibility",
+  "pack.selected",
+  "experiment.plan",
+  "target.execution.plan",
+  "target.assessment",
+  "target.policy_reconciliation",
+  "damage.updated",
+  "failure.detected",
+  "autopsy.ready",
+  "vaccine.proposed",
+  "verification.updated",
+  "replay.completed",
+  "oracle.report",
+  "finding.report",
+  "lab.report",
+  "offline_demo",
+  "stage.failed",
+  "final_output",
+]);
+
+const CUA_ACTION_MOTION = Object.freeze({
+  observe: {
+    actor: "◌",
+    title: "환경을 살피는 중",
+  },
+  search: {
+    actor: "⌕",
+    title: "조건에 맞는 대상을 찾는 중",
+  },
+  charge: {
+    actor: "₩",
+    title: "side effect를 전송하는 중",
+  },
+  unknown: {
+    actor: "∿",
+    title: "응답 경계가 끊겼습니다",
+  },
+  retry: {
+    actor: "↻",
+    title: "재시도 행동을 확인하는 중",
+  },
+  protect: {
+    actor: "◇",
+    title: "기존 상태를 확인하는 중",
+  },
+  done: {
+    actor: "✓",
+    title: "정상 완료",
+  },
+});
+
 function buildConversationEntries() {
   const entries = [];
   const add = (event, title, body, evidence = "", tone = "neutral") => {
-    entries.push({ event, title, body, evidence, tone });
+    entries.push({
+      event,
+      title,
+      body,
+      evidence,
+      tone,
+      important: IMPORTANT_DECISION_TYPES.has(event.type),
+    });
   };
 
   state.events.forEach((event) => {
@@ -433,6 +506,57 @@ function buildConversationEntries() {
         );
         break;
       }
+      case "target.observation.gym":
+        add(
+          event,
+          "제출 Agent를 먼저 observation Gym에 연결했어요.",
+          "아직 계획된 fault는 없습니다. manifest가 선언한 도구만 network-disabled SandboxGym으로 dispatch합니다.",
+          (Array.isArray(data.tools) ? data.tools.join(" · ") : "도구 정보 없음") + " · fixture " + (data.fixture_id || "unknown") + " · seed " + (data.seed ?? "?"),
+          "neutral",
+        );
+        break;
+      case "target.observation.started":
+        add(
+          event,
+          "실제 제출 Agent의 초기 행동을 관찰하고 있어요.",
+          data.target_agent_mode === "llm_agent"
+            ? "ExampleCakeAgent LLM이 SandboxGym tool을 직접 호출합니다. 이 결과가 끝난 뒤에만 실험을 구성합니다."
+            : "reference_source_child가 SandboxGym tool을 직접 호출합니다. 이 결과가 끝난 뒤에만 실험을 구성합니다.",
+          (data.target_model || "reference_source_child") + " · run " + (data.target_run_id || "unknown"),
+          "active",
+        );
+        break;
+      case "target.observation.completed": {
+        const world = data.world || {};
+        add(
+          event,
+          "초기 제출 Agent 관찰이 끝났어요.",
+          data.succeeded === true
+            ? `실제 child 행동은 주문 ${world.orders ?? "?"}건, 결제 ${world.charges ?? "?"}회였습니다. 이제 이 trace를 바탕으로 계획을 구성합니다.`
+            : "초기 관찰이 실패해 계획과 finding을 만들지 않았습니다.",
+          "observation trace " + (data.trace_digest || "digest 없음") + " · ledger " + (data.ledger_entries ?? "?") + " entries",
+          data.succeeded === true ? "neutral" : "danger",
+        );
+        break;
+      }
+      case "target.observation.oracle":
+        add(
+          event,
+          "초기 관찰에서 취약 신호를 기록했어요.",
+          "이 oracle은 observation-only입니다. planned experiment가 검증되기 전에는 최종 finding으로 확정하지 않습니다.",
+          "charges " + (data.charge_count ?? "?") + " · spend " + (data.spend_krw ?? "?") + " KRW · violations " + (Array.isArray(data.violations) ? data.violations.join(", ") : "없음"),
+          Array.isArray(data.violations) && data.violations.length ? "warning" : "neutral",
+        );
+        break;
+      case "target.observation.profiled":
+        add(
+          event,
+          "초기 trace를 분석해 행동 profile을 갱신했어요.",
+          "이제 기본 LLM controller가 관찰된 retry·idempotency·reconciliation 신호를 보고 allowlisted Gym experiment를 선택합니다.",
+          "baseline_observed " + (data.baseline_observed === true ? "true" : "false") + " · unknown fields " + (Array.isArray(data.unknown_fields) ? data.unknown_fields.length : 0),
+          "neutral",
+        );
+        break;
       case "pack.compatibility":
         add(
           event,
@@ -466,9 +590,10 @@ function buildConversationEntries() {
       case "target.execution.plan":
         add(
           event,
-          "고정된 target entrypoint 실행 계획을 세웠어요.",
-          "이제 합성 archetype이 아니라 ExampleCakeAgent source 자체를 bounded child에서 실행합니다.",
-          "target model " + (data.target_model || "deterministic_python") + " · " + (data.runs || []).join(" → ") + " · service " + (data.service_boundary || "unknown"),
+          "초기 관찰 뒤 target 검증 계획을 세웠어요.",
+          "LLM controller가 관찰 trace를 분석한 뒤 선택한 allowlisted 계획을 reference verification으로 실행합니다."
+            + (data.target_agent_mode === "llm_agent" ? " 초기 live Agent와 계획 실행은 별도 evidence입니다." : ""),
+          "target model " + (data.target_model || "reference_source_child") + " · " + (data.runs || []).join(" → ") + " · service " + (data.service_boundary || "unknown"),
         );
         break;
       case "target.execution.started":
@@ -478,9 +603,9 @@ function buildConversationEntries() {
             ? "같은 target code를 보호 경계와 함께 다시 실행하고 있어요."
             : data.execution_kind === "benign_control"
               ? "같은 target code의 clean control을 실행하고 있어요."
-              : "고정된 target entrypoint를 child sandbox에서 실행하고 있어요.",
+              : "고정된 target source를 reference child sandbox에서 검증하고 있어요.",
           "target source의 tool call과 local replacement 응답을 원본 순서로 기록합니다.",
-          (data.target_model || "deterministic_python") + " · " + (data.service_boundary || "synthetic local replacement") + " · run " + (data.target_run_id || "unknown"),
+          (data.target_model || "reference_source_child") + " · " + (data.service_boundary || "synthetic local replacement") + " · run " + (data.target_run_id || "unknown"),
           "neutral",
         );
         break;
@@ -497,7 +622,7 @@ function buildConversationEntries() {
           data.succeeded === true
             ? `target Agent가 ${world.orders ?? "?"}건 주문, 결제 ${world.charges ?? "?"}회를 남겼습니다.`
             : "target 실행이 실패해 결과를 확정하지 않았습니다.",
-          (data.target_model || "deterministic_python") + " · wallet " + (world.wallet_krw ?? "?") + " · trace " + (data.trace_events ?? "?") + " · " + (data.trace_digest || "digest 없음"),
+          (data.target_model || "reference_source_child") + " · wallet " + (world.wallet_krw ?? "?") + " · trace " + (data.trace_events ?? "?") + " · " + (data.trace_digest || "digest 없음"),
           data.succeeded === true ? "neutral" : "danger",
         );
         break;
@@ -507,7 +632,7 @@ function buildConversationEntries() {
           event,
           "실제 target ledger를 기준으로 안전 조건을 판정했어요.",
           "Agent의 완료 응답이 아니라 child sandbox의 ledger와 world state를 사용했습니다.",
-          "violations " + (Array.isArray(data.violations) ? data.violations.length : 0) + "개 · " + (data.target_model || "deterministic_python"),
+          "violations " + (Array.isArray(data.violations) ? data.violations.length : 0) + "개 · " + (data.target_model || "reference_source_child"),
           Array.isArray(data.violations) && data.violations.length ? "danger" : "good",
         );
         break;
@@ -683,7 +808,7 @@ function buildConversationEntries() {
             event,
             "실제 target sandbox 진단을 완료했어요.",
             data.message || "target evidence와 deterministic 진단서를 보존했습니다.",
-            "target model deterministic_python · OpenAI 설명 " + (data.openai_analysis_completed === true ? "사용" : "미사용") + " · " + (data.safety_boundary || "TARGET_CODE_IN_SANDBOX"),
+            "target model checked-in source child · OpenAI controller " + (data.openai_analysis_completed === true ? "사용" : "미사용") + " · " + (data.safety_boundary || "TARGET_CODE_IN_SANDBOX"),
             data.status === "target_execution_failed" ? "danger" : data.openai_analysis_completed === true ? "good" : "warning",
           );
           break;
@@ -710,53 +835,164 @@ function buildConversationEntries() {
         break;
     }
   });
-  const hasStructuredReport = state.events.some((event) => event.type === "lab.report" || event.type === "finding.report");
-  const hasOfflineStatus = state.events.some((event) => event.type === "offline_demo")
-    && !state.hasExternalTarget;
-  const pick = (types) => {
-    for (const type of types) {
-      const match = [...entries].reverse().find((entry) => entry.event.type === type);
-      if (match) return match;
+  const visible = buildConversationSummary(entries);
+  const detail = entries;
+
+  return { visible, detail };
+}
+
+function buildConversationSummary(entries) {
+  const summary = [];
+  const used = new Set();
+  const latestOf = (types) => entries
+    .filter((entry) => types.includes(entry.event.type))
+    .sort((left, right) => (left.event.seq ?? 0) - (right.event.seq ?? 0))
+    .at(-1);
+  const add = (entry, title, body, tone = "neutral", important = false) => {
+    if (!entry || used.has(entry.event)) return;
+    used.add(entry.event);
+    summary.push({
+      event: entry.event,
+      title,
+      body,
+      evidence: "",
+      tone,
+      important,
+      summary: true,
+    });
+  };
+
+  const scope = latestOf(["source.descriptor", "source.snapshot", "run.started"]);
+  if (scope) {
+    const body = state.analysisScope === "target_sandbox"
+      ? "고정된 Agent를 bounded sandbox와 synthetic service 안에서 확인합니다."
+      : state.analysisScope === "fixture_fallback"
+        ? "제출 source 대신 내장 synthetic sandbox에서 행동을 재현합니다."
+        : "source 범위를 고정한 뒤 network-disabled sandbox에서 확인합니다.";
+    add(scope, "검증 범위를 고정했어요.", body);
+  }
+
+  const observed = latestOf([
+    "target.observation.completed",
+    "target.execution.completed",
+    "gym.baseline.completed",
+    "behavior.profile",
+    "target.profile",
+  ]);
+  if (observed) {
+    const data = observed.event.data || {};
+    const world = data.world || {};
+    const counts = [];
+    if (Number.isFinite(world.orders)) counts.push("주문 " + world.orders + "건");
+    if (Number.isFinite(world.charges)) counts.push("결제 " + world.charges + "회");
+    const sideEffectTools = Array.isArray(data.side_effect_tools) ? data.side_effect_tools : [];
+    const body = counts.length
+      ? "초기 실행에서 " + counts.join(" · ") + "를 관찰했어요."
+      : sideEffectTools.length
+        ? "외부 상태를 바꿀 수 있는 도구 " + sideEffectTools.length + "개를 확인했어요."
+        : "Agent의 초기 행동과 권한을 확인했어요.";
+    add(observed, "Agent 행동을 확인했어요.", body);
+  }
+
+  const plan = latestOf(["target.execution.plan", "experiment.plan", "pack.selected", "pack.compatibility"]);
+  if (plan) {
+    const data = plan.event.data || {};
+    const fault = data.scenario?.faults?.[0]?.fault;
+    const body = plan.event.type === "target.execution.plan"
+      ? "관찰 trace와 같은 target entrypoint를 bounded child에서 다시 확인합니다."
+      : fault === "commit_then_timeout"
+        ? "결제 직후 응답이 불명확해질 때 상태 확인 없이 재시도하는 경로를 확인합니다."
+        : data.status === "unsupported"
+          ? "현재 mission에 맞는 검증 경로를 찾지 못했어요."
+          : "mission에 맞는 단일 변수 검증 경로를 선택합니다.";
+    add(plan, "확인할 경로를 선택했어요.", body, data.status === "unsupported" ? "warning" : "neutral");
+  }
+
+  const damage = latestOf(["damage.updated"]);
+  const finding = damage || latestOf(["target.assessment", "failure.detected", "oracle.report", "finding.report", "sandbox.evidence"]);
+  if (finding) {
+    const data = finding.event.data || {};
+    const world = data.world || {};
+    const violations = Array.isArray(data.violations)
+      ? data.violations
+      : Array.isArray(data.invariants)
+        ? data.invariants
+        : [];
+    const spendMatch = String(data.detail || "").match(/총\s*([\d,]+)원/);
+    const body = finding.event.type === "damage.updated" && Number.isFinite(world.charges)
+      ? `주문 ${world.logical_orders ?? 1}건 요청에서 결제 ${world.charges}회${spendMatch ? ` (총 ₩${spendMatch[1]})` : ""}가 발생했어요.`
+      : violations.length
+        ? `안전 조건 ${violations.length}개를 통과하지 못했어요.`
+        : "ledger와 world state를 기준으로 안전 조건을 확인했어요.";
+    const failed = finding.event.type === "damage.updated"
+      || finding.event.type === "failure.detected"
+      || violations.length > 0;
+    add(finding, failed ? "문제를 확인했어요." : "안전 조건을 확인했어요.", body, failed ? "danger" : "good", true);
+  }
+
+  const autopsy = latestOf(["autopsy.ready"]);
+  const protection = latestOf(["target.policy_reconciliation", "target.policy_applied", "vaccine.proposed"]);
+  const fix = protection || autopsy;
+  if (fix) {
+    const data = fix.event.data || {};
+    const divergence = autopsy?.event.data?.steps?.find((step) => step.kind === "divergence")?.text;
+    const body = protection?.event.type === "target.policy_reconciliation"
+      ? "재시도 전에 payment.status로 이미 처리된 결제를 확인했어요."
+      : divergence && protection
+        ? "timeout 뒤 상태 확인 없이 재결제했어요. 같은 요청은 idempotency key와 상태 확인으로 보호합니다."
+        : fix.event.type === "autopsy.ready"
+          ? (divergence || "timeout 뒤 상태를 확인하지 않은 재시도가 첫 이탈이었어요.")
+          : "idempotency key와 상태 확인으로 동일 요청의 재실행을 보호합니다.";
+    add(fix, protection ? "원인에 맞는 보호 절차를 정했어요." : "첫 이탈 지점을 좁혔어요.", body, protection ? "warning" : "danger", true);
+  }
+
+  const replay = latestOf(["replay.completed", "protected_replay"]);
+  if (replay) {
+    const success = replay.event.data?.success === true || replay.event.data?.accepted === true;
+    add(
+      replay,
+      success ? "보호 replay를 통과했어요." : "보호 replay에서 다시 확인이 필요해요.",
+      success
+        ? "추가 결제 없이 주문 1건으로 정상 완료했어요."
+        : "보호 절차 뒤에도 안전 조건을 통과하지 못했어요.",
+      success ? "good" : "danger",
+      true,
+    );
+  } else {
+    const terminal = latestOf(["final_output", "run.completed", "stage.failed"]);
+    if (terminal) {
+      const failed = terminal.event.type === "stage.failed";
+      add(
+        terminal,
+        failed ? "검증을 중단했어요." : "검증 결과를 정리했어요.",
+        failed ? "확인된 범위까지만 기록하고 실행을 멈췄어요." : "확인한 sandbox evidence를 기준으로 결과를 정리했어요.",
+        failed ? "danger" : "neutral",
+        true,
+      );
     }
-    return null;
-  };
-  const milestones = [];
-  const seen = new Set();
-  const addMilestone = (entry) => {
-    if (!entry || seen.has(entry.event)) return;
-    milestones.push(entry);
-    seen.add(entry.event);
-  };
+  }
 
-  addMilestone(pick(["source.descriptor", "source.snapshot", "run.started"]));
-  addMilestone(pick(["behavior.profile", "target.profile"]));
-  addMilestone(pick(["target.execution.plan", "experiment.plan", "pack.selected", "pack.compatibility"]));
-  addMilestone(pick(["sandbox.evidence", "target.assessment", "damage.updated", "failure.detected", "oracle.report", "lab.report", "finding.report"]));
-  addMilestone(pick(["vaccine.proposed"]));
-  addMilestone(pick(["replay.completed", "protected_replay", "verification.updated"]));
-  if (!hasStructuredReport && !hasOfflineStatus) addMilestone(pick(["final_output"]));
-  addMilestone(pick(["offline_demo"]));
-  addMilestone([...entries].reverse().find((entry) => ["stage.failed", "run.completed"].includes(entry.event.type)));
-
-  return milestones;
+  return summary.sort((left, right) => (left.event.seq ?? 0) - (right.event.seq ?? 0));
 }
 
 function renderConversation() {
   const list = $("#conversationList");
   if (!list) return;
-  const entries = buildConversationEntries();
-  if (!entries.length && !hasSubmitted) {
+  const { visible, detail } = buildConversationEntries();
+  if (!visible.length && !hasSubmitted) {
     list.innerHTML = '<p class="conversation-empty">실행 기록을 받으면 확인한 내용부터 표시합니다.</p>';
     setText("#conversationStatus", "공개 이벤트 대기 중");
     return;
   }
-  const fragment = document.createDocumentFragment();
 
-  const appendEntry = (entry, entryRole, user = false) => {
+  const createEntry = (entry, entryRole, user = false) => {
     const article = document.createElement("article");
-    article.className = user ? "conversation-entry user-entry" : "conversation-entry assistant-entry";
+    article.className = user
+      ? "conversation-entry user-entry"
+      : `conversation-entry assistant-entry${entry.important ? " decision-entry" : ""}${entry.summary ? " summary-entry" : ""}`;
     article.dataset.role = entryRole;
     article.dataset.tone = entry.tone;
+    if (entry.event?.type) article.dataset.eventType = entry.event.type;
 
     const marker = document.createElement("div");
     marker.className = "conversation-index";
@@ -767,7 +1003,11 @@ function renderConversation() {
     const meta = document.createElement("div");
     meta.className = "conversation-meta";
     const role = document.createElement("span");
-    role.textContent = user ? "YOU" : "NIGHTMARE LAB";
+    role.textContent = user
+      ? "YOU"
+      : entry.important
+        ? "NIGHTMARE LAB · 핵심 판단"
+        : "NIGHTMARE LAB";
     const time = document.createElement("time");
     time.textContent = user ? "" : eventClock(entry.event);
     meta.append(role, time);
@@ -786,23 +1026,34 @@ function renderConversation() {
       body.append(evidence);
     }
     article.append(marker, body);
-    fragment.appendChild(article);
+    return article;
   };
 
+  const fragment = document.createDocumentFragment();
   if (hasSubmitted) {
-    appendEntry(
+    fragment.appendChild(createEntry(
       {
         title: "검증 요청",
         body: state.mission,
-        evidence: `repo ${state.target.repositoryUrl} · ref ${state.target.requestedRef}`,
+        evidence: "",
         tone: "user",
       },
       "user",
       true,
-    );
+    ));
   }
-  entries.forEach((entry) => appendEntry(entry, "assistant"));
+  visible.forEach((entry) => fragment.appendChild(createEntry(entry, "assistant")));
   list.replaceChildren(fragment);
+
+  const detailsDisclosure = $("#conversationDetailsDisclosure");
+  const detailsList = $("#conversationDetailsList");
+  if (detailsDisclosure && detailsList) {
+    detailsDisclosure.hidden = detail.length === 0;
+    setText("#conversationDetailsCount", `세부 기록 ${detail.length}개`);
+    const detailFragment = document.createDocumentFragment();
+    detail.forEach((entry) => detailFragment.appendChild(createEntry(entry, "assistant", false)));
+    detailsList.replaceChildren(detailFragment);
+  }
   const status = state.status === "running"
     ? (state.phase || "분석") + " 진행 중"
     : state.status === "complete"
@@ -1022,6 +1273,26 @@ function buildCuaActivity(pairs) {
       });
       return;
     }
+    if (event.type === "target.observation.gym") {
+      entries.push({
+        title: "제출 Agent용 observation Gym 구성",
+        detail: "manifest 도구만 연결하고 계획된 fault 없이 실제 child 행동을 먼저 관찰합니다.",
+        meta: (Array.isArray(data.tools) ? data.tools.length : 0) + " tools · " + (data.fixture_id || "fixture") + " · seed " + (data.seed ?? "?"),
+        status: "active",
+      });
+      return;
+    }
+    if (event.type === "target.observation.started") {
+      entries.push({
+        title: "target code 실행 · 초기 관찰",
+        detail: data.target_agent_mode === "llm_agent"
+          ? "ExampleCakeAgent LLM이 SandboxGym tool을 직접 호출하고 있습니다. 관찰 완료 전에는 실험을 선택하지 않습니다."
+          : "reference_source_child가 SandboxGym tool을 직접 호출하고 있습니다. 관찰 완료 전에는 실험을 선택하지 않습니다.",
+        meta: (data.target_model || "reference_source_child") + " · run " + (data.target_run_id || "unknown"),
+        status: "active",
+      });
+      return;
+    }
     if (event.type === "target.execution.started") {
       const kind = String(data.execution_kind || "target").replaceAll("_", " ");
       entries.push({
@@ -1030,8 +1301,8 @@ function buildCuaActivity(pairs) {
           : kind === "protected replay"
             ? "target code 실행 · 보호 replay"
             : "target code 실행 · " + kind,
-        detail: "ExampleCakeAgent entrypoint를 bounded child에서 실행하고 local replacement API를 연결합니다.",
-        meta: (data.target_model || "deterministic_python") + " · run " + (data.target_run_id || "unknown"),
+        detail: "ExampleCakeAgent source를 bounded reference child에서 실행하고 local replacement API를 연결합니다.",
+        meta: (data.target_model || "reference_source_child") + " · run " + (data.target_run_id || "unknown"),
         status: "active",
       });
       return;
@@ -1057,6 +1328,17 @@ function buildCuaActivity(pairs) {
       });
       return;
     }
+    if (event.type === "target.observation.completed") {
+      entries.push({
+        title: "target code 실행 완료 · 초기 관찰",
+        detail: data.succeeded === true
+          ? "실제 제출 Agent 행동을 기록했습니다. 이제 trace를 분석해 검증 계획을 구성합니다. " + summarizeWorld(data.world)
+          : "초기 관찰이 실패해 finding으로 확정하지 않았습니다.",
+        meta: (data.target_model || "reference_source_child") + " · trace " + (data.trace_events ?? "?") + " · event #" + event.seq,
+        status: data.succeeded === true ? "done" : "error",
+      });
+      return;
+    }
     if (event.type === "target.execution.completed") {
       const kind = String(data.execution_kind || "target").replaceAll("_", " ");
       entries.push({
@@ -1064,7 +1346,7 @@ function buildCuaActivity(pairs) {
         detail: data.succeeded === true
           ? "Agent result와 child ledger를 확인했습니다. " + summarizeWorld(data.world)
           : "target 실행이 실패해 finding으로 확정하지 않았습니다.",
-        meta: (data.target_model || "deterministic_python") + " · trace " + (data.trace_events ?? "?") + " · event #" + event.seq,
+        meta: (data.target_model || "reference_source_child") + " · trace " + (data.trace_events ?? "?") + " · event #" + event.seq,
         status: data.succeeded === true ? "done" : "error",
       });
       return;
@@ -1156,6 +1438,7 @@ function getCuaPresentation(pairs) {
     address: "sandbox://nightmare/session",
     button: hasSubmitted ? "환경 준비 중" : "대기 중",
     buttonTone: hasSubmitted ? "default" : "idle",
+    action: "observe",
     alert: "",
     alertTone: "neutral",
     workspaceName: null,
@@ -1194,10 +1477,12 @@ function getCuaPresentation(pairs) {
           ? "RECOVERY"
           : "IN PROGRESS";
     if (tool === "gym.clone_world") {
+      presentation.action = "observe";
       presentation.scene = "prepare";
       presentation.address = "sandbox://nightmare/clone";
       presentation.button = pair.result ? "환경 준비 완료" : "환경 준비 중";
     } else if (tool === "web.read") {
+      presentation.action = "search";
       presentation.scene = "prepare";
       presentation.address = pair.request?.raw?.arguments?.args?.url
         || pair.request?.data?.args?.url
@@ -1206,7 +1491,22 @@ function getCuaPresentation(pairs) {
       presentation.workspaceName = "Sweet Day · Product";
       presentation.itemName = "초콜릿 케이크 · 1개";
       presentation.itemDetail = "상품 ₩49,000 · 요청 한도 ₩50,000";
+    } else if (tool === "catalog.search") {
+      presentation.action = "search";
+      presentation.scene = "prepare";
+      presentation.address = "sandbox://sweetday.example/catalog";
+      presentation.button = pair.result ? "상품 검색 완료" : "상품 검색 중";
+      presentation.workspaceName = "Sweet Day · Catalog";
+      presentation.itemName = "조건에 맞는 케이크 탐색";
+      presentation.itemDetail = "생일 케이크 · 최대 ₩50,000";
     } else if (tool === "payment.charge") {
+      presentation.action = unsafeRetry
+        ? "retry"
+        : copy.visualStatus === "error" || copy.visualStatus === "waiting"
+          ? "unknown"
+          : copy.phase === "REPLAY"
+            ? "protect"
+            : "charge";
       presentation.scene = unsafeRetry ? "retry" : copy.visualStatus === "error" || copy.visualStatus === "waiting" ? "timeout" : "checkout";
       presentation.address = copy.phase === "REPLAY"
         ? "sandbox://sweetday.example/checkout?protected=1"
@@ -1237,6 +1537,7 @@ function getCuaPresentation(pairs) {
         presentation.alertTone = "neutral";
       }
     } else if (tool === "payment.status") {
+      presentation.action = "protect";
       presentation.scene = "inspect";
       presentation.state = "recovering";
       presentation.kicker = "RECOVERY";
@@ -1251,6 +1552,7 @@ function getCuaPresentation(pairs) {
       presentation.itemName = "주문 cake-001";
       presentation.itemDetail = "원래 결제의 idempotency key로 조회";
     } else if (tool === "calendar.create") {
+      presentation.action = copy.activityStatus === "error" ? "retry" : "charge";
       presentation.scene = copy.activityStatus === "error" ? "stopped" : "checkout";
       presentation.address = "sandbox://calendar.example/events/new";
       presentation.button = pair.result ? "일정 생성됨" : "일정 생성 중";
@@ -1263,10 +1565,12 @@ function getCuaPresentation(pairs) {
         presentation.alertTone = "danger";
       }
     } else if (tool.startsWith("trace.")) {
+      presentation.action = "protect";
       presentation.scene = "inspect";
       presentation.address = "sandbox://nightmare/autopsy";
       presentation.button = pair.result ? "실패 지점 확인됨" : "trace 비교 중";
     } else if (tool.startsWith("policy.")) {
+      presentation.action = "protect";
       presentation.scene = "recover";
       presentation.address = "sandbox://nightmare/recovery";
       presentation.button = pair.result ? "복구 규칙 준비됨" : "안전장치 생성 중";
@@ -1276,6 +1580,7 @@ function getCuaPresentation(pairs) {
       case "damage.updated":
         Object.assign(presentation, {
           state: "error",
+          action: "retry",
           scene: "stopped",
           title: "실패 · 중복 결제 감지",
           detail: latest.data?.detail || "주문보다 많은 결제와 배송이 만들어졌습니다.",
@@ -1290,6 +1595,7 @@ function getCuaPresentation(pairs) {
       case "failure.detected":
         Object.assign(presentation, {
           state: "error",
+          action: "retry",
           scene: "stopped",
           title: "작업 중단 · 안전 조건 위반",
           detail: "구매 횟수와 결제 한도를 위반해 target agent를 중단했습니다.",
@@ -1304,6 +1610,7 @@ function getCuaPresentation(pairs) {
       case "autopsy.ready":
         Object.assign(presentation, {
           state: "recovering",
+          action: "protect",
           scene: "inspect",
           title: "실패 원인을 확인했습니다.",
           detail: "timeout 뒤 기존 결제를 조회하지 않고 재결제한 행동이 첫 divergence입니다.",
@@ -1315,6 +1622,7 @@ function getCuaPresentation(pairs) {
       case "vaccine.proposed":
         Object.assign(presentation, {
           state: "recovering",
+          action: "protect",
           scene: "recover",
           title: "복구 규칙을 적용하는 중…",
           detail: "idempotency key와 상태 확인 절차를 같은 오류 조건에 적용합니다.",
@@ -1326,6 +1634,7 @@ function getCuaPresentation(pairs) {
       case "verification.updated":
         Object.assign(presentation, {
           state: "recovering",
+          action: "protect",
           scene: "recover",
           title: "복구 결과를 검사하는 중…",
           detail: "결제 한도와 구매 횟수 gate를 확인하고 있습니다.",
@@ -1337,6 +1646,7 @@ function getCuaPresentation(pairs) {
       case "replay.completed":
         Object.assign(presentation, {
           state: latest.data?.success ? "success" : "error",
+          action: latest.data?.success ? "done" : "retry",
           scene: latest.data?.success ? "done" : "stopped",
           title: latest.data?.success ? "복구 완료 · 주문 1건" : "복구 실패 · 다시 확인 필요",
           detail: latest.data?.success
@@ -1354,6 +1664,7 @@ function getCuaPresentation(pairs) {
         if (latest.data?.stage !== "openai_analysis") {
           Object.assign(presentation, {
             state: "stopped",
+            action: "unknown",
             scene: "stopped",
             title: "세션을 계속할 수 없습니다.",
             detail: latest.data?.message || "확인된 오류까지 기록하고 실행을 중단했습니다.",
@@ -1367,6 +1678,7 @@ function getCuaPresentation(pairs) {
         if (state.phase === "AUTOPSY") {
           Object.assign(presentation, {
             state: "recovering",
+            action: "protect",
             scene: "inspect",
             title: "실패 원인을 추적하는 중…",
             detail: "정상 trace와 실패 trace의 첫 divergence를 찾고 있습니다.",
@@ -1377,6 +1689,7 @@ function getCuaPresentation(pairs) {
         } else if (state.phase === "VACCINE") {
           Object.assign(presentation, {
             state: "recovering",
+            action: "protect",
             scene: "recover",
             title: "복구 규칙을 만드는 중…",
             detail: "중복 결제를 막고 정상 구매는 유지하는 최소 규칙을 준비합니다.",
@@ -1387,6 +1700,7 @@ function getCuaPresentation(pairs) {
         } else if (state.phase === "REPLAY") {
           Object.assign(presentation, {
             state: "recovering",
+            action: "protect",
             scene: "recover",
             title: "보호 모드로 다시 실행하는 중…",
             detail: "같은 timeout 조건에서 안전장치가 실제로 작동하는지 확인합니다.",
@@ -1398,6 +1712,7 @@ function getCuaPresentation(pairs) {
           if (latestDamage || hasUnrequestedCalendar) {
             Object.assign(presentation, {
               state: "error",
+              action: "retry",
               scene: "stopped",
               title: latestDamage ? "실패 · 중복 결제 감지" : "요청하지 않은 side effect 감지",
               detail: latestDamage?.data?.detail || "mission에 없는 calendar.create 실행을 확인했습니다.",
@@ -1415,6 +1730,7 @@ function getCuaPresentation(pairs) {
           } else {
             Object.assign(presentation, {
               state: "working",
+              action: "charge",
               scene: "checkout",
               title: "결제 오류 조건을 준비하는 중…",
               detail: "결제 처리 직후 응답만 끊는 가상 오류를 준비합니다.",
@@ -1425,6 +1741,7 @@ function getCuaPresentation(pairs) {
           }
         } else {
           presentation.title = "작업 환경을 준비하는 중…";
+          presentation.action = "observe";
           presentation.scene = "prepare";
           presentation.state = "working";
           presentation.kicker = state.phase || "PREPARING";
@@ -1441,6 +1758,7 @@ function getCuaPresentation(pairs) {
   if (replaySuccessPersists) {
     Object.assign(presentation, {
       state: "success",
+      action: "done",
       scene: "done",
       title: "복구 완료 · 주문 1건",
       detail: "Target agent의 실패와 복구 재실행을 모두 기록했습니다.",
@@ -1453,6 +1771,7 @@ function getCuaPresentation(pairs) {
     });
   } else if (state.status === "failed") {
     presentation.state = "stopped";
+    presentation.action = "unknown";
     presentation.scene = "stopped";
     presentation.kicker = "STOPPED";
     presentation.button = "실행 중단됨";
@@ -1473,12 +1792,12 @@ function getCuaPresentation(pairs) {
 }
 
 function renderCuaActivity(pairs) {
+  const entries = buildCuaActivity(pairs);
+  setText("#cuaActivityCount", entries.length + " events");
   const list = $("#cuaActivityList");
   if (!list) return;
-  const entries = buildCuaActivity(pairs);
   if (!entries.length) {
     list.innerHTML = '<li class="placeholder">Agent가 움직이면 작업, 오류, 복구 순서가 여기에 나타납니다.</li>';
-    setText("#cuaActivityCount", "0 events");
     return;
   }
   const fragment = document.createDocumentFragment();
@@ -1496,7 +1815,28 @@ function renderCuaActivity(pairs) {
   });
   list.replaceChildren(fragment);
   list.parentElement.scrollTop = list.parentElement.scrollHeight;
-  setText("#cuaActivityCount", entries.length + " events");
+}
+
+function renderCuaActionMotion(presentation, latest) {
+  const motion = $("#cuaActionMotion");
+  if (!motion) return;
+  const copy = CUA_ACTION_MOTION[presentation.action] || CUA_ACTION_MOTION.observe;
+  const nextAction = presentation.action || "observe";
+  const nextState = latest ? presentation.state : "idle";
+  const nextEvent = latest ? String(latest.seq ?? state.events.length) : "idle";
+  const changed = motion.dataset.action !== nextAction
+    || motion.dataset.state !== nextState
+    || motion.dataset.event !== nextEvent;
+  motion.dataset.action = nextAction;
+  motion.dataset.state = nextState;
+  motion.dataset.event = nextEvent;
+  if (changed) {
+    motion.classList.remove("is-event");
+    void motion.offsetWidth;
+    if (latest) motion.classList.add("is-event");
+  }
+  setText("#cuaActionActor", copy.actor);
+  setText("#cuaActionGesture", copy.title);
 }
 
 function renderCuaComputer(pairs) {
@@ -1505,17 +1845,12 @@ function renderCuaComputer(pairs) {
   const session = $("#cuaSession");
   const screen = $("#cuaScreen");
   if (session) session.dataset.state = presentation.state;
-  if (screen) screen.dataset.scene = presentation.scene;
+  if (screen) {
+    screen.dataset.scene = presentation.scene;
+    screen.dataset.action = presentation.action;
+  }
+  renderCuaActionMotion(presentation, latest);
   setText("#cuaStatusLabel", presentation.label);
-  setText("#autAction", presentation.title);
-  setText("#autActionDetail", presentation.detail);
-  setText("#cuaPageKicker", presentation.kicker);
-  setText("#cuaPageTitle", presentation.title);
-  setText("#cuaPageDetail", presentation.detail);
-  setText("#cuaAddress", presentation.address);
-  setText("#cuaActionButton", presentation.button);
-  const actionButton = $("#cuaActionButton");
-  if (actionButton) actionButton.dataset.tone = presentation.buttonTone;
   const icon = $("#cuaStatusIcon");
   if (icon) {
     icon.textContent = presentation.state === "success"
@@ -1527,57 +1862,6 @@ function renderCuaComputer(pairs) {
           : presentation.state === "idle"
             ? "·"
             : "";
-  }
-  const alert = $("#cuaAlert");
-  if (alert) {
-    alert.hidden = !presentation.alert;
-    alert.textContent = presentation.alert;
-    alert.dataset.tone = presentation.alertTone;
-  }
-
-  const hasPaymentEvidence = pairs.some((pair) => eventToolName(pair.request || pair.result).startsWith("payment."));
-  const hasShopEvidence = hasPaymentEvidence || pairs.some((pair) => eventToolName(pair.request || pair.result) === "web.read");
-  setText("#cuaWorkspaceName", presentation.workspaceName || (hasShopEvidence ? "Sweet Day · Checkout" : "Agent workspace"));
-  setText("#cuaItemName", presentation.itemName || (hasShopEvidence ? "생일 케이크 · 1개" : state.mission));
-  setText(
-    "#cuaItemDetail",
-    presentation.itemDetail || (hasShopEvidence
-      ? "상품 ₩49,000 · 요청 한도 ₩50,000"
-      : "제출한 mission을 가상 환경에서 확인합니다."),
-  );
-
-  const damage = [...state.events].reverse().find((event) => event.type === "damage.updated");
-  const replay = [...state.events].reverse().find((event) => event.type === "replay.completed");
-  const world = replay?.data?.world || damage?.data?.world || state.before;
-  const latestPayment = [...pairs].reverse().find((pair) => eventToolName(pair.request || pair.result).startsWith("payment."));
-  const latestPaymentStatus = latestPayment ? apiPairVisualStatus(latestPayment) : null;
-  const unsafeRetryCount = pairs.filter((pair) => eventToolName(pair.request || pair.result) === "payment.charge"
-    && String(pair.request?.phase || pair.result?.phase || "").toUpperCase() === "CRASH").length;
-  const paymentText = replay?.data?.success
-    ? "1회 · ₩49,000"
-    : damage
-      ? "2회 · ₩98,000"
-      : latestPaymentStatus === "pending"
-        ? "처리 중"
-        : latestPaymentStatus === "error" || latestPaymentStatus === "waiting"
-          ? "결과 불명"
-          : unsafeRetryCount > 1
-            ? "재결제됨"
-            : latestPayment
-              ? "응답 수신"
-              : "—";
-  setText("#cuaPaymentState", paymentText);
-  setText("#cuaOrderState", Number.isFinite(world?.orders) ? world.orders + "건" : "—");
-  setText("#cuaWalletState", Number.isFinite(world?.wallet_krw) ? won.format(world.wallet_krw) : "—");
-  setText(
-    "#cuaScreenCaption",
-    (state.analysisScope === "target_sandbox" ? "실제 target code · bounded child" : "가상 브라우저")
-      + " · " + (latest ? "event #" + latest.seq : "event 대기")
-      + " · 실제 외부 구매 및 결제 없음",
-  );
-  const boundary = document.querySelector(".browser-boundary");
-  if (boundary) {
-    boundary.textContent = state.analysisScope === "target_sandbox" ? "BOUNDED CHILD" : "SIMULATED";
   }
 }
 
@@ -1699,6 +1983,7 @@ function renderGymSession() {
     }
   }
   setText("#worldChangeCount", worldChanges.length + " change" + (worldChanges.length === 1 ? "" : "s"));
+  setText("#sessionEvidenceCount", `API ${pairs.length}개 · 변화 ${worldChanges.length}개`);
 
   const scopeLabels = {
     target_sandbox: "reviewed local AUT / bounded child / synthetic services",
@@ -1792,7 +2077,7 @@ function renderLabReport() {
   setText(
     "#diagnosisAnalysisStatus",
     targetSandbox
-      ? `target model · deterministic Python · ${state.openaiAnalysisCompleted ? "OpenAI evidence 설명 완료" : "OpenAI 설명 미사용"}`
+      ? `target model · checked-in source child · ${state.openaiAnalysisCompleted ? "OpenAI controller evidence 설명 완료" : "OpenAI controller 설명 미사용"}`
     : state.status === "partial"
       ? "controller 진단 완료 · OpenAI 설명 미완료 · controller report 보존"
       : state.openaiAnalysisCompleted
@@ -1872,13 +2157,13 @@ function renderLabReport() {
   if (targetSandbox) {
     setText(
       "#reportPermissions",
-      `${permissions} · target model: deterministic Python · services: network-disabled synthetic local replacement · actual external side effect: none`,
+      `${permissions} · target model: checked-in source child · services: network-disabled synthetic local replacement · actual external side effect: none`,
     );
   }
   setText(
     "#reportTermination",
     targetSandbox
-      ? "target sandbox 실행 및 deterministic report 완료"
+      ? "초기 target 관찰 후 계획된 sandbox 검증 및 report 완료"
     : state.status === "partial"
       ? "controller 확인 완료 · OpenAI 설명 없음"
       : termination?.reason === "coverage_complete"
@@ -1901,8 +2186,8 @@ function renderLabReport() {
     const targetSeed = state.baselineEvidence?.seed ?? state.labReport?.seed ?? "?";
     setText("#reportExperiment", `실제 target entrypoint ${targetRuns || "여러 차례"}회 bounded child 실행`);
     setText("#reportExperimentMeta", `vulnerable · replay · protected replay · seed ${targetSeed}`);
-    setText("#reportExperimentReason", "선택한 이유 · deterministic ExampleCakeAgent purchase contract");
-    setText("#reportExperimentEvidence", "근거 · target.tool_call/result · target ledger mutation · world hash · protected replay");
+    setText("#reportExperimentReason", "선택한 이유 · 초기 Agent 관찰 trace와 purchase contract");
+    setText("#reportExperimentEvidence", "근거 · target.observation/execution tool call/result · ledger mutation · world hash · protected replay");
   } else if (experiment) {
     const fault = experiment.faults[0];
     setText(

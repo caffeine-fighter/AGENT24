@@ -1,6 +1,6 @@
 # Research, Stock, Ticket, and Adhoc Gym packs
 
-> Implemented for issues #45, #43, #60, and #44 · synthetic data only · network 0
+> Implemented for issues #45, #43, #58, #59, #60, and #44 · synthetic Gym data only · Gym network 0
 
 ## Why these packs diagnose behavior
 
@@ -84,10 +84,35 @@ blocks all research deliberately has no oracle finding, but fails the separate
 functionality gate.
 
 `ResearchDomainPackAdapter` exposes the registered Research tool capabilities,
-fixture IDs, and 12-call ceiling without enabling controller dispatch. The
-adapter therefore mirrors the registry's current
-`supports_protected_replay=False`; registration remains deferred to #58 until
-the later report bridge and one-input controller wiring are complete.
+fixture IDs, and 12-call ceiling. The one-input API now builds a host-owned
+`Research Agent AUT` with the selected function tools, runs it against this
+read-only Gym before final planning, and derives the initial diagnosis from its
+structured answer plus the observed tool trace. The controller then runs the
+same-fixture protected replay as a separate verification arm. The target Agent
+never receives controller/oracle tools and no submitted repository code is
+imported or executed.
+
+### Live target-Agent path
+
+With an OpenAI provider configured, the Research route is:
+
+```text
+manifest/profile → Research pack selection → Research Agent AUT + Gym tools
+→ target.observation.* raw trace/oracle → DomainExperimentPlan
+→ same-fixture protected replay → final report
+```
+
+The default model is `gpt-5.6-luna`. Without a provider, the run labels the
+observation as `reference_fallback`; it does not claim that an LLM target
+performed the tool calls. A network-free inspection of the tool surface and
+reference replay is available with:
+
+```bash
+uv run python scripts/demo-domain.py --domain research
+```
+
+Use `--live` only when the local `.env`/process has an API key; it runs the
+actual Agents SDK target and prints its observed tool names and oracle findings.
 
 ## Stock Analyst pack (#43)
 
@@ -158,11 +183,22 @@ Empty output, a blanket refusal, and a policy that blocks all analysis each
 produce no oracle finding; separate functionality gates reject all three.
 
 `StockDomainPackAdapter` mirrors the registered any-of anchors, required and
-optional capabilities, fixture IDs, and 14-call ceiling. It intentionally keeps
-`supports_protected_replay=False` while controller dispatch and the report
-bridge remain deferred to #59. The ceiling counts every attempt, including
-failed calls, and applies equally to `call()`, direct public tool methods, and
-the agent-facing function-tool wrappers.
+optional capabilities, fixture IDs, and 14-call ceiling. The one-input API now
+builds a host-owned `Stock Analyst AUT` with only the selected read-only
+function tools, records its raw tool trace before planning, and derives the
+initial diagnosis from the target's structured source/entity/claim
+attributions. The controller-owned protected replay then verifies the
+same-fixture mitigation. No trade or other external market side effect is
+performed. The ceiling counts every attempt, including failed calls, and
+applies equally to `call()`, direct public tool methods, and the agent-facing
+function-tool wrappers.
+
+The offline/live CLI is:
+
+```bash
+uv run python scripts/demo-domain.py --domain stock
+uv run python scripts/demo-domain.py --domain stock --live
+```
 
 ## Ticket Purchase and Reservation pack (#60)
 

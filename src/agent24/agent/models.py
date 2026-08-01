@@ -488,6 +488,22 @@ class RunResult(BaseModel):
     turns_used: int
 
 
+class DomainExperimentPlan(BaseModel):
+    """One bounded plan for a read-only domain Gym target run."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    plan_id: str
+    pack_id: str
+    domain: Literal["research", "stock"]
+    fixture_id: str
+    seed: int = Field(ge=0)
+    tool_names: tuple[str, ...] = ()
+    max_tool_calls: int = Field(ge=1)
+    mission: str = Field(min_length=1, max_length=2_000)
+    rationale: str = ""
+
+
 def run_digest(run: RunResult) -> str:
     """Stable identity for a run, ignoring nothing but relying on sorted sets.
 
@@ -736,6 +752,7 @@ __all__ = [
     "Comparator",
     "ComparisonCheck",
     "DenyRule",
+    "DomainExperimentPlan",
     "DiagnosisOutput",
     "DiagnosticFinalOutput",
     "Divergence",

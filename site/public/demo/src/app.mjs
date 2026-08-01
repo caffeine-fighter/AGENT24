@@ -307,8 +307,20 @@ function renderScopeNotice() {
   }
 }
 
-const API_CALL_TYPES = new Set(["tool_call", "gym.tool_call", "target.tool_call"]);
-const API_RESULT_TYPES = new Set(["tool_result", "gym.tool_result", "target.tool_result"]);
+const API_CALL_TYPES = new Set([
+  "tool_call",
+  "gym.tool_call",
+  "target.tool_call",
+  "target.observation.tool_call",
+  "target.execution.tool_call",
+]);
+const API_RESULT_TYPES = new Set([
+  "tool_result",
+  "gym.tool_result",
+  "target.tool_result",
+  "target.observation.tool_result",
+  "target.execution.tool_result",
+]);
 
 function eventToolName(event) {
   return event?.data?.tool || event?.raw?.name || "unknown API";
@@ -433,6 +445,57 @@ function buildConversationEntries() {
         );
         break;
       }
+      case "target.observation.gym":
+        add(
+          event,
+          "제출 Agent를 먼저 observation Gym에 연결했어요.",
+          "아직 계획된 fault는 없습니다. manifest가 선언한 도구만 network-disabled SandboxGym으로 dispatch합니다.",
+          (Array.isArray(data.tools) ? data.tools.join(" · ") : "도구 정보 없음") + " · fixture " + (data.fixture_id || "unknown") + " · seed " + (data.seed ?? "?"),
+          "neutral",
+        );
+        break;
+      case "target.observation.started":
+        add(
+          event,
+          "실제 제출 Agent의 초기 행동을 관찰하고 있어요.",
+          data.target_agent_mode === "llm_agent"
+            ? "ExampleCakeAgent LLM이 SandboxGym tool을 직접 호출합니다. 이 결과가 끝난 뒤에만 실험을 구성합니다."
+            : "reference_source_child가 SandboxGym tool을 직접 호출합니다. 이 결과가 끝난 뒤에만 실험을 구성합니다.",
+          (data.target_model || "reference_source_child") + " · run " + (data.target_run_id || "unknown"),
+          "active",
+        );
+        break;
+      case "target.observation.completed": {
+        const world = data.world || {};
+        add(
+          event,
+          "초기 제출 Agent 관찰이 끝났어요.",
+          data.succeeded === true
+            ? `실제 child 행동은 주문 ${world.orders ?? "?"}건, 결제 ${world.charges ?? "?"}회였습니다. 이제 이 trace를 바탕으로 계획을 구성합니다.`
+            : "초기 관찰이 실패해 계획과 finding을 만들지 않았습니다.",
+          "observation trace " + (data.trace_digest || "digest 없음") + " · ledger " + (data.ledger_entries ?? "?") + " entries",
+          data.succeeded === true ? "neutral" : "danger",
+        );
+        break;
+      }
+      case "target.observation.oracle":
+        add(
+          event,
+          "초기 관찰에서 취약 신호를 기록했어요.",
+          "이 oracle은 observation-only입니다. planned experiment가 검증되기 전에는 최종 finding으로 확정하지 않습니다.",
+          "charges " + (data.charge_count ?? "?") + " · spend " + (data.spend_krw ?? "?") + " KRW · violations " + (Array.isArray(data.violations) ? data.violations.join(", ") : "없음"),
+          Array.isArray(data.violations) && data.violations.length ? "warning" : "neutral",
+        );
+        break;
+      case "target.observation.profiled":
+        add(
+          event,
+          "초기 trace를 분석해 행동 profile을 갱신했어요.",
+          "이제 기본 LLM controller가 관찰된 retry·idempotency·reconciliation 신호를 보고 allowlisted Gym experiment를 선택합니다.",
+          "baseline_observed " + (data.baseline_observed === true ? "true" : "false") + " · unknown fields " + (Array.isArray(data.unknown_fields) ? data.unknown_fields.length : 0),
+          "neutral",
+        );
+        break;
       case "pack.compatibility":
         add(
           event,
@@ -466,9 +529,10 @@ function buildConversationEntries() {
       case "target.execution.plan":
         add(
           event,
-          "고정된 target entrypoint 실행 계획을 세웠어요.",
-          "이제 합성 archetype이 아니라 ExampleCakeAgent source 자체를 bounded child에서 실행합니다.",
-          "target model " + (data.target_model || "deterministic_python") + " · " + (data.runs || []).join(" → ") + " · service " + (data.service_boundary || "unknown"),
+          "초기 관찰 뒤 target 검증 계획을 세웠어요.",
+          "LLM controller가 관찰 trace를 분석한 뒤 선택한 allowlisted 계획을 reference verification으로 실행합니다."
+            + (data.target_agent_mode === "llm_agent" ? " 초기 live Agent와 계획 실행은 별도 evidence입니다." : ""),
+          "target model " + (data.target_model || "reference_source_child") + " · " + (data.runs || []).join(" → ") + " · service " + (data.service_boundary || "unknown"),
         );
         break;
       case "target.execution.started":
@@ -478,9 +542,9 @@ function buildConversationEntries() {
             ? "같은 target code를 보호 경계와 함께 다시 실행하고 있어요."
             : data.execution_kind === "benign_control"
               ? "같은 target code의 clean control을 실행하고 있어요."
-              : "고정된 target entrypoint를 child sandbox에서 실행하고 있어요.",
+              : "고정된 target source를 reference child sandbox에서 검증하고 있어요.",
           "target source의 tool call과 local replacement 응답을 원본 순서로 기록합니다.",
-          (data.target_model || "deterministic_python") + " · " + (data.service_boundary || "synthetic local replacement") + " · run " + (data.target_run_id || "unknown"),
+          (data.target_model || "reference_source_child") + " · " + (data.service_boundary || "synthetic local replacement") + " · run " + (data.target_run_id || "unknown"),
           "neutral",
         );
         break;
@@ -497,7 +561,7 @@ function buildConversationEntries() {
           data.succeeded === true
             ? `target Agent가 ${world.orders ?? "?"}건 주문, 결제 ${world.charges ?? "?"}회를 남겼습니다.`
             : "target 실행이 실패해 결과를 확정하지 않았습니다.",
-          (data.target_model || "deterministic_python") + " · wallet " + (world.wallet_krw ?? "?") + " · trace " + (data.trace_events ?? "?") + " · " + (data.trace_digest || "digest 없음"),
+          (data.target_model || "reference_source_child") + " · wallet " + (world.wallet_krw ?? "?") + " · trace " + (data.trace_events ?? "?") + " · " + (data.trace_digest || "digest 없음"),
           data.succeeded === true ? "neutral" : "danger",
         );
         break;
@@ -507,7 +571,7 @@ function buildConversationEntries() {
           event,
           "실제 target ledger를 기준으로 안전 조건을 판정했어요.",
           "Agent의 완료 응답이 아니라 child sandbox의 ledger와 world state를 사용했습니다.",
-          "violations " + (Array.isArray(data.violations) ? data.violations.length : 0) + "개 · " + (data.target_model || "deterministic_python"),
+          "violations " + (Array.isArray(data.violations) ? data.violations.length : 0) + "개 · " + (data.target_model || "reference_source_child"),
           Array.isArray(data.violations) && data.violations.length ? "danger" : "good",
         );
         break;
@@ -683,7 +747,7 @@ function buildConversationEntries() {
             event,
             "실제 target sandbox 진단을 완료했어요.",
             data.message || "target evidence와 deterministic 진단서를 보존했습니다.",
-            "target model deterministic_python · OpenAI 설명 " + (data.openai_analysis_completed === true ? "사용" : "미사용") + " · " + (data.safety_boundary || "TARGET_CODE_IN_SANDBOX"),
+            "target model checked-in source child · OpenAI controller " + (data.openai_analysis_completed === true ? "사용" : "미사용") + " · " + (data.safety_boundary || "TARGET_CODE_IN_SANDBOX"),
             data.status === "target_execution_failed" ? "danger" : data.openai_analysis_completed === true ? "good" : "warning",
           );
           break;
@@ -729,8 +793,9 @@ function buildConversationEntries() {
   };
 
   addMilestone(pick(["source.descriptor", "source.snapshot", "run.started"]));
-  addMilestone(pick(["behavior.profile", "target.profile"]));
-  addMilestone(pick(["target.execution.plan", "experiment.plan", "pack.selected", "pack.compatibility"]));
+  addMilestone(pick(["target.observation.completed", "target.observation.oracle", "behavior.profile", "target.profile"]));
+  addMilestone(pick(["target.observation.profiled", "pack.selected", "pack.compatibility"]));
+  addMilestone(pick(["target.execution.plan", "experiment.plan"]));
   addMilestone(pick(["sandbox.evidence", "target.assessment", "damage.updated", "failure.detected", "oracle.report", "lab.report", "finding.report"]));
   addMilestone(pick(["vaccine.proposed"]));
   addMilestone(pick(["replay.completed", "protected_replay", "verification.updated"]));
@@ -1022,6 +1087,26 @@ function buildCuaActivity(pairs) {
       });
       return;
     }
+    if (event.type === "target.observation.gym") {
+      entries.push({
+        title: "제출 Agent용 observation Gym 구성",
+        detail: "manifest 도구만 연결하고 계획된 fault 없이 실제 child 행동을 먼저 관찰합니다.",
+        meta: (Array.isArray(data.tools) ? data.tools.length : 0) + " tools · " + (data.fixture_id || "fixture") + " · seed " + (data.seed ?? "?"),
+        status: "active",
+      });
+      return;
+    }
+    if (event.type === "target.observation.started") {
+      entries.push({
+        title: "target code 실행 · 초기 관찰",
+        detail: data.target_agent_mode === "llm_agent"
+          ? "ExampleCakeAgent LLM이 SandboxGym tool을 직접 호출하고 있습니다. 관찰 완료 전에는 실험을 선택하지 않습니다."
+          : "reference_source_child가 SandboxGym tool을 직접 호출하고 있습니다. 관찰 완료 전에는 실험을 선택하지 않습니다.",
+        meta: (data.target_model || "reference_source_child") + " · run " + (data.target_run_id || "unknown"),
+        status: "active",
+      });
+      return;
+    }
     if (event.type === "target.execution.started") {
       const kind = String(data.execution_kind || "target").replaceAll("_", " ");
       entries.push({
@@ -1030,8 +1115,8 @@ function buildCuaActivity(pairs) {
           : kind === "protected replay"
             ? "target code 실행 · 보호 replay"
             : "target code 실행 · " + kind,
-        detail: "ExampleCakeAgent entrypoint를 bounded child에서 실행하고 local replacement API를 연결합니다.",
-        meta: (data.target_model || "deterministic_python") + " · run " + (data.target_run_id || "unknown"),
+        detail: "ExampleCakeAgent source를 bounded reference child에서 실행하고 local replacement API를 연결합니다.",
+        meta: (data.target_model || "reference_source_child") + " · run " + (data.target_run_id || "unknown"),
         status: "active",
       });
       return;
@@ -1057,6 +1142,17 @@ function buildCuaActivity(pairs) {
       });
       return;
     }
+    if (event.type === "target.observation.completed") {
+      entries.push({
+        title: "target code 실행 완료 · 초기 관찰",
+        detail: data.succeeded === true
+          ? "실제 제출 Agent 행동을 기록했습니다. 이제 trace를 분석해 검증 계획을 구성합니다. " + summarizeWorld(data.world)
+          : "초기 관찰이 실패해 finding으로 확정하지 않았습니다.",
+        meta: (data.target_model || "reference_source_child") + " · trace " + (data.trace_events ?? "?") + " · event #" + event.seq,
+        status: data.succeeded === true ? "done" : "error",
+      });
+      return;
+    }
     if (event.type === "target.execution.completed") {
       const kind = String(data.execution_kind || "target").replaceAll("_", " ");
       entries.push({
@@ -1064,7 +1160,7 @@ function buildCuaActivity(pairs) {
         detail: data.succeeded === true
           ? "Agent result와 child ledger를 확인했습니다. " + summarizeWorld(data.world)
           : "target 실행이 실패해 finding으로 확정하지 않았습니다.",
-        meta: (data.target_model || "deterministic_python") + " · trace " + (data.trace_events ?? "?") + " · event #" + event.seq,
+        meta: (data.target_model || "reference_source_child") + " · trace " + (data.trace_events ?? "?") + " · event #" + event.seq,
         status: data.succeeded === true ? "done" : "error",
       });
       return;
@@ -1792,7 +1888,7 @@ function renderLabReport() {
   setText(
     "#diagnosisAnalysisStatus",
     targetSandbox
-      ? `target model · deterministic Python · ${state.openaiAnalysisCompleted ? "OpenAI evidence 설명 완료" : "OpenAI 설명 미사용"}`
+      ? `target model · checked-in source child · ${state.openaiAnalysisCompleted ? "OpenAI controller evidence 설명 완료" : "OpenAI controller 설명 미사용"}`
     : state.status === "partial"
       ? "controller 진단 완료 · OpenAI 설명 미완료 · controller report 보존"
       : state.openaiAnalysisCompleted
@@ -1872,13 +1968,13 @@ function renderLabReport() {
   if (targetSandbox) {
     setText(
       "#reportPermissions",
-      `${permissions} · target model: deterministic Python · services: network-disabled synthetic local replacement · actual external side effect: none`,
+      `${permissions} · target model: checked-in source child · services: network-disabled synthetic local replacement · actual external side effect: none`,
     );
   }
   setText(
     "#reportTermination",
     targetSandbox
-      ? "target sandbox 실행 및 deterministic report 완료"
+      ? "초기 target 관찰 후 계획된 sandbox 검증 및 report 완료"
     : state.status === "partial"
       ? "controller 확인 완료 · OpenAI 설명 없음"
       : termination?.reason === "coverage_complete"
@@ -1901,8 +1997,8 @@ function renderLabReport() {
     const targetSeed = state.baselineEvidence?.seed ?? state.labReport?.seed ?? "?";
     setText("#reportExperiment", `실제 target entrypoint ${targetRuns || "여러 차례"}회 bounded child 실행`);
     setText("#reportExperimentMeta", `vulnerable · replay · protected replay · seed ${targetSeed}`);
-    setText("#reportExperimentReason", "선택한 이유 · deterministic ExampleCakeAgent purchase contract");
-    setText("#reportExperimentEvidence", "근거 · target.tool_call/result · target ledger mutation · world hash · protected replay");
+    setText("#reportExperimentReason", "선택한 이유 · 초기 Agent 관찰 trace와 purchase contract");
+    setText("#reportExperimentEvidence", "근거 · target.observation/execution tool call/result · ledger mutation · world hash · protected replay");
   } else if (experiment) {
     const fault = experiment.faults[0];
     setText(

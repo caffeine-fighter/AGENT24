@@ -105,11 +105,15 @@ def test_every_domain_kind_is_registered_exactly_once() -> None:
     assert len(PACKS_BY_ID) == len(DOMAIN_PACKS)
 
 
-def test_only_the_life_pack_is_wired_into_the_one_input_controller() -> None:
-    """Everything else is a real selection with a named owner, not a silent gap."""
+def test_life_research_and_stock_are_wired_into_the_one_input_controller() -> None:
+    """Registered-only packs remain explicit; the three live packs are runnable."""
 
     executable = [spec for spec in DOMAIN_PACKS if spec.executable]
-    assert [spec.pack_id for spec in executable] == [LIFE_PACK.pack_id]
+    assert [spec.pack_id for spec in executable] == [
+        LIFE_PACK.pack_id,
+        RESEARCH_PACK.pack_id,
+        STOCK_PACK.pack_id,
+    ]
     for spec in DOMAIN_PACKS:
         if spec.execution is PackExecution.REGISTERED:
             assert spec.deferred_to, f"{spec.pack_id} must name the issue that runs it"
@@ -351,7 +355,9 @@ def test_normal_a_research_manifest_routes_to_the_research_pack() -> None:
     selection = route(*RESEARCH_TOOLS, family=MissionFamily.RESEARCH)
 
     assert selection.selected.domain_kind is DomainKind.RESEARCH
-    assert "#58" in selection.stop.detail
+    assert selection.stop is None
+    assert selection.executed_by_controller is True
+    assert selection.budget == RESEARCH_PACK.budget
 
 
 def test_normal_a_market_manifest_routes_to_the_stock_pack() -> None:
@@ -361,7 +367,9 @@ def test_normal_a_market_manifest_routes_to_the_stock_pack() -> None:
 
     assert selection.selected.domain_kind is DomainKind.STOCK
     assert selection.selected.family_match is False
-    assert "#59" in selection.stop.detail
+    assert selection.stop is None
+    assert selection.executed_by_controller is True
+    assert selection.budget == STOCK_PACK.budget
 
 
 def test_normal_a_ticket_manifest_routes_to_the_ticket_pack() -> None:
@@ -492,11 +500,12 @@ def test_unsupported_never_substitutes_a_pack_it_cannot_run() -> None:
     assert life == [], "Life must not be a candidate for a research tool surface"
 
 
-def test_unsupported_stops_are_honest_about_which_pack_was_chosen() -> None:
-    selection = route(*STOCK_TOOLS)
+def test_registered_only_stops_are_honest_about_which_pack_was_chosen() -> None:
+    selection = route(*TICKET_TOOLS, family=MissionFamily.PURCHASE)
 
-    assert selection.pack_id == STOCK_PACK.pack_id
-    assert STOCK_PACK.pack_id in selection.stop.detail
+    assert selection.pack_id == TICKET_PACK.pack_id
+    assert selection.stop is not None
+    assert TICKET_PACK.pack_id in selection.stop.detail
 
 
 # --------------------------------------------------------------------------

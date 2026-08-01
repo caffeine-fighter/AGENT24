@@ -41,13 +41,25 @@ same_target_reference)`를 먼저 기록한 뒤, 같은 target의 deterministic 
 ```
 
 `target`이 있으면 runtime은 public GitHub metadata만 사용해 full SHA를 고정하고,
-그 commit의 allowlisted manifest를 우선 읽고 `source_descriptor` → `target_profile` →
-`pack_selection`을 동일 SSE/JSONL run에 기록한다. owner manifest가 있으면
-`behavior_profile` → `experiment_plan`과 allowlisted Life-v0
-synthetic archetype에서 baseline → fault → oracle → divergence → patch gate → protected
-replay를 실행하고 `finding_report`와 호환 `lab_report`를 발행한다. 외부 repository
-code는 import하거나 실행하지 않으며 이 제한이 두 보고서에 남는다. 결제 P0은 같은
-seed의 `SandboxGym` protected replay도 같은 run에 evidence로 기록한다.
+그 commit의 allowlisted manifest를 우선 읽어 `source_descriptor`와 bounded
+`source_snapshot`을 기록한다. 검토된 local bundle은 이 시점에 계획을 만들지 않고
+먼저 대상 Agent를 manifest 도구가 선택한 network-disabled SandboxGym에서 실행한다.
+provider가 있으면 `ExampleCakeAgent LLM`이 Agents SDK로 목표를 수행하고, key가 없으면
+`reference_source_child` fallback이 같은 observation event contract를 사용한다.
+`target.observation.*`에는 실제 tool call/result, ledger mutation, world diff와 초기 oracle가
+남고, 이 관찰이 끝난 뒤에만 `BehaviorProfile`, domain Gym/allowlisted candidate,
+`experiment_plan`을 구성한다. 이후 baseline → fault → oracle → divergence → patch gate →
+protected replay는 `target.execution.*`로 별도 기록한다. 외부 repository code는 일반
+경로에서 import하거나 실행하지 않으며 이 제한이 두 보고서에 남는다.
+
+Research/Stock manifest는 같은 observation-first 계약으로 각각 `Research Agent AUT`와
+`Stock Analyst AUT`를 host-owned read-only Gym에 연결한다. 대상 Agent에는 manifest/profile이
+선택한 domain tool만 주입하고, `target.observation.tool_call`/`tool_result`의 raw SDK item과
+structured assessment에서 oracle finding을 만든다. 그 뒤 `DomainExperimentPlan`을 만들고
+동일 fixture/seed의 `research_protected_replay()` 또는 `stock_protected_replay()`를
+controller-owned verification으로 실행한다. API key가 없을 때는 `reference_fallback`으로
+명시하며 LLM target 실행으로 포장하지 않는다. 두 pack 모두 실제 repository code, network
+research/market call, trade side effect를 실행하지 않는다.
 
 검토된 self-target인 `caffeine-fighter/AGENT24@<full SHA>`의
 `.agent24/manifest.json`이 `agent24.target.v1`과
@@ -60,6 +72,17 @@ ledger를 판정하고, `target.replay`는 같은 fixture/seed에서 reconcile �
 source SHA, manifest/adapter/runtime/prompt hash가 함께 들어간다. target runtime이
 timeout·crash·turn limit에 걸리면 synthetic 성공으로 바꾸지 않고 typed terminal로
 끝난다.
+
+기본 `local://agent24/examples/demo-agent-repo` bundle은 고정 bundle SHA·manifest hash가
+일치하면 `target.observation.*`에서 먼저 대상 Agent를 실행한다. provider가 있으면 Agent
+이름은 `ExampleCakeAgent LLM`이고 기본 모델은 `gpt-5.6-luna`이다. manifest가 선언한
+`catalog.search/payment.charge/payment.status/calendar.create`만 host-owned SandboxGym으로
+dispatch되며, provider 호출은 host boundary에 남는다. 이 단계의
+`target.observation.oracle`은 관찰 결과를 표시할 뿐, 아직 planned experiment의 finding으로
+확정하지 않는다. 그 다음 controller가 초기 source/manifest/trace를 분석하고 다섯 strict
+tool을 통해 allowlisted Gym 실험을 선택한다. 계획된 source 실행은
+`target.execution.*`으로 분리된 reference verification이며, key가 없으면 초기 관찰과
+controller fallback이 각각 명시적으로 표시된다.
 
 allowlisted manifest가 없더라도 exact pinned source가 reviewed adapter와 일치하면
 `adapter.matched`를 먼저 기록한다. 현재 P0 adapter는
@@ -78,12 +101,11 @@ metadata-only compatibility candidate를 반환한다. 이 경로는 experiments
 등록되지 않은 SHA와 evidence drift/policy violation은 다른 profile로 대체하지 않고
 `unsupported`로 끝낸다.
 
-키가 설정된 external target에서는 OpenAI Agents SDK가 bounded controller를 먼저
-구동하며, 실험은 세 번째 tool이 선택한 allowlisted plan에서만 시작된다. 현재 #101의
-`run_sandbox_experiment`는 `DeterministicLabLoop`가 묶어 제공하는 synthetic archetype/
-allowlisted replacement primitive다. checked-in participant entrypoint를 #100 child runner로
-실행해 주 증거로 연결하는 작업은 #102 범위이며, 완료된 것처럼 주장하지 않는다. source를 resolve하지 못하거나
-malformed manifest를 읽지 못하면 외부 Agent를 진단했다고 주장하지 않고
+키가 설정된 external target에서는 initial observation 이후 OpenAI Agents SDK가 bounded
+controller를 구동하며, 실험은 세 번째 tool이 선택한 allowlisted plan에서만 시작된다.
+checked-in local bundle에서는 `run_sandbox_experiment`도 같은 source의 bounded child와
+stateful SandboxGym을 사용한다. source를 resolve하지 못하거나 malformed manifest를
+읽지 못하면 외부 Agent를 진단했다고 주장하지 않고
 `stage_failed(stage=source)` 뒤 정확히 하나의
 `run_completed(status=source_unresolved/source_preflight_failed)`로 종료한다. 이 terminal은
 experiments 0, findings 0이며 일반 offline synthetic Gym으로 전환하지 않는다.

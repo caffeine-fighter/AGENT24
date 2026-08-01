@@ -12,6 +12,7 @@ ExecutionScope = Literal[
     "synthetic_archetype",
     "allowlisted_adapter",
     "target_sandbox",
+    "domain_target_gym",
     "target_runtime",
     "no_target",
     "no_target_offline_demo",

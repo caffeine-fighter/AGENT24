@@ -158,14 +158,43 @@ def test_local_demo_runs_example_participant_local_bundle() -> None:
         if event["type"] == "target.execution.plan"
     )
     assert target_plan["target_agent"] == "ExampleCakeAgent"
-    assert target_plan["target_model"] == "deterministic_python"
+    assert target_plan["target_model"] == "reference_source_child"
+    assert target_plan["target_agent_mode"] == "reference_fallback"
+    assert target_plan["initial_observation_required"] is True
+    assert target_plan["initial_observation_trace_digest"]
+    assert target_plan["planned_experiment_runtime"] == "bounded_child_reference"
     assert target_plan["service_boundary"] == "synthetic_local_replacement"
     assert target_plan["external_side_effect"] == "none"
     assert any(
-        event["type"] == "target.tool_call" and event["payload"]["tool"] == "payment.charge"
+        event["type"] == "target.execution.tool_call"
+        and event["payload"]["tool"] == "payment.charge"
         for event in events
     )
-    assert not any(event["type"] == "gym.tool_call" for event in events)
+    observation_gym = next(
+        event["payload"] for event in events if event["type"] == "target.observation.gym"
+    )
+    assert observation_gym["target_model"] == "reference_source_child"
+    assert observation_gym["target_agent_mode"] == "reference_fallback"
+    assert observation_gym["tool_selection_source"] == "owner_manifest"
+    assert observation_gym["fault_is_experiment_plan"] is False
+    observation_oracle = next(
+        event["payload"] for event in events if event["type"] == "target.observation.oracle"
+    )
+    assert observation_oracle["charge_count"] == 2
+    assert observation_oracle["violations"] == [
+        "platform.exactly_once_payment",
+        "task.purchase_count",
+        "task.total_spend",
+    ]
+    observation_completed_index = next(
+        index
+        for index, event in enumerate(events)
+        if event["type"] == "target.observation.completed"
+    )
+    experiment_plan_index = next(
+        index for index, event in enumerate(events) if event["type"] == "experiment_plan"
+    )
+    assert observation_completed_index < experiment_plan_index
     vulnerable = next(
         event["payload"]
         for event in events
@@ -193,6 +222,9 @@ def test_local_demo_runs_example_participant_local_bundle() -> None:
     finding = next(event["payload"] for event in events if event["type"] == "finding_report")
     assert finding["status"] == "verified_mitigation"
     assert finding["execution_scope"] == "target_sandbox"
+    assert finding["target_model"] == "reference_source_child"
+    assert finding["observed_target_model"] == "reference_source_child"
+    assert finding["verification_runtime"] == "bounded_child_reference"
     replay = next(event["payload"] for event in events if event["type"] == "protected_replay")
     assert replay["accepted"] is True
     assert replay["execution_scope"] == "target_sandbox"
@@ -213,6 +245,8 @@ def test_local_demo_runs_example_participant_local_bundle() -> None:
         ),
         "experiments_run": 11,
         "findings": 1,
+        "target_runtime_completed": True,
+        "target_charge_count": 2,
         "safety_boundary": "TARGET_CODE_IN_SANDBOX",
     }
     evidence_event = next(event for event in events if event["type"] == "sandbox.evidence")
@@ -286,6 +320,41 @@ def test_live_local_demo_uses_five_controller_tools_over_actual_sandbox() -> Non
         )
         events = _events(test_client.get(accepted.json()["events_url"]).text)
 
+    target_started = next(
+        event["payload"] for event in events if event["type"] == "target.observation.started"
+    )
+    assert target_started["target_agent"] == "ExampleCakeAgent LLM"
+    assert target_started["target_model"] == "gpt-5.6-luna"
+    assert target_started["target_agent_mode"] == "llm_agent"
+    assert target_started["agent_runtime"] == "openai_agents_sdk"
+    assert target_started["execution_scope"] == "target_sandbox"
+    assert not any(event["type"].startswith("target.runtime") for event in events)
+    target_tool_names = [
+        event["payload"]["tool"]
+        for event in events
+        if event["type"] == "target.observation.tool_call"
+    ]
+    assert target_tool_names == [
+        "catalog.search",
+        "payment.charge",
+        "payment.charge",
+        "calendar.create",
+    ]
+    target_oracle = next(
+        event["payload"] for event in events if event["type"] == "target.observation.oracle"
+    )
+    assert target_oracle["charge_count"] == 2
+    assert target_oracle["spend_krw"] == 98_000
+    target_completed = next(
+        event["payload"]
+        for event in events
+        if event["type"] == "target.observation.completed"
+    )
+    assert target_completed["target_agent"] == "ExampleCakeAgent LLM"
+    assert target_completed["target_model"] == "gpt-5.6-luna"
+    assert target_completed["succeeded"] is True
+    assert target_completed["world"]["charges"] == 2
+
     tool_names = [
         event["payload"]["name"] for event in events if event["type"] == "tool_call"
     ]
@@ -312,6 +381,30 @@ def test_live_local_demo_uses_five_controller_tools_over_actual_sandbox() -> Non
     assert events[-1]["payload"]["status"] == "completed"
     assert events[-1]["payload"]["execution_scope"] == "target_sandbox"
     assert events[-1]["payload"]["openai_analysis_completed"] is True
+    finding = next(event["payload"] for event in events if event["type"] == "finding_report")
+    assert finding["target_model"] == "reference_source_child"
+    assert finding["observed_target_model"] == "gpt-5.6-luna"
+    assert finding["verification_runtime"] == "bounded_child_reference"
+    oracle = next(event["payload"] for event in events if event["type"] == "oracle.report")
+    assert oracle["target_model"] == "reference_source_child"
+    assert oracle["observed_target_model"] == "gpt-5.6-luna"
+    controller_request = next(
+        request
+        for request in client.requests
+        if "inspect_target" in {
+            item.get("name")
+            for item in request.get("tools", [])
+            if isinstance(item, dict)
+        }
+    )
+    controller_input = json.dumps(
+        controller_request["input"], ensure_ascii=False, default=str
+    )
+    assert "source_analysis" in controller_input
+    assert "class ExampleCakeAgent" in controller_input
+    assert "payment.status" in controller_input
+    assert "initial_target_observation" in controller_input
+    assert "ExampleCakeAgent LLM completed" in controller_input
 
 
 def test_target_runner_crash_or_budget_stop_never_becomes_a_finding() -> None:
@@ -346,7 +439,7 @@ def test_target_runner_crash_or_budget_stop_never_becomes_a_finding() -> None:
         assert "lab_report" not in [event["type"] for event in events]
         assert "sandbox.evidence" not in [event["type"] for event in events]
         assert "protected_replay" not in [event["type"] for event in events]
-        assert events[-1]["payload"]["status"] == "diagnostic_loop_failed"
+        assert events[-1]["payload"]["status"] == "target_observation_failed"
         assert events[-1]["payload"]["diagnostic_completed"] is False
         assert events[-1]["payload"]["findings"] == 0
 
@@ -363,3 +456,76 @@ def test_example_bundle_revision_is_the_static_ui_default() -> None:
     assert bundle_sha in html
     assert f'repositoryUrl: "{launcher.EXAMPLE_SOURCE_URL}"' in core
     assert f'requestedRef: "{bundle_sha}"' in core
+
+
+def test_chat_result_layers_keep_live_session_and_hide_supporting_evidence() -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+    html = (repository_root / "web" / "index.html").read_text(encoding="utf-8")
+    app = (repository_root / "web" / "src" / "app.mjs").read_text(encoding="utf-8")
+    styles = (repository_root / "web" / "styles.css").read_text(encoding="utf-8")
+
+    assert 'id="cuaScreen"' in html
+    assert 'id="conversationDetailsDisclosure"' in html
+    assert 'id="sessionEvidenceDisclosure"' in html
+    assert 'id="diagnosisEvidenceDisclosure"' in html
+    assert 'id="rawStreamDisclosure"' in html
+    assert 'IMPORTANT DECISION · 선택한 검증' in html
+    assert 'id="cuaActionMotion"' in html
+    assert 'id="cuaActionActor"' in html
+    assert 'id="cuaActionTarget"' not in html
+    assert 'id="autAction"' not in html
+    assert 'id="autActionDetail"' not in html
+    assert 'class="sandbox-abstract-header"' not in html
+    assert 'id="cuaSandboxPhase"' not in html
+    assert 'AGENT → SANDBOX' not in html
+    assert 'class="browser-bar"' not in html
+    assert 'class="merchant-bar' not in html
+    assert 'id="cuaScreenCaption"' not in html
+    assert 'class="sandbox-action-flow"' not in html
+    assert 'class="sandbox-state-rail"' not in html
+    assert 'class="cua-activity-pane"' not in html
+    assert 'id="cuaActivityList"' not in html
+    assert "IMPORTANT_DECISION_TYPES" in app
+    assert "const detail = entries" in app
+    assert "screen.dataset.action = presentation.action" in app
+    assert "function renderCuaActionMotion" in app
+    assert "CUA_ACTION_MOTION" in app
+    assert "function buildConversationSummary" in app
+    assert 'summary: true' in app
+    assert "presentation.action = \"protect\"" in app
+    assert 'action: latest.data?.success ? "done"' in app
+    assert "#conversationPanel > #gymSessionPanel" in styles
+    assert "#conversationPanel > #gymSessionPanel {\n  order: -1;" in styles
+    assert "@keyframes sandboxChargeTravel" in styles
+    assert "@keyframes sandboxProtectTravel" in styles
+    assert "@keyframes sandboxCurrentPulse" in styles
+    assert "@keyframes sandboxCurrentDone" in styles
+    assert ".conversation-entry.summary-entry" in styles
+
+    for disclosure_id in (
+        "conversationDetailsDisclosure",
+        "sessionEvidenceDisclosure",
+        "diagnosisEvidenceDisclosure",
+    ):
+        start = html.index(f'<details id="{disclosure_id}"')
+        end = html.index(">", start)
+        assert " open" not in html[start:end]
+
+    assert html.index('id="cuaScreen"') < html.index('id="sessionEvidenceDisclosure"')
+
+
+def test_entry_screen_has_the_oversized_prism_wordmark() -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+    html = (repository_root / "web" / "index.html").read_text(encoding="utf-8")
+    styles = (repository_root / "web" / "styles.css").read_text(encoding="utf-8")
+
+    assert 'class="prism-wordmark"' in html
+    assert 'aria-label="PRISM"' in html
+    for letter in "PRISM":
+        assert f'<span aria-hidden="true">{letter}</span>' in html
+    assert ".prism-wordmark" in styles
+    assert "position: absolute" in styles[
+        styles.index(".prism-wordmark") : styles.index(".prism-wordmark") + 500
+    ]
+    assert "clamp(" in styles[styles.index(".prism-wordmark"):styles.index(".prism-wordmark") + 500]
+    assert html.index('id="claimGrid"') < html.index('id="diagnosisEvidenceDisclosure"')

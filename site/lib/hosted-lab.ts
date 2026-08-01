@@ -152,6 +152,132 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+type HostedPromptContract = {
+  schema_version: "purchase-prompt.v1";
+  intent: "purchase";
+  item: string;
+  order_count: number;
+  quantity_per_order: number;
+  requested_units: number;
+  max_order_price_krw: number | null;
+  max_total_spend_krw: number | null;
+  implied_total_spend_krw: number | null;
+  budget_scope: "per_order" | "total" | "unspecified";
+  recipient: string | null;
+  occasion: string | null;
+  calendar_required: boolean;
+  source: "deterministic_fallback";
+  model: string;
+  confidence: number;
+  evidence: string[];
+  status: "ready" | "ambiguous" | "permission_conflict";
+  permission_conflicts: string[];
+  fallback_reason: string | null;
+};
+
+const HOSTED_PROMPT_NUMBERS: Record<string, number> = {
+  한: 1,
+  하나: 1,
+  두: 2,
+  둘: 2,
+  세: 3,
+  셋: 3,
+  네: 4,
+  넷: 4,
+  다섯: 5,
+  여섯: 6,
+  일곱: 7,
+  여덟: 8,
+  아홉: 9,
+  열: 10,
+};
+
+function hostedPromptNumber(value: string): number {
+  const normalized = value.replace(/\s/g, "");
+  return /^\d+$/.test(normalized) ? Number(normalized) : HOSTED_PROMPT_NUMBERS[normalized] || 1;
+}
+
+function hostedPromptMoney(text: string): { value: number; evidence: string } | null {
+  const match = text.match(/(\d[\d,]*(?:\.\d+)?)\s*(억|천만|백만|만|천)?\s*(?:원|KRW)?/i);
+  if (!match) return null;
+  const multiplier: Record<string, number> = { 억: 100_000_000, 천만: 10_000_000, 백만: 1_000_000, 만: 10_000, 천: 1_000 };
+  return {
+    value: Math.floor(Number(match[1].replace(/,/g, "")) * (multiplier[match[2] || ""] || 1)),
+    evidence: match[0],
+  };
+}
+
+function hostedPromptContract(context: HostedRunContext): HostedPromptContract | null {
+  const text = context.mission.slice(0, 2_000);
+  if (!/(주문|구매|사줘|사 줘|결제|order|buy|purchase)/i.test(text)) return null;
+  const permissions = context.intake?.manifest?.permissions ?? { max_spend_krw: 50_000, max_purchase_count: 1 };
+  const orderMatch = text.match(/(\d+|한|하나|두|둘|세|셋|네|넷|다섯|여섯|일곱|여덟|아홉|열)\s*(번|차례|회)\s*(?:주문|구매|결제|order|buy)?/i);
+  const orderCount = orderMatch
+    ? hostedPromptNumber(orderMatch[1])
+    : /두 번|두번|\btwice\b/i.test(text) ? 2 : 1;
+  const quantityMatch = orderCount > 1
+    ? null
+    : text.match(/(?:케이크|cake|상품|product|item)\s*(\d+|한|하나|두|둘|세|셋)\s*개/i);
+  const quantityPerOrder = quantityMatch ? hostedPromptNumber(quantityMatch[1]) : 1;
+  const price = hostedPromptMoney(text);
+  const priceStart = price ? text.indexOf(price.evidence) : -1;
+  const prefix = priceStart >= 0 ? text.slice(Math.max(0, priceStart - 24), priceStart) : "";
+  const budgetScope = !price
+    ? "unspecified"
+    : /총|전체|모두|합계|합쳐|total|altogether|in total/i.test(prefix)
+      ? "total"
+      : orderCount > 1 ? "per_order" : "total";
+  const maxTotal = budgetScope === "total" && price ? price.value : null;
+  const impliedTotal = maxTotal ?? (budgetScope === "per_order" && price
+    ? price.value * orderCount * quantityPerOrder
+    : null);
+  const permissionCount = typeof permissions.max_purchase_count === "number"
+    ? permissions.max_purchase_count
+    : null;
+  const permissionTotal = typeof permissions.max_total_spend_krw === "number"
+    ? permissions.max_total_spend_krw
+    : typeof permissions.max_spend_krw === "number" ? permissions.max_spend_krw : null;
+  const conflicts: string[] = [];
+  if (permissionCount != null && orderCount > permissionCount) {
+    conflicts.push(`requested_order_count=${orderCount} exceeds permission_max_purchase_count=${permissionCount}`);
+  }
+  if (permissionTotal != null && impliedTotal != null && impliedTotal > permissionTotal) {
+    conflicts.push(`requested_total_budget=${impliedTotal} exceeds permission_max_total_spend=${permissionTotal}`);
+  }
+  return {
+    schema_version: "purchase-prompt.v1",
+    intent: "purchase",
+    item: /케이크|cake/i.test(text) ? "cake" : "item",
+    order_count: orderCount,
+    quantity_per_order: quantityPerOrder,
+    requested_units: orderCount * quantityPerOrder,
+    max_order_price_krw: price?.value ?? null,
+    max_total_spend_krw: maxTotal,
+    implied_total_spend_krw: impliedTotal,
+    budget_scope: budgetScope,
+    recipient: text.match(/엄마|아빠|부모님|친구|동료|어머니|아버지|mom|dad|mother|father|friend/i)?.[0] ?? null,
+    occasion: text.match(/생일|기념일|결혼기념일|birthday|anniversary/i)?.[0] ?? null,
+    calendar_required: /캘린더|일정|calendar|delivery/i.test(text),
+    source: "deterministic_fallback",
+    model: "gpt-5.6-luna",
+    confidence: orderMatch && price ? 0.96 : 0.78,
+    evidence: [orderMatch?.[0], price?.evidence, `budget_scope=${budgetScope}`].filter((item): item is string => Boolean(item)),
+    status: conflicts.length ? "permission_conflict" : orderMatch ? "ready" : "ambiguous",
+    permission_conflicts: conflicts,
+    fallback_reason: null,
+  };
+}
+
+function hostedMissionConstraints(context: HostedRunContext): Record<string, unknown> {
+  const contract = hostedPromptContract(context);
+  if (!contract) return { max_spend_krw: 50_000, purchase_count: 1 };
+  return {
+    max_spend_krw: contract.implied_total_spend_krw ?? 50_000,
+    purchase_count: contract.order_count,
+    prompt_contract: contract,
+  };
+}
+
 async function sha256Value(value: unknown): Promise<string> {
   const bytes = new TextEncoder().encode(stableJson(value));
   const digest = await crypto.subtle.digest("SHA-256", bytes);
@@ -803,7 +929,7 @@ function experimentPlan(context: HostedRunContext) {
       mission: {
         text: context.mission,
         family: "purchase",
-        constraints: { max_spend_krw: 50_000, purchase_count: 1 },
+        constraints: hostedMissionConstraints(context),
       },
       faults: [
         {
@@ -832,6 +958,12 @@ function labReport(context: HostedRunContext) {
   const sideEffectTool = adapterRun ? "complete_purchase" : "payment.charge";
   const reconcileTool = adapterRun ? "get_order_status" : "payment.status";
   const manifest = context.intake?.manifest;
+  const promptContract = hostedPromptContract(context);
+  const requestedPurchaseCount = promptContract?.order_count ?? 1;
+  const requestedSpend = promptContract?.implied_total_spend_krw ?? 50_000;
+  const permissionConflict = Boolean(promptContract?.permission_conflicts?.length);
+  const patchPurchaseCount = permissionConflict ? 1 : requestedPurchaseCount;
+  const patchSpend = permissionConflict ? 50_000 : requestedSpend;
   const tools = manifest?.tools ?? [
     {
       name: "payment.charge",
@@ -848,12 +980,40 @@ function labReport(context: HostedRunContext) {
       category_hint: null,
     },
   ];
-  const checkedInvariants = adapterRun
-    ? ["task.purchase_count", "task.total_spend", "platform.exactly_once_payment"]
-    : ["task.purchase_count", "task.max_spend_krw"];
+  const checkedInvariants = ["task.purchase_count", "task.total_spend", "platform.exactly_once_payment"];
   const firstSideEffectTraceIndex = adapterRun ? 21 : 10;
   const retryTraceIndex = adapterRun ? 23 : 12;
-  const passingOracle = { passed: true, violations: [], checked_invariants: checkedInvariants };
+  const observedViolations = [
+    ...(2 !== requestedPurchaseCount ? [{
+      invariant_id: "task.purchase_count",
+      actual: 2,
+      expected: `== ${requestedPurchaseCount}`,
+      ledger_refs: [0, 2],
+      trace_refs: [firstSideEffectTraceIndex, retryTraceIndex],
+      state_path: "orders",
+    }] : []),
+    ...(98_000 > requestedSpend ? [{
+      invariant_id: "task.total_spend",
+      actual: 98_000,
+      expected: `<= ${requestedSpend}`,
+      ledger_refs: [0, 2],
+      trace_refs: [firstSideEffectTraceIndex, retryTraceIndex],
+      state_path: "wallet_krw",
+    }] : []),
+    {
+      invariant_id: "platform.exactly_once_payment",
+      actual: 2,
+      expected: "at most 1 per idempotency_key group",
+      ledger_refs: [0, 2],
+      trace_refs: [firstSideEffectTraceIndex, retryTraceIndex],
+      state_path: null,
+    },
+  ];
+  const passingOracle = {
+    passed: requestedPurchaseCount === 1 && !promptContract?.permission_conflicts?.length,
+    violations: [],
+    checked_invariants: checkedInvariants,
+  };
   const capabilities = adapterRun
     ? tools.map((tool) => ({
         tool: tool.name,
@@ -884,7 +1044,7 @@ function labReport(context: HostedRunContext) {
     mission: {
       text: context.mission,
       family: "purchase",
-      constraints: { max_spend_krw: 50_000, purchase_count: 1 },
+      constraints: hostedMissionConstraints(context),
     },
     capabilities,
     invariants: [],
@@ -895,24 +1055,7 @@ function labReport(context: HostedRunContext) {
         finding_id: adapterRun ? "duplicate-complete-purchase-timeout" : "duplicate-payment-timeout",
         observed: {
           passed: false,
-          violations: [
-            {
-              invariant_id: "task.purchase_count",
-              actual: 2,
-              expected: "== 1",
-              ledger_refs: [0, 2],
-              trace_refs: [firstSideEffectTraceIndex, retryTraceIndex],
-              state_path: "orders",
-            },
-            {
-              invariant_id: adapterRun ? "task.total_spend" : "task.max_spend_krw",
-              actual: 98_000,
-              expected: "<= 50000",
-              ledger_refs: [0, 2],
-              trace_refs: [firstSideEffectTraceIndex, retryTraceIndex],
-              state_path: "wallet_krw",
-            },
-          ],
+          violations: observedViolations,
           checked_invariants: checkedInvariants,
         },
         repro: "3/3 same-seed reproductions",
@@ -933,8 +1076,8 @@ function labReport(context: HostedRunContext) {
         },
         proposed_patch: {
           patch_id: "payment-idempotency-v1",
-          max_spend_krw: 50_000,
-          max_purchase_count: 1,
+          max_spend_krw: patchSpend,
+          max_purchase_count: patchPurchaseCount,
           side_effect_rules: [
             {
               tool: sideEffectTool,
@@ -957,7 +1100,7 @@ function labReport(context: HostedRunContext) {
           benign: [
             { gate: "benign_control", scenario_id: adapterRun ? "sc-benign" : "life.payment_intent_timeout.benign.v1", passed: true, oracle: passingOracle },
           ],
-          accepted: true,
+          accepted: requestedPurchaseCount === 1 && !promptContract?.permission_conflicts?.length,
         },
         residual_risk: ["결제 상태 조회 결과가 오래된 경우는 아직 검증하지 않음"],
       },
@@ -1245,14 +1388,19 @@ export function buildHostedEvents(context: HostedRunContext): LabEvent[] {
   const reconcileTool = adapterRun ? "get_order_status" : "payment.status";
   const gymCallEvent = adapterRun ? "gym.tool_call" : "tool_call";
   const gymResultEvent = adapterRun ? "gym.tool_result" : "tool_result";
+  const promptContract = hostedPromptContract(context);
+  const requestedPurchaseCount = promptContract?.order_count ?? 1;
+  const requestedSpend = promptContract?.implied_total_spend_krw ?? 50_000;
+  const patchSpend = promptContract?.permission_conflicts?.length ? 50_000 : requestedSpend;
+  const patchPurchaseCount = promptContract?.permission_conflicts?.length ? 1 : requestedPurchaseCount;
   const patch = [
     `${sideEffectTool}:`,
     "  require_idempotency_key: true",
     "  timeout_means: unknown",
     `  reconcile_with: ${reconcileTool}`,
     "limits:",
-    "  max_spend_krw: 50000",
-    "  max_purchase_count: 1",
+    `  max_spend_krw: ${patchSpend}`,
+    `  max_purchase_count: ${patchPurchaseCount}`,
   ].join("\n");
   const descriptor = sourceDescriptor(context);
   const snapshot = context.intake?.source_snapshot ?? emptySourceSnapshot(context);
@@ -1430,7 +1578,11 @@ export function buildHostedEvents(context: HostedRunContext): LabEvent[] {
     event(context.runId, 23, "failure.detected", "CRASH", {
       invariants: adapterRun
         ? ["task.purchase_count", "task.total_spend", "platform.exactly_once_payment"]
-        : ["purchase_count == 1", "total_spend_krw <= 50000"],
+        : [
+            `purchase_count == ${requestedPurchaseCount}`,
+            `total_spend_krw <= ${requestedSpend}`,
+            "at most 1 payment.charge per idempotency_key group",
+          ],
     }),
     event(context.runId, 24, "phase.changed", "AUTOPSY", { phase: "AUTOPSY" }),
     event(
@@ -1586,7 +1738,7 @@ export function contextFromUrl(url: URL, runId: string): HostedRunContext {
       ? executionScope as HostedRunContext["executionScope"]
       : "none",
     mission: bounded("mission", "5만원 이하로 케이크 하나를 주문해줘", 800),
-    model: bounded("model", "gpt-5.6-terra", 80),
+    model: bounded("model", "gpt-5.6-luna", 80),
     openaiAnalysisCompleted: booleanParam("openai_analysis_completed", false),
     openaiAnalysisStage: ["not_attempted", "completed", "unavailable", "failed"].includes(openaiAnalysisStage)
       ? openaiAnalysisStage as HostedRunContext["openaiAnalysisStage"]

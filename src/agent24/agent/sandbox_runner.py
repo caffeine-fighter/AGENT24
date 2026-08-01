@@ -235,6 +235,7 @@ class SandboxRunResult:
     fault_applications: tuple[dict[str, Any], ...]
     trace_digest: str
     protection_mode: str | None = None
+    final_output: str | None = None
 
     @property
     def succeeded(self) -> bool:
@@ -258,6 +259,7 @@ class SandboxRunResult:
             "fault_applications": list(self.fault_applications),
             "trace_digest": self.trace_digest,
             "protection_mode": self.protection_mode,
+            "final_output": self.final_output,
         }
 
 

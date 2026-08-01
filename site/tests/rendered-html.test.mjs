@@ -505,7 +505,7 @@ test("hosted OpenAI path keeps credentials server-side and emits its evidence", 
       assert.equal(url.pathname, "/v1/responses");
       assert.equal(headers.get("authorization"), "Bearer test-openai-key");
       const body = JSON.parse(String(init.body));
-      assert.equal(body.model, "gpt-5.6-terra");
+      assert.equal(body.model, "gpt-5.6-luna");
       assert.equal(body.reasoning.effort, "low");
       assert.match(body.safety_identifier, /^repo_[a-f0-9]{24}$/);
       assert.equal(body.input[0].role, "developer");

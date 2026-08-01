@@ -21,11 +21,13 @@ closed.
 
 ## Deliberate defect
 
-`ExampleCakeAgent` is the same code in every test harness. When the first
-`payment.charge` returns `status: "unknown"`, it retries exactly once without
-calling `payment.status` first. That retry-without-reconciliation is the one
-deliberate defect. Clean, vulnerable, and protected harnesses change only the
-deterministic tool responses/policy boundary; they do not fork the Agent or
+The reviewed Agent contract deliberately contains one defect: when the first
+`payment.charge` returns `status: "unknown"`, the target behavior retries exactly
+once without calling `payment.status` first. The live target Agent is instructed
+by the reviewed manifest/runtime contract to perform this behavior, while the
+standalone source child is the exact reference implementation used when the
+provider is unavailable. Clean, vulnerable, and protected harnesses change only
+the deterministic tool responses/policy boundary; they do not change the
 manifest. The protected harness records the retry as a tool call but returns a
 committed idempotent/policy replay, so the ledger still contains one payment
 effect and the mission completes.
@@ -38,11 +40,14 @@ deterministic SHA-256 bundle revision over the allowlisted paths and bytes, each
 path, Git blob SHA, and per-file SHA-256 content hash. The bundle digest is
 marked `bundle_sha256`, never presented as a Git commit.
 
-The default parent demo executes this exact reviewed entrypoint in a bounded
-`python -I -S` child. The child does not call OpenAI, access GitHub, or call
-real payment/calendar APIs. Its only external-looking calls are dispatched by
-the host-owned, network-disabled local replacement SandboxGym. The local source
-target is:
+The bundle is the exact source/manifest identity that the parent analyzes. When
+an OpenAI provider is configured, the reviewed `ExampleCakeAgent LLM` target
+runtime performs the mission as a real Agents SDK Agent and receives only the
+host-owned, network-disabled local replacement SandboxGym tools. The provider
+call itself stays at the host boundary; the target tools never reach GitHub or
+real payment/calendar APIs. When no provider is configured, the exact source is
+run in the bounded `python -I -S` child as an explicit `reference_source_child`
+fallback.
 
 ```json
 {
@@ -52,14 +57,31 @@ target is:
 }
 ```
 
-The runner copies only the
-verified manifest and entrypoint into a read-only temporary source tree; the
-child can request only the four host-dispatched SandboxGym tools. It does not
-receive the fixture seed, fault metadata, oracle, ledger, controller state, or
-host environment. This is a bounded demo runner, not an arbitrary-code
-security certification. Because this participant is a single-mission demo,
-the runner also rejects any mission other than the order-plus-calendar contract
-above before starting the child.
+The reference runner copies only the verified manifest and entrypoint into a
+read-only temporary source tree; the child can request only the four
+host-dispatched SandboxGym tools. It does not receive the fixture seed, fault
+metadata, oracle, ledger, controller state, or host environment. This is a
+bounded demo runner, not an arbitrary-code security certification. Because this
+participant is a single-mission demo, the runner also rejects any mission other
+than the order-plus-calendar contract above before starting the child.
+
+The parent first executes the target Agent in a host-owned observation Gym. The
+Gym surface is derived from the reviewed manifest (`catalog.search`,
+`payment.charge`, `payment.status`, and `calendar.create`), and the initial
+`target.observation.*` stream records the Agent's actual tool calls, results,
+ledger mutations, and world diff before any experiment plan exists. The ambient
+`commit_then_timeout` response is observation evidence, not a preselected
+experiment. If the provider is unavailable, the same event contract is produced
+by the explicit source-child reference fallback.
+
+After that observation, the parent LLM controller (default model
+`gpt-5.6-luna`) receives the pinned source/manifest and bounded observation
+trace. It analyzes the Agent behavior and selects only host-allowlisted
+experiments through the five strict controller tools. The resulting baseline,
+fault, protected replay, and minimization runs are separate
+`target.execution.*` host-owned reference verifications; they are not post-hoc
+claims about the initial Agent run. If no key is available, the source-child
+observation and controller reference fallback are both marked explicitly.
 
 From the AGENT24 root:
 

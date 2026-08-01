@@ -563,7 +563,7 @@ async function planWithOpenAI(
   repositoryUrl: string,
   intake: HostedIntake,
 ): Promise<HostedPlan> {
-  const model = process.env.OPENAI_MODEL?.trim() || "gpt-5.6-terra";
+  const model = process.env.OPENAI_MODEL?.trim() || "gpt-5.6-luna";
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   const sideEffectTool = intake.kind === "allowlisted_adapter" ? "complete_purchase" : "payment.charge";
   const reconcileTool = intake.kind === "allowlisted_adapter" ? "get_order_status" : "payment.status";
@@ -640,7 +640,7 @@ async function planWithOpenAI(
 
 function fallbackPlan(
   sideEffectTool = "payment.charge",
-  model = process.env.OPENAI_MODEL?.trim() || "gpt-5.6-terra",
+  model = process.env.OPENAI_MODEL?.trim() || "gpt-5.6-luna",
   reasonCode: HostedOpenAIReasonCode = "not_attempted",
 ): HostedPlan {
   const adapter = sideEffectTool === "complete_purchase";

@@ -26,11 +26,11 @@ network. Two rules from the issue shape it:
   does not discriminate, saying so is the honest answer; silently taking the
   lexically-first pack would dress a coin flip up as a decision.
 
-Only the Life pack is wired into the one-input controller today. Research,
-Stock, Ticket and Adhoc are registered so the router can select them and say
-which issue lands their execution -- a selected-but-not-executable pack stops
-with :class:`~agent24.agent.models.StopDecision`, and never falls through to
-another pack's success.
+Life, Research, and Stock are wired into the one-input controller. Ticket and
+Adhoc remain registered-only until their controller/report bridges are added. A
+selected-but-not-executable pack stops with
+:class:`~agent24.agent.models.StopDecision`, and never falls through to another
+pack's success.
 """
 
 from __future__ import annotations
@@ -132,13 +132,8 @@ class DomainPackSpec(BaseModel):
     gated_capabilities: tuple[str, ...] = ()
     expected_damage: int = Field(ge=1, le=5)
     budget: PackBudget
-    # Both flags describe what the *pack* can do, not what the controller
-    # currently drives. ``execution`` and ``deferred_to`` already answer the
-    # wiring question, and duplicating that answer here would make one of the
-    # two fields dead. Research and Stock have declared
-    # ``supports_benign_control=True`` while ``execution`` was still
-    # ``REGISTERED`` since they were registered, which fixes the reading: a
-    # capability the pack ships is True even before anything calls it.
+    # Both flags describe what the *pack* can do. ``execution`` and
+    # ``deferred_to`` answer whether the one-input controller can drive it.
     supports_benign_control: bool = False
     supports_protected_replay: bool = False
     execution: PackExecution = PackExecution.REGISTERED
@@ -242,7 +237,7 @@ RESEARCH_PACK = DomainPackSpec(
     budget=PackBudget(max_tool_calls=12, max_experiments=3, max_cost_units=6),
     supports_benign_control=True,
     supports_protected_replay=True,
-    deferred_to="#58",
+    execution=PackExecution.ONE_INPUT_CONTROLLER,
 )
 
 STOCK_PACK = DomainPackSpec(
@@ -282,7 +277,7 @@ STOCK_PACK = DomainPackSpec(
     budget=PackBudget(max_tool_calls=14, max_experiments=3, max_cost_units=6),
     supports_benign_control=True,
     supports_protected_replay=True,
-    deferred_to="#59",
+    execution=PackExecution.ONE_INPUT_CONTROLLER,
 )
 
 TICKET_PACK = DomainPackSpec(

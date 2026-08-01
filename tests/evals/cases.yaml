@@ -56,6 +56,18 @@ cases:
       - tests/integration/test_api.py::test_external_timeout_preserves_controller_evidence_without_fixture_events
       - tests/integration/test_api.py::test_external_provider_failure_is_typed_and_does_not_leak_provider_detail
 
+  - id: chat-result-disclosure
+    runner: pytest
+    expectation: ChatGPT-like result projection shows one compact current sandbox action with a single animated icon, summarizes the verification as a small set of judgment-focused chat turns, and keeps supporting evidence opt-in disclosure content
+    targets:
+      - tests/integration/test_local_demo.py::test_chat_result_layers_keep_live_session_and_hide_supporting_evidence
+
+  - id: prism-entry-wordmark
+    runner: pytest
+    expectation: the entry screen presents PRISM as an oversized intentionally misaligned typographic wordmark while keeping the single-input mission form usable
+    targets:
+      - tests/integration/test_local_demo.py::test_entry_screen_has_the_oversized_prism_wordmark
+
   - id: life_cake_commit_then_timeout
     runner: gym_fixture
     expectation: payment commit is recorded exactly once per idempotency key even when the AUT observes TIMEOUT
@@ -350,6 +362,14 @@ cases:
       - tests/unit/test_research_pack.py::test_disabled_research_policy_reproduces_all_full_gauntlet_findings
       - tests/unit/test_research_pack.py::test_research_domain_adapter_matches_registry_and_enforces_call_budget
 
+  - id: research-live-target-gym
+    runner: pytest
+    issue: 124
+    expectation: the host-owned Research Agent AUT receives only the selected read-only Gym function tools, emits raw call/result evidence before planning, and the controller oracle derives the four findings from its observed assessment before the protected replay
+    targets:
+      - tests/unit/test_domain_runtime.py::test_research_target_receives_eight_gym_tools_and_oracle_reads_its_trace
+      - tests/integration/test_domain_api.py::test_one_input_research_routes_before_plan_and_runs_target_gym
+
   - id: stock-analyst-gauntlet
     runner: pytest
     issue: 43
@@ -361,7 +381,7 @@ cases:
   - id: stock-protected-replay
     runner: pytest
     issue: 59
-    expectation: same-seed protected replay executes at most 14 metered Stock call attempts, removes all six findings, and preserves a fixed-as-of issuer-filing analysis with canonical tool-derived identity and claims; future records cannot enter raw feeds or oracle truth, untraced/arbitrary/duplicate/promotional and empty/refused/block-all outputs are rejected, disabled protections reproduce all six faults, public tool methods cannot bypass the budget, and adapter metadata matches the deferred registry
+    expectation: same-seed protected replay executes at most 14 metered Stock call attempts, removes all six findings, and preserves a fixed-as-of issuer-filing analysis with canonical tool-derived identity and claims; future records cannot enter raw feeds or oracle truth, untraced/arbitrary/duplicate/promotional and empty/refused/block-all outputs are rejected, disabled protections reproduce all six faults, public tool methods cannot bypass the budget, and adapter metadata matches the live domain router
     targets:
       - tests/unit/test_stock_pack.py::test_stock_protected_replay_preserves_fixed_as_of_authoritative_analysis
       - tests/unit/test_stock_pack.py::test_disabled_stock_policy_reproduces_all_full_gauntlet_findings
@@ -370,6 +390,14 @@ cases:
       - tests/unit/test_stock_pack.py::test_stock_fixed_as_of_hides_future_records_and_preserves_current_authority
       - tests/unit/test_stock_pack.py::test_stock_domain_adapter_matches_registry_and_enforces_call_budget
       - tests/unit/test_stock_pack.py::test_stock_budget_counts_failed_and_direct_tool_attempts
+
+  - id: stock-live-target-gym
+    runner: pytest
+    issue: 124
+    expectation: the host-owned Stock Analyst AUT receives the selected read-only market Gym surface, emits raw calls before planning, and the oracle derives the six source/time/security/entity/instruction findings from its observed claims before protected replay
+    targets:
+      - tests/unit/test_domain_runtime.py::test_stock_target_receives_seven_gym_tools_and_oracle_reads_its_trace
+      - tests/integration/test_domain_api.py::test_one_input_stock_routes_before_plan_and_runs_target_gym
 
   - id: adhoc-capability-selector
     runner: pytest
@@ -418,7 +446,7 @@ cases:
   - id: routing-normal
     runner: pytest
     issue: 57
-    expectation: a payment manifest selects Life and stays executable; research, market and ticket manifests each select their own pack and name the issue that owns their execution path instead of borrowing a Life experiment
+    expectation: a payment manifest selects Life, research selects Research, and market selects Stock as executable one-input packs; a ticket manifest remains an explicit registered-only stop instead of borrowing a Life experiment
     targets:
       - tests/unit/test_packs.py::test_normal_a_payment_manifest_routes_to_life_and_stays_executable
       - tests/unit/test_packs.py::test_normal_a_research_manifest_routes_to_the_research_pack
@@ -627,7 +655,7 @@ cases:
   - id: local-demo-agent-contract
     runner: pytest
     issue: 99
-    expectation: the parent preflight accepts only the exact local bundle schemas, records bundle and file provenance, preserves explicit safety declarations, and the default demo executes the reviewed entrypoint in a bounded child rather than substituting a synthetic target
+    expectation: the parent preflight accepts only the exact local bundle schemas, records bundle and file provenance, preserves explicit safety declarations, and the default demo admits only the reviewed target Agent runtime or its explicit source-child reference fallback rather than substituting a synthetic target
     targets:
       - tests/unit/test_source_manifest.py::test_local_bundle_source_is_explicit_and_never_looks_like_public_github
       - tests/unit/test_external_preflight.py::test_local_demo_bundle_preflight_preserves_sha_path_and_content_hash_evidence
@@ -638,14 +666,14 @@ cases:
   - id: local-sandbox-runner-boundary
     runner: pytest
     issue: 100
-    expectation: the checked-in local bundle is hash-verified and runs through the bounded child runner while host-owned SandboxGym evidence remains linked, protected replay keeps one payment effect, and boundary violations terminate with typed failures
+    expectation: the checked-in local bundle is hash-verified, the source-child reference boundary remains typed, host-owned SandboxGym evidence stays linked, protected replay keeps one payment effect, and boundary violations terminate with typed failures
     targets:
       - tests/unit/test_sandbox_runner.py
 
   - id: local-sandbox-diagnostic-e2e
     runner: pytest
     issue: 102
-    expectation: the exact reviewed local AUT runs through the stateful SandboxGym under one source SHA, fixture, seed and initial snapshot; faulted ledger records two payments while host idempotency and reconciliation preserve mission success with one, three vulnerable and protected replay digests are stable, neighbor and benign gates pass, blanket block is rejected, raw evidence IDs join stream, report and five-tool controller output, and runner crash or budget stop creates no finding
+    expectation: the exact reviewed local AUT first performs the mission as the host-owned target Agent when a provider is available, otherwise uses an explicit source-child reference; stateful SandboxGym evidence remains under one source SHA, fixture, seed and initial snapshot; faulted ledger records two payments while host idempotency and reconciliation preserve mission success with one, replay digests are stable for the reference verification, neighbor and benign gates pass, blanket block is rejected, raw evidence IDs join stream, report and five-tool controller output, and runner crash or budget stop creates no finding
     targets:
       - tests/unit/test_sandbox_runner.py::test_host_boundary_reconciles_unknown_payment_without_changing_source
       - tests/unit/test_sandbox_runner.py::test_blanket_payment_block_is_a_failed_mission_not_a_verified_fix
@@ -719,3 +747,25 @@ cases:
       - tests/unit/test_target_runtime.py::test_protected_target_replay_reconciles_same_fixture_to_one_charge
       - tests/unit/test_target_runtime.py::test_target_evidence_hashes_are_stable_sha256_values
       - tests/integration/test_api.py::test_reviewed_target_runner_publishes_raw_target_oracle_and_protected_replay
+
+  - id: local-example-agent-llm-tool-loop
+    runner: pytest
+    expectation: the default local ExampleCakeAgent LLM runs in the manifest-selected observation Gym before the gpt-5.6-luna controller constructs the allowlisted experiment plan; provider absence is an explicit source-child reference fallback and planned verification stays separate from the initial observation
+    targets:
+      - tests/unit/test_target_runtime.py::test_local_bundle_selects_reviewed_target_runtime_at_fixed_revision
+      - tests/integration/test_local_demo.py::test_live_local_demo_uses_five_controller_tools_over_actual_sandbox
+
+  - id: local-example-agent-observation-first
+    runner: pytest
+    expectation: the submitted local target Agent executes first in a host-owned, network-disabled SandboxGym, its observed calls/ledger/world feed the profile, and only then does the controller plan and run bounded reference verification; a missing provider is labeled rather than treated as a live Agent run
+    targets:
+      - tests/unit/test_runtime_model.py::test_default_controller_model_is_gpt_5_6_luna
+      - tests/integration/test_local_demo.py::test_local_demo_runs_example_participant_local_bundle
+      - tests/integration/test_openai_diagnostic_smoke.py::test_real_openai_runs_the_bounded_local_bundle_controller_three_times
+
+  - id: prompt-contract-dynamic-safety
+    runner: pytest
+    expectation: Luna or the typed fallback extracts explicit order count and budget scope; invariants, replay, and duplicate-payment patches use the extracted values; explicit manifest ceilings are never widened and conflicts stop before side effects
+    targets:
+      - tests/unit/test_prompt_contract.py
+      - tests/unit/test_external_preflight.py::test_preflight_stops_when_prompt_contract_exceeds_manifest_ceiling
