@@ -13,6 +13,8 @@ Lab Agent(실패 과학자)의 계약과 결정적 알고리즘이 사는 경계
 | `protocols.py` | `GymProtocol`, `PlannerProtocol`, `ExperimentPolicyProtocol` |
 | `fakes.py` | `FakeGym`, `ScriptedAUT` 4종, `ScriptedPlanner` |
 | `capabilities.py` | 도구 분류(`classify`)와 위험 경로 탐지(`find_risk_paths`) |
+| `invariants.py` | Life-v0 controller-owned task/platform 불변식 |
+| `loop.py` | baseline → fault → oracle → 최소화 → patch gate → report 단일 루프 |
 
 이 네 파일과 `tests/evals/cases.yaml`, `__init__.py`는 **양쪽 워커의 합의 없이
 변경하지 않습니다.** 계약 결함을 발견하면 고치기 전에 먼저 보고합니다.
@@ -34,9 +36,11 @@ Lab Agent(실패 과학자)의 계약과 결정적 알고리즘이 사는 경계
 - `policy.py`: 위험도 점수, 실험 랭킹, `StopConditions`, 정직한 종료
 - `prompts.py` + `prompts/*.md`: 버전이 있는 지시문과 출력 스키마 매핑
 
-## 이슈 #4 (Worker B)
+## 이슈 #26 one-input 조립
 
-- `invariants.py` → `oracle.py` → `divergence.py` → `minimize.py` →
-  `gates.py` → `loop.py`
+`loop.py`는 외부 source를 실행하지 않고 manifest가 선택한 allowlisted Life-v0
+synthetic behavior archetype만 측정합니다. 이 제한은 `FindingReport.residual_risk`와
+`LabReport.unsupported_scope`에 항상 남습니다. 동일 seed 3회 재현, 최초 divergence,
+최소 반례, same-seed/neighbor/benign patch gate를 하나의 결정적 결과로 조립합니다.
 
 오케스트레이터는 UI나 특정 외부 서비스에 직접 의존하지 않게 유지합니다.
