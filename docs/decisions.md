@@ -15,5 +15,6 @@
 | 2026-08-01 | 외부 source는 metadata-only로 유지하고 manifest가 선택한 Life-v0 synthetic behavior archetype을 진단 | 임의 code 실행 없이 one-input E2E를 완주하면서 synthetic 측정을 실제 target 관찰로 과장하지 않기 위함 | A / integration | 승인된 실행 adapter와 sandbox contract가 추가될 때 |
 | 2026-08-01 | `site/`에 Sites용 Worker 실행 표면을 추가하고 기존 FastAPI·정적 UI를 원본 구현으로 유지 | Python 서버를 실행하지 못하는 호스팅에서도 공유 링크·OpenAI 계획 호출·SSE 데모를 제공하되, 24시간 해커톤의 검증된 로컬 경로를 재작성하지 않음 | A / deployment | Python runtime을 직접 호스팅하는 프로덕션 환경이 준비될 때 |
 | 2026-08-01 | hosted planner는 `commit_then_timeout` 한 변수만 허용하고 OpenAI에는 선택 이유·기대 증거만 맡김 | 모델의 적응성을 노출하면서 scenario·oracle·패치·판정의 결정성을 controller가 계속 소유하게 함 | A / deployment | hosted domain pack이 Research·Stock·Adhoc까지 확장될 때 |
+| 2026-08-01 | Sites build가 삽입한 Git commit을 기본 private target의 immutable source provenance로 사용 | 발표용 self-target을 full SHA로 고정하면서 broad personal `GITHUB_TOKEN`을 Worker secret으로 복제하지 않음; 다른 repository/ref는 계속 GitHub API로 resolve | A / deployment | Sites가 배포 source SHA를 runtime binding으로 직접 제공할 때 |
 
 Keep entries short. Record choices that affect architecture, model/tool selection, scope, cost, privacy, or the demo path.
