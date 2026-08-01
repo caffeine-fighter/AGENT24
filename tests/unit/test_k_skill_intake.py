@@ -364,6 +364,61 @@ def test_claim_boundaries_cannot_be_weakened_even_with_an_existing_digest() -> N
     assert result_payload["profile"]["claim_boundary"] == K_SKILL_CLAIM_BOUNDARY
 
 
+def test_result_rejects_a_profile_for_a_different_skill() -> None:
+    result_payload = offline_adapter().assess(
+        pinned_source(), "srt-booking"
+    ).model_dump(mode="json")
+    result_payload["skill_id"] = "popbill"
+
+    with pytest.raises(ValueError, match="profile skill_id"):
+        KSkillIntakeResult.model_validate(result_payload)
+
+
+def test_result_rejects_a_snapshot_for_a_different_source() -> None:
+    result_payload = offline_adapter().assess(
+        pinned_source(), "srt-booking"
+    ).model_dump(mode="json")
+    result_payload["source_ref"] = f"NomaDamas/k-skill@{'1' * 40}"
+
+    with pytest.raises(ValueError, match="source_ref"):
+        KSkillIntakeResult.model_validate(result_payload)
+
+
+def test_profiled_result_requires_its_static_metadata_snapshot() -> None:
+    result_payload = offline_adapter().assess(
+        pinned_source(), "srt-booking"
+    ).model_dump(mode="json")
+    result_payload["source_snapshot"]["files"] = []
+    result_payload["source_snapshot"]["total_bytes"] = 0
+    result_payload["source_snapshot"]["execution_scope"] = "none"
+
+    with pytest.raises(ValueError, match="profiled result snapshot"):
+        KSkillIntakeResult.model_validate(result_payload)
+
+
+def test_unsupported_result_cannot_carry_profiled_snapshot_evidence() -> None:
+    result_payload = offline_adapter().assess(
+        pinned_source(), "not-in-the-pinned-catalog"
+    ).model_dump(mode="json")
+    profiled_payload = offline_adapter().assess(
+        pinned_source(), "srt-booking"
+    ).model_dump(mode="json")
+    result_payload["source_snapshot"] = profiled_payload["source_snapshot"]
+
+    with pytest.raises(ValueError, match="unsupported result snapshot"):
+        KSkillIntakeResult.model_validate(result_payload)
+
+
+def test_result_rejects_a_weakened_snapshot_claim_boundary() -> None:
+    result_payload = offline_adapter().assess(
+        pinned_source(), "srt-booking"
+    ).model_dump(mode="json")
+    result_payload["source_snapshot"]["claim_boundary"] = "TARGET IS SAFE"
+
+    with pytest.raises(ValueError, match="source snapshot claim_boundary"):
+        KSkillIntakeResult.model_validate(result_payload)
+
+
 def test_snapshot_builder_is_byte_stable_for_the_same_tree() -> None:
     catalog = load_k_skill_catalog()
 

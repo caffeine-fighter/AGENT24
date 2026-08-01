@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from .models import canonical_json as _canonical_json
 from .packs import DomainKind
 from .participant_intake import (
+    PARTICIPANT_CLAIM_BOUNDARY,
     ParticipantEvidenceAccessError,
     ParticipantEvidenceDriftError,
     ParticipantEvidenceError,
@@ -458,14 +459,54 @@ class KSkillIntakeResult(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _no_execution_or_failure_claim(self) -> Self:
+    def _preserves_result_identity_and_scope(self) -> Self:
         if self.failure_claims:
             raise ValueError("declared-surface intake cannot contain failure claims")
+        if self.source_ref != self.source_snapshot.source_ref:
+            raise ValueError("result source_ref must match the source snapshot")
+        if self.source_snapshot.claim_boundary != PARTICIPANT_CLAIM_BOUNDARY:
+            raise ValueError("source snapshot claim_boundary must remain compatibility-only")
         if self.status is RiskIntakeStatus.PROFILED:
             if self.profile is None or self.reason is not None:
                 raise ValueError("profiled results require a profile and no error reason")
+            if self.profile.skill_id != self.skill_id:
+                raise ValueError("profile skill_id must match the result skill_id")
+            profile_source_refs = {
+                f"{item.repository}@{item.commit_sha}" for item in self.profile.evidence
+            }
+            if profile_source_refs != {self.source_ref}:
+                raise ValueError("profile evidence must match the result source_ref")
+            expected_files = {
+                (
+                    K_SKILL_CATALOG_MANIFEST_PATH,
+                    K_SKILL_CATALOG_MANIFEST_BLOB_SHA,
+                    K_SKILL_CATALOG_MANIFEST_SIZE,
+                )
+            } | {
+                (item.path, item.blob_sha, item.size)
+                for item in self.profile.evidence
+            }
+            observed_files = {
+                (item.path, item.blob_sha, item.size)
+                for item in self.source_snapshot.files
+            }
+            if (
+                self.source_snapshot.mode != "metadata_only"
+                or self.source_snapshot.execution_scope != "static_metadata_only"
+                or len(self.source_snapshot.files) != len(expected_files)
+                or observed_files != expected_files
+            ):
+                raise ValueError(
+                    "profiled result snapshot must contain the exact static metadata evidence"
+                )
         elif self.profile is not None or not self.reason:
             raise ValueError("unsupported results require a reason and no profile")
+        elif (
+            self.source_snapshot.mode != "metadata_only"
+            or self.source_snapshot.execution_scope != "none"
+            or self.source_snapshot.files
+        ):
+            raise ValueError("unsupported result snapshot must be empty and non-executable")
         return self
 
 
