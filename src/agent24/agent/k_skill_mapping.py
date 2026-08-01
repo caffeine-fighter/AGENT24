@@ -20,6 +20,7 @@ from typing import Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .k_skill_intake import (
+    K_SKILL_CLAIM_BOUNDARY,
     K_SKILL_PINNED_SHA,
     K_SKILL_PINNED_TREE_SHA,
     K_SKILL_REPOSITORY,
@@ -29,12 +30,17 @@ from .k_skill_intake import (
     RiskHypothesisFamily,
     RiskIntakeReason,
     RiskIntakeStatus,
+    SideEffectClass,
 )
 from .models import canonical_json
 from .packs import DomainKind
+from .participant_intake import PARTICIPANT_CLAIM_BOUNDARY
 
 K_SKILL_MAPPING_SCHEMA = "agent24.k-skill-mapping.v1"
 K_SKILL_MAPPING_VERSION = "k-skill-mapping.v1"
+K_SKILL_REVIEWED_CATALOG_DIGEST = (
+    "sha256:75a275de00dbc1ea61f7ac5bad80bac25cb340cd6d061789945e62d8920f56fb"
+)
 
 
 class MappingSupport(StrEnum):
@@ -85,7 +91,9 @@ class KSkillArchetypeSpec(BaseModel):
     oracle_id: str
     synthetic_tools: tuple[str, ...] = Field(min_length=1)
     world_assets: tuple[str, ...] = Field(min_length=1)
-    first_expected_divergence: str = Field(min_length=1)
+    first_expected_tool: str = Field(min_length=1)
+    first_expected_occurrence: int = Field(ge=1)
+    first_expected_reason: str = Field(min_length=1)
     vulnerable_behavior: str = Field(min_length=1)
     protected_behavior: str = Field(min_length=1)
     benign_control: str = Field(min_length=1)
@@ -225,6 +233,7 @@ class KSkillMappingResult(BaseModel):
     intake_reason: RiskIntakeReason | None = None
     detail: str = ""
     hypothesis_mapping: KSkillHypothesisMapping | None = None
+    unsupported_dispositions: tuple[KSkillHypothesisMapping, ...] = ()
     archetype: KSkillArchetypeSpec | None = None
     synthetic_execution_authorized: bool = False
     synthetic_execution_scope: Literal["none", "synthetic_archetype"] = "none"
@@ -249,6 +258,10 @@ class KSkillMappingResult(BaseModel):
             or self.archetype is not None
         ):
             raise ValueError("unsupported selection cannot authorize an archetype")
+        if any(
+            item.status is not MappingSupport.UNSUPPORTED for item in self.unsupported_dispositions
+        ):
+            raise ValueError("unsupported_dispositions may contain only unsupported mappings")
         return self
 
 
@@ -278,7 +291,9 @@ def _ticket_archetype(
     invariant: str,
     fault_operator: str,
     oracle_id: str,
-    divergence: str,
+    divergence_tool: str,
+    divergence_occurrence: int,
+    divergence_reason: str,
     vulnerable: str,
     protected: str,
     benign: str,
@@ -296,7 +311,9 @@ def _ticket_archetype(
         oracle_id=oracle_id,
         synthetic_tools=_TICKET_TOOLS,
         world_assets=_TICKET_ASSETS,
-        first_expected_divergence=divergence,
+        first_expected_tool=divergence_tool,
+        first_expected_occurrence=divergence_occurrence,
+        first_expected_reason=divergence_reason,
         vulnerable_behavior=vulnerable,
         protected_behavior=protected,
         benign_control=benign,
@@ -320,11 +337,16 @@ _ARCHETYPES = (
         ),
         fault_operator="price_fee_currency_drift",
         oracle_id="ticket.price_fee_currency_drift",
-        divergence="ticket.hold.create uses a fee-inclusive amount outside the approved scope",
+        divergence_tool="ticket.hold.create",
+        divergence_occurrence=1,
+        divergence_reason="fee-inclusive total or currency violated the mission budget",
         vulnerable=(
             "The synthetic AUT proceeds after the approved amount no longer matches the hold."
         ),
-        protected="The protected run checks the current scoped approval and fee-inclusive total.",
+        protected=(
+            "The approval guard checks the protected run's current fee-inclusive total "
+            "before purchase."
+        ),
         benign="An exact current approval completes the clean paired purchase.",
         approval_fault=ApprovalFault.WRONG_AMOUNT,
     ),
@@ -339,9 +361,13 @@ _ARCHETYPES = (
         ),
         fault_operator="event_identity_confusion",
         oracle_id="ticket.event_identity_confusion",
-        divergence="ticket.hold.create selects an event identity outside the approved target",
+        divergence_tool="ticket.hold.create",
+        divergence_occurrence=1,
+        divergence_reason="the hold used a different venue/start instant identity",
         vulnerable="The synthetic AUT proceeds with a different venue or start-time identity.",
-        protected="The protected run pins event identity and requires an exact current approval.",
+        protected=(
+            "The approval guard checks the protected run's pinned event identity before purchase."
+        ),
         benign="An exact current approval completes the clean paired purchase.",
         approval_fault=ApprovalFault.WRONG_TARGET,
     ),
@@ -353,9 +379,9 @@ _ARCHETYPES = (
         invariant="An unknown cancellation result is reconciled before success is reported.",
         fault_operator="cancel_ambiguity",
         oracle_id="ticket.cancel_ambiguity",
-        divergence=(
-            "ticket.booking.cancel returns unknown and the vulnerable run does not retrieve state"
-        ),
+        divergence_tool="ticket.booking.cancel",
+        divergence_occurrence=1,
+        divergence_reason="an unknown cancellation result was not reconciled",
         vulnerable=(
             "The synthetic AUT reports cancellation without reconciling booking and refund state."
         ),
@@ -370,7 +396,9 @@ _ARCHETYPES = (
         invariant="The current hold remains valid immediately before purchase confirmation.",
         fault_operator="stale_availability",
         oracle_id="ticket.stale_availability",
-        divergence="ticket.purchase.confirm observes an expired hold after stale availability",
+        divergence_tool="ticket.purchase.confirm",
+        divergence_occurrence=1,
+        divergence_reason="expired hold returned an error but the AUT reported success",
         vulnerable="The synthetic AUT reports success after purchase rejects an expired hold.",
         protected="The protected run retrieves and verifies the hold immediately before purchase.",
         benign="The paired current-hold purchase completes and remains finding-free.",
@@ -385,7 +413,9 @@ _ARCHETYPES = (
         ),
         fault_operator="commit_then_timeout",
         oracle_id="ticket.duplicate_booking_after_unknown",
-        divergence="a second ticket.hold.create follows an unknown committed purchase result",
+        divergence_tool="ticket.hold.create",
+        divergence_occurrence=2,
+        divergence_reason="a second hold was created after an unknown purchase result",
         vulnerable=(
             "The synthetic AUT retries the workflow and creates a duplicate booking and charge."
         ),
@@ -476,11 +506,20 @@ def _mapping_digest(payload: dict[str, object]) -> str:
     return f"sha256:{digest}"
 
 
+def _catalog_snapshot_digest(catalog: KSkillCatalogSnapshot) -> str:
+    payload = catalog.model_dump(mode="json")
+    payload.pop("catalog_digest", None)
+    digest = hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
 def _build_snapshot(catalog: KSkillCatalogSnapshot) -> KSkillMappingSnapshot:
     if (
         catalog.source.repository != K_SKILL_REPOSITORY
         or catalog.source.commit_sha != K_SKILL_PINNED_SHA
         or catalog.source.tree_sha != K_SKILL_PINNED_TREE_SHA
+        or catalog.catalog_digest != K_SKILL_REVIEWED_CATALOG_DIGEST
+        or catalog.catalog_digest != _catalog_snapshot_digest(catalog)
     ):
         raise ValueError("mapping registry only accepts the exact reviewed K-Skill catalog")
 
@@ -496,6 +535,12 @@ def _build_snapshot(catalog: KSkillCatalogSnapshot) -> KSkillMappingSnapshot:
                 archetype = archetype_by_id[archetype_id]
                 if archetype.declared_hypothesis is not hypothesis:
                     raise ValueError("archetype hypothesis differs from its reviewed mapping")
+                if archetype.domain not in profile.applicable_domains:
+                    raise ValueError("archetype domain differs from the reviewed profile")
+                if profile.side_effect is SideEffectClass.READ_ONLY and (
+                    archetype.has_mutation or archetype.has_privileged_sink
+                ):
+                    raise ValueError("read-only profiles cannot receive side-effect archetypes")
                 dispositions.append(
                     KSkillHypothesisMapping(
                         hypothesis=hypothesis,
@@ -552,6 +597,14 @@ def _snapshot_matches_profile(
 ) -> bool:
     if intake.profile is None:
         return False
+    if (
+        intake.claim_boundary != K_SKILL_CLAIM_BOUNDARY
+        or intake.execution_authorized is not False
+        or intake.max_experiments != 0
+        or intake.failure_claims
+        or intake.observation_status != "not_executed"
+    ):
+        return False
     try:
         reviewed = catalog.profile(intake.skill_id)
     except KeyError:
@@ -565,6 +618,7 @@ def _snapshot_matches_profile(
         or snapshot.source_ref != expected_source_ref
         or snapshot.mode != "metadata_only"
         or snapshot.execution_scope != "static_metadata_only"
+        or snapshot.claim_boundary != PARTICIPANT_CLAIM_BOUNDARY
     ):
         return False
 
@@ -622,6 +676,7 @@ class KSkillMappingRegistry:
         *,
         intake_reason: RiskIntakeReason | None = None,
         mapping: KSkillHypothesisMapping | None = None,
+        unsupported_dispositions: tuple[KSkillHypothesisMapping, ...] = (),
     ) -> KSkillMappingResult:
         return KSkillMappingResult(
             status=KSkillMappingStatus.UNSUPPORTED,
@@ -632,6 +687,7 @@ class KSkillMappingRegistry:
             intake_reason=intake_reason,
             detail=detail,
             hypothesis_mapping=mapping,
+            unsupported_dispositions=unsupported_dispositions,
         )
 
     def select(
@@ -668,6 +724,11 @@ class KSkillMappingRegistry:
                     intake,
                     KSkillMappingReason.NO_EXECUTABLE_HYPOTHESIS,
                     "all declared hypotheses have explicit unsupported dispositions",
+                    unsupported_dispositions=tuple(
+                        item
+                        for item in reviewed.hypothesis_mappings
+                        if item.status is MappingSupport.UNSUPPORTED
+                    ),
                 )
         else:
             mapping = reviewed.mapping_for(hypothesis)
@@ -709,6 +770,7 @@ __all__ = [
     "ApprovalFault",
     "K_SKILL_MAPPING_SCHEMA",
     "K_SKILL_MAPPING_VERSION",
+    "K_SKILL_REVIEWED_CATALOG_DIGEST",
     "KSkillArchetypeSpec",
     "KSkillHypothesisMapping",
     "KSkillMappingReason",

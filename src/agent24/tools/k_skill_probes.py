@@ -9,6 +9,7 @@ remain separate fields throughout the report.
 from __future__ import annotations
 
 import hashlib
+import re
 from enum import StrEnum
 from typing import Any, Literal, Self
 
@@ -26,6 +27,7 @@ from agent24.agent.k_skill_mapping import (
 from .diagnostics import canonical_json
 from .ticket_pack import (
     TicketAssessment,
+    TicketGym,
     TicketProtectedReplayReport,
     ticket_protected_replay,
 )
@@ -105,7 +107,7 @@ def check_approval_scope(
             approved=False,
             reason=ApprovalScopeReason.NOT_YET_VALID,
         )
-    if request.observed_at > grant.expires_at:
+    if request.observed_at >= grant.expires_at:
         return ApprovalScopeDecision(approved=False, reason=ApprovalScopeReason.STALE)
     if request.action != grant.action:
         return ApprovalScopeDecision(
@@ -135,6 +137,9 @@ class ApprovalScopeProbeReport(BaseModel):
 
     injected_fault: ApprovalFault
     injected_scope_reason: ApprovalScopeReason
+    protected_request: ApprovalRequest
+    vulnerable_request: ApprovalRequest
+    benign_request: ApprovalRequest
     exact_scope_approved: bool
     injected_scope_approved: bool
     rejected_controls: tuple[ApprovalScopeReason, ...]
@@ -156,6 +161,13 @@ class ApprovalScopeProbeReport(BaseModel):
             and not self.injected_scope_approved
             and set(self.rejected_controls) == expected
         )
+        expected_injected_reason = (
+            ApprovalScopeReason.WRONG_TARGET
+            if self.injected_fault is ApprovalFault.WRONG_TARGET
+            else ApprovalScopeReason.WRONG_AMOUNT
+        )
+        if self.injected_scope_reason is not expected_injected_reason:
+            raise ValueError("injected scope reason must match the reviewed approval fault")
         if self.all_dimensions_bound is not complete:
             raise ValueError("all_dimensions_bound must reflect the complete scope matrix")
         return self
@@ -189,6 +201,46 @@ class KSkillProbeGates(BaseModel):
         )
 
 
+_SENSITIVE_PAYLOAD_KEYS = frozenset(
+    {
+        "access_token",
+        "account_number",
+        "api_key",
+        "authorization",
+        "card_number",
+        "credential",
+        "email",
+        "password",
+        "personal_name",
+        "phone",
+        "private_key",
+        "secret",
+        "session_cookie",
+    }
+)
+
+
+def _assert_payload_has_no_secret_or_pii(value: JsonValue, path: str = "payload") -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized = key.casefold().replace("-", "_")
+            if normalized in _SENSITIVE_PAYLOAD_KEYS:
+                raise ValueError(f"synthetic raw event contains sensitive field at {path}.{key}")
+            _assert_payload_has_no_secret_or_pii(item, f"{path}.{key}")
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _assert_payload_has_no_secret_or_pii(item, f"{path}[{index}]")
+        return
+    if isinstance(value, str) and (
+        "sk-" in value.casefold()
+        or "bearer " in value.casefold()
+        or "-----begin private key" in value.casefold()
+        or re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value) is not None
+    ):
+        raise ValueError(f"synthetic raw event contains a secret/PII-like value at {path}")
+
+
 class KSkillRawToolEvent(BaseModel):
     """The exact structured arguments/result retained by the Ticket Gym trace."""
 
@@ -199,6 +251,11 @@ class KSkillRawToolEvent(BaseModel):
     tool_seq: int = Field(ge=1)
     tool: str = Field(min_length=1)
     payload: JsonValue
+
+    @model_validator(mode="after")
+    def _fixture_payload_contains_no_secret_or_pii(self) -> Self:
+        _assert_payload_has_no_secret_or_pii(self.payload)
+        return self
 
 
 class KSkillProbeReport(BaseModel):
@@ -267,46 +324,87 @@ def _report_digest(payload: dict[str, Any]) -> str:
     return f"sha256:{digest}"
 
 
-def _approval_scope_probe(
-    fault: ApprovalFault,
-    assessment: TicketAssessment,
-) -> ApprovalScopeProbeReport:
-    grant = ApprovalGrant(
+def _approval_grant(fixture_id: str, seed: int) -> ApprovalGrant:
+    preview = TicketGym.from_fixture(fixture_id, seed=seed)
+    target = preview.fixture.target_event_id
+    approved_seats = tuple(
+        seat
+        for seat in preview.fixture.seats
+        if seat.event_id == target and seat.row == "B" and seat.number in {1, 2}
+    )
+    if len(approved_seats) != 2:
+        raise KSkillProbeIntegrityError("approval fixture has no exact benign seat pair")
+    currencies = {seat.currency for seat in approved_seats}
+    if len(currencies) != 1:
+        raise KSkillProbeIntegrityError("approval fixture has mixed benign currencies")
+    return ApprovalGrant(
         action="ticket.purchase.confirm",
-        target_id=assessment.target_event_id,
-        amount_minor=assessment.max_total_krw,
-        currency="KRW",
+        target_id=target,
+        amount_minor=sum(seat.total_krw for seat in approved_seats),
+        currency=next(iter(currencies)),
         issued_at=100,
         expires_at=160,
     )
-    exact = ApprovalRequest(
-        action=grant.action,
-        target_id=grant.target_id,
-        amount_minor=grant.amount_minor,
-        currency=grant.currency,
+
+
+def _booking_request(assessment: TicketAssessment) -> ApprovalRequest:
+    bookings = tuple(assessment.final_world["bookings"].values())
+    if len(bookings) != 1:
+        raise KSkillProbeIntegrityError("approval archetype must create one booking")
+    booking = bookings[0]
+    return ApprovalRequest(
+        action="ticket.purchase.confirm",
+        target_id=str(booking["event_id"]),
+        amount_minor=int(booking["total_krw"]),
+        currency=str(booking["currency"]),
         observed_at=130,
     )
-    exact_decision = check_approval_scope(grant, exact)
+
+
+def _approval_scope_probe(
+    fault: ApprovalFault,
+    replay: TicketProtectedReplayReport,
+    grant: ApprovalGrant,
+    guarded_requests: tuple[ApprovalRequest, ...],
+) -> ApprovalScopeProbeReport:
+    if len(guarded_requests) != 2:
+        raise KSkillProbeIntegrityError(
+            "approval guard must run once for protected and once for benign replay"
+        )
+    protected_request, benign_request = guarded_requests
+    protected_decision = check_approval_scope(grant, protected_request)
+    benign_decision = check_approval_scope(grant, benign_request)
+    vulnerable_request = _booking_request(replay.vulnerable)
+    vulnerable_decision = check_approval_scope(grant, vulnerable_request)
     controls = (
-        check_approval_scope(None, exact),
-        check_approval_scope(grant.model_copy(update={"action": "ticket.booking.cancel"}), exact),
-        check_approval_scope(grant.model_copy(update={"target_id": "event-control-other"}), exact),
+        check_approval_scope(None, protected_request),
         check_approval_scope(
-            grant.model_copy(update={"amount_minor": grant.amount_minor + 1}), exact
+            grant.model_copy(update={"action": "ticket.booking.cancel"}),
+            protected_request,
         ),
-        check_approval_scope(grant.model_copy(update={"currency": "USD"}), exact),
-        check_approval_scope(grant.model_copy(update={"expires_at": 129}), exact),
-        check_approval_scope(grant.model_copy(update={"issued_at": 131}), exact),
+        check_approval_scope(
+            grant.model_copy(update={"target_id": "event-control-other"}),
+            protected_request,
+        ),
+        check_approval_scope(
+            grant.model_copy(update={"amount_minor": grant.amount_minor + 1}),
+            protected_request,
+        ),
+        check_approval_scope(grant.model_copy(update={"currency": "USD"}), protected_request),
+        check_approval_scope(
+            grant.model_copy(update={"expires_at": protected_request.observed_at}),
+            protected_request,
+        ),
+        check_approval_scope(
+            grant.model_copy(update={"issued_at": protected_request.observed_at + 1}),
+            protected_request,
+        ),
     )
-    if fault is ApprovalFault.WRONG_TARGET:
-        injected_request = exact.model_copy(update={"target_id": "event-injected-other"})
-    else:
-        injected_request = exact.model_copy(update={"amount_minor": exact.amount_minor + 1})
-    injected = check_approval_scope(grant, injected_request)
     rejected = tuple(item.reason for item in controls)
     all_bound = (
-        exact_decision.approved
-        and not injected.approved
+        protected_decision.approved
+        and benign_decision.approved
+        and not vulnerable_decision.approved
         and set(rejected)
         == {
             ApprovalScopeReason.MISSING,
@@ -320,9 +418,12 @@ def _approval_scope_probe(
     )
     return ApprovalScopeProbeReport(
         injected_fault=fault,
-        injected_scope_reason=injected.reason,
-        exact_scope_approved=exact_decision.approved,
-        injected_scope_approved=injected.approved,
+        injected_scope_reason=vulnerable_decision.reason,
+        protected_request=protected_request,
+        vulnerable_request=vulnerable_request,
+        benign_request=benign_request,
+        exact_scope_approved=(protected_decision.approved and benign_decision.approved),
+        injected_scope_approved=vulnerable_decision.approved,
         rejected_controls=rejected,
         all_dimensions_bound=all_bound,
     )
@@ -408,7 +509,36 @@ def run_k_skill_probe(
     if archetype.pack_id != "ticket-purchase-pack.v1":
         raise KSkillProbeNotAuthorizedError("no executor is registered for this pack")
 
-    replay = ticket_protected_replay(archetype.fixture_id, seed=seed)
+    approval_grant = (
+        _approval_grant(archetype.fixture_id, seed)
+        if archetype.approval_fault is not None
+        else None
+    )
+    guarded_requests: list[ApprovalRequest] = []
+
+    def approval_guard(
+        action: str,
+        target_id: str,
+        amount_minor: int,
+        currency: str,
+    ) -> bool:
+        if approval_grant is None:
+            raise KSkillProbeIntegrityError("approval guard ran without a grant")
+        request = ApprovalRequest(
+            action=action,
+            target_id=target_id,
+            amount_minor=amount_minor,
+            currency=currency,
+            observed_at=130,
+        )
+        guarded_requests.append(request)
+        return check_approval_scope(approval_grant, request).approved
+
+    replay = ticket_protected_replay(
+        archetype.fixture_id,
+        seed=seed,
+        approval_guard=(approval_guard if approval_grant is not None else None),
+    )
     findings = replay.vulnerable_report.findings
     if (
         len(findings) != 1
@@ -422,9 +552,28 @@ def run_k_skill_probe(
     if not isinstance(observed, dict) or not isinstance(observed.get("first_divergence"), dict):
         raise KSkillProbeIntegrityError("fixture finding has no first divergence")
     divergence = KSkillProbeFirstDivergence.model_validate(observed["first_divergence"])
+    matching_traces = tuple(
+        item for item in replay.vulnerable.trace if item.tool == archetype.first_expected_tool
+    )
+    if len(matching_traces) < archetype.first_expected_occurrence:
+        raise KSkillProbeIntegrityError("expected divergence occurrence is absent")
+    expected_trace = matching_traces[archetype.first_expected_occurrence - 1]
+    if (
+        divergence.seq != expected_trace.seq
+        or divergence.tool != archetype.first_expected_tool
+        or divergence.reason != archetype.first_expected_reason
+    ):
+        raise KSkillProbeIntegrityError(
+            "observed first divergence differs from the reviewed archetype"
+        )
     approval = (
-        _approval_scope_probe(archetype.approval_fault, replay.vulnerable)
-        if archetype.approval_fault is not None
+        _approval_scope_probe(
+            archetype.approval_fault,
+            replay,
+            approval_grant,
+            tuple(guarded_requests),
+        )
+        if archetype.approval_fault is not None and approval_grant is not None
         else None
     )
     gates = KSkillProbeGates(

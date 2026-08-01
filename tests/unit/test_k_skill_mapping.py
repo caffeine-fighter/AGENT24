@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+
+import pytest
+
 from agent24.agent.k_skill_intake import (
     K_SKILL_PINNED_SHA,
     K_SKILL_PINNED_TREE_SHA,
@@ -13,12 +17,15 @@ from agent24.agent.k_skill_intake import (
     metadata_fixture_for_catalog,
 )
 from agent24.agent.k_skill_mapping import (
+    K_SKILL_REVIEWED_CATALOG_DIGEST,
     KSkillMappingReason,
     KSkillMappingStatus,
     MappingSupport,
+    MappingUnsupportedReason,
     load_k_skill_mapping_registry,
 )
-from agent24.agent.packs import PACKS_BY_ID
+from agent24.agent.models import canonical_json
+from agent24.agent.packs import PACKS_BY_ID, DomainKind
 from agent24.agent.participant_intake import MappingEvidenceMetadataFetcher
 from agent24.agent.source import SourceDescriptor
 
@@ -74,6 +81,7 @@ def test_registry_accounts_for_every_declared_hypothesis_for_all_13_profiles() -
     assert registry.snapshot.source_commit_sha == K_SKILL_PINNED_SHA
     assert registry.snapshot.source_tree_sha == K_SKILL_PINNED_TREE_SHA
     assert registry.snapshot.catalog_digest == catalog.catalog_digest
+    assert registry.snapshot.catalog_digest == K_SKILL_REVIEWED_CATALOG_DIGEST
     assert tuple(item.skill_id for item in registry.snapshot.profiles) == tuple(
         sorted(K_SKILL_SHORTLIST)
     )
@@ -118,13 +126,14 @@ def test_executable_entries_reference_real_pack_fixtures_and_declared_faults() -
             archetype = registry.archetype(mapping.archetype_id)
             pack = PACKS_BY_ID[archetype.pack_id]
             assert mapping.hypothesis in profile.fault_hypotheses
+            assert archetype.domain in profile.applicable_domains
             assert archetype.fixture_id in pack.fixture_ids
             assert archetype.fault_operator in pack.fault_families
             assert pack.supports_protected_replay is True
             assert pack.supports_benign_control is True
 
 
-def test_read_only_profiles_never_gain_mutation_or_privileged_sink_archetypes() -> None:
+def test_read_only_profiles_are_explicitly_unsupported_without_mutating_fallback() -> None:
     catalog = load_k_skill_catalog()
     registry = load_k_skill_mapping_registry(catalog)
 
@@ -132,12 +141,42 @@ def test_read_only_profiles_never_gain_mutation_or_privileged_sink_archetypes() 
         if profile.side_effect is not SideEffectClass.READ_ONLY:
             continue
         reviewed = registry.profile(profile.skill_id)
-        for mapping in reviewed.hypothesis_mappings:
-            if mapping.status is not MappingSupport.EXECUTABLE:
-                continue
-            archetype = registry.archetype(mapping.archetype_id)
-            assert archetype.has_mutation is False
-            assert archetype.has_privileged_sink is False
+        assert reviewed.hypothesis_mappings
+        assert all(
+            mapping.status is MappingSupport.UNSUPPORTED for mapping in reviewed.hypothesis_mappings
+        )
+        assert all(mapping.archetype_id is None for mapping in reviewed.hypothesis_mappings)
+
+
+def test_self_consistent_changed_catalog_cannot_reuse_the_reviewed_mapping() -> None:
+    catalog = load_k_skill_catalog()
+    changed_profiles = tuple(
+        profile.model_copy(update={"applicable_domains": (DomainKind.ADHOC,)})
+        if profile.skill_id == "srt-booking"
+        else profile
+        for profile in catalog.profiles
+    )
+    changed = catalog.model_copy(update={"profiles": changed_profiles})
+    payload = changed.model_dump(mode="json")
+    payload.pop("catalog_digest", None)
+    changed_digest = hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+    changed = changed.model_copy(update={"catalog_digest": f"sha256:{changed_digest}"})
+
+    with pytest.raises(ValueError, match="exact reviewed K-Skill catalog"):
+        load_k_skill_mapping_registry(changed)
+
+
+def test_profile_with_no_default_returns_every_concrete_unsupported_disposition() -> None:
+    catalog, intake = _intake("court-payment-order-assistant")
+
+    result = load_k_skill_mapping_registry(catalog).select(intake)
+
+    assert result.status is KSkillMappingStatus.UNSUPPORTED
+    assert result.reason is KSkillMappingReason.NO_EXECUTABLE_HYPOTHESIS
+    assert result.unsupported_dispositions
+    assert {item.reason for item in result.unsupported_dispositions} == {
+        MappingUnsupportedReason.DOMAIN_REPLAY_UNAVAILABLE
+    }
 
 
 def test_profile_rebinding_stops_before_an_archetype_is_selected() -> None:
@@ -158,6 +197,24 @@ def test_profile_rebinding_stops_before_an_archetype_is_selected() -> None:
     assert result.archetype is None
     assert result.synthetic_execution_authorized is False
     assert result.target_observation_status == "not_executed"
+
+
+def test_nested_snapshot_claim_boundary_cannot_be_rebound_before_selection() -> None:
+    catalog, intake = _intake("srt-booking")
+    rebound = intake.model_copy(
+        update={
+            "source_snapshot": intake.source_snapshot.model_copy(
+                update={"claim_boundary": "TARGET IS SAFE"}
+            )
+        }
+    )
+
+    result = load_k_skill_mapping_registry(catalog).select(rebound)
+
+    assert result.status is KSkillMappingStatus.UNSUPPORTED
+    assert result.reason is KSkillMappingReason.INTAKE_INTEGRITY_MISMATCH
+    assert result.archetype is None
+    assert result.synthetic_execution_authorized is False
 
 
 def test_changed_source_stays_typed_unsupported_without_mapping_lookup() -> None:

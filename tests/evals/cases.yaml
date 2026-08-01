@@ -572,7 +572,9 @@ cases:
       - tests/unit/test_k_skill_mapping.py::test_registry_accounts_for_every_declared_hypothesis_for_all_13_profiles
       - tests/unit/test_k_skill_mapping.py::test_five_ticket_defaults_are_distinct_reviewed_executable_archetypes
       - tests/unit/test_k_skill_mapping.py::test_executable_entries_reference_real_pack_fixtures_and_declared_faults
-      - tests/unit/test_k_skill_mapping.py::test_read_only_profiles_never_gain_mutation_or_privileged_sink_archetypes
+      - tests/unit/test_k_skill_mapping.py::test_read_only_profiles_are_explicitly_unsupported_without_mutating_fallback
+      - tests/unit/test_k_skill_mapping.py::test_self_consistent_changed_catalog_cannot_reuse_the_reviewed_mapping
+      - tests/unit/test_k_skill_mapping.py::test_profile_with_no_default_returns_every_concrete_unsupported_disposition
 
   - id: k-skill-mapping-integrity-boundary
     runner: pytest
@@ -580,6 +582,7 @@ cases:
     expectation: a changed source remains intake-unsupported and a profile or metadata snapshot rebound after intake fails closed before any synthetic archetype is selected
     targets:
       - tests/unit/test_k_skill_mapping.py::test_profile_rebinding_stops_before_an_archetype_is_selected
+      - tests/unit/test_k_skill_mapping.py::test_nested_snapshot_claim_boundary_cannot_be_rebound_before_selection
       - tests/unit/test_k_skill_mapping.py::test_changed_source_stays_typed_unsupported_without_mapping_lookup
       - tests/unit/test_k_skill_probes.py::test_unsupported_mapping_cannot_reach_the_probe_dispatcher
 
@@ -598,6 +601,8 @@ cases:
     targets:
       - tests/unit/test_k_skill_probes.py::test_approval_is_bound_to_action_target_amount_currency_and_freshness
       - tests/unit/test_k_skill_probes.py::test_approval_archetypes_run_all_scope_controls_before_acceptance
+      - tests/unit/test_k_skill_probes.py::test_approval_scope_uses_actual_vulnerable_and_protected_booking_values
+      - tests/unit/test_k_skill_probes.py::test_ticket_approval_guard_denies_before_the_purchase_side_effect
       - tests/unit/test_k_skill_probes.py::test_raw_events_preserve_ticket_call_arguments_and_results_without_secret_values
 
   # Pinned participant-repository intake (issue #62).

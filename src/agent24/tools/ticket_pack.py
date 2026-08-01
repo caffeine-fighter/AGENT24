@@ -11,7 +11,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any, Literal
@@ -23,6 +23,7 @@ from .ledger import SideEffectLedger
 
 DEFAULT_TICKET_SEED = 42
 MAX_TICKET_TOOL_CALL_BUDGET = 16
+TicketApprovalGuard = Callable[[str, str, int, str], bool]
 TICKET_CLEAN_FIXTURE = "ticket.clean-control.v1"
 TICKET_FULL_FIXTURE = "ticket.full-demo.v1"
 
@@ -1052,7 +1053,10 @@ class TicketGym:
         )
 
     def protected_assessment(
-        self, policy: TicketReplayPolicy | None = None
+        self,
+        policy: TicketReplayPolicy | None = None,
+        *,
+        approval_guard: TicketApprovalGuard | None = None,
     ) -> TicketAssessment:
         active_policy = policy or TicketReplayPolicy()
         self._reset()
@@ -1105,6 +1109,20 @@ class TicketGym:
                     seat_ids=seat_ids,
                     idempotency_key="hold-after-expiry",
                 )
+        if approval_guard is not None and not approval_guard(
+            "ticket.purchase.confirm",
+            str(hold["event_id"]),
+            int(hold["total_krw"]),
+            str(hold["currency"]),
+        ):
+            return self._assessment(
+                run_kind="protected",
+                selected_event_id=selected_event_id,
+                reported_success=False,
+                purchase_unknown_without_reconcile=False,
+                cancel_unknown_without_reconcile=False,
+                blocked_all_purchases=False,
+            )
         purchase = self.call(
             "ticket.purchase.confirm",
             hold_id=hold["hold_id"],
@@ -1661,6 +1679,7 @@ def ticket_protected_replay(
     *,
     seed: int = DEFAULT_TICKET_SEED,
     policy: TicketReplayPolicy | None = None,
+    approval_guard: TicketApprovalGuard | None = None,
 ) -> TicketProtectedReplayReport:
     if fixture_id not in TICKET_FAILURE_FIXTURES:
         raise ValueError("protected replay requires a ticket failure fixture")
@@ -1671,12 +1690,18 @@ def ticket_protected_replay(
     vulnerable_report = vulnerable_gym.diagnose(vulnerable)
 
     protected_gym = TicketGym.from_fixture(fixture_id, seed=seed)
-    protected = protected_gym.protected_assessment(active_policy)
+    protected = protected_gym.protected_assessment(
+        active_policy,
+        approval_guard=approval_guard,
+    )
     protected_report = protected_gym.diagnose(protected)
 
     benign_id = TICKET_BENIGN_FIXTURES.get(fixture_id, TICKET_CLEAN_FIXTURE)
     benign_gym = TicketGym.from_fixture(benign_id, seed=seed)
-    benign = benign_gym.protected_assessment(active_policy)
+    benign = benign_gym.protected_assessment(
+        active_policy,
+        approval_guard=approval_guard,
+    )
     benign = replace(benign, run_kind="benign_control")
     benign_report = benign_gym.diagnose(benign)
 
@@ -1733,6 +1758,7 @@ __all__ = [
     "TICKET_PACK_METADATA",
     "TICKET_TOOL_MANIFEST",
     "TicketAssessment",
+    "TicketApprovalGuard",
     "TicketBooking",
     "TicketCharge",
     "TicketDomainPackAdapter",
