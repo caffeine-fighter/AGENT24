@@ -117,7 +117,10 @@ def _sse_data(body: str) -> list[dict[str, Any]]:
 
 
 def _jsonl_events(root: Path, run_id: str) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in (root / f"{run_id}.jsonl").read_text().splitlines()]
+    return [
+        json.loads(line)
+        for line in (root / f"{run_id}.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
 
 
 def test_live_run_uses_mocked_openai_client_and_preserves_raw_tool_items(
@@ -143,6 +146,7 @@ def test_live_run_uses_mocked_openai_client_and_preserves_raw_tool_items(
 
     sse_events = _sse_data(sse_response.text)
     jsonl_events = _jsonl_events(tmp_path, run_id)
+    assert "event:" not in sse_response.text
     assert sse_events == jsonl_events
     assert [event["seq"] for event in sse_events] == list(range(len(sse_events)))
     assert {event["run_id"] for event in sse_events} == {run_id}
@@ -168,7 +172,7 @@ def test_live_run_uses_mocked_openai_client_and_preserves_raw_tool_items(
     assert _MockedOpenAIClient.last is not None
     assert _MockedOpenAIClient.last.init_kwargs["api_key"] == "test-only-key"
     assert "test-only-key" not in sse_response.text
-    assert "test-only-key" not in (tmp_path / f"{run_id}.jsonl").read_text()
+    assert "test-only-key" not in (tmp_path / f"{run_id}.jsonl").read_text(encoding="utf-8")
 
 
 def test_missing_key_is_explicit_offline_demo(monkeypatch, tmp_path: Path) -> None:
@@ -202,3 +206,42 @@ def test_timeout_emits_failure_then_offline_fallback(monkeypatch, tmp_path: Path
     assert failure["payload"] == {"status": "offline_demo", "code": "timeout"}
     assert any(event["type"] == "offline_demo" for event in events)
     assert events[-1]["type"] == "run_completed"
+
+
+def test_single_origin_serves_demo_assets_before_static_catch_all(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    repository_root = Path(__file__).resolve().parents[2]
+    app = create_app(artifact_root=tmp_path, web_root=repository_root / "web")
+
+    with TestClient(app) as client:
+        root = client.get("/")
+        script = client.get("/src/app.mjs")
+        health = client.get("/health")
+        accepted = client.post("/api/runs", json={"input": "single-origin smoke test"})
+        events = client.get(accepted.json()["events_url"])
+        traversal = client.get("/%2e%2e/pyproject.toml")
+
+    assert root.status_code == 200
+    assert "NIGHTMARE" in root.text
+    assert script.status_code == 200
+    assert "startLiveRun" in script.text
+    assert health.status_code == 200
+    assert accepted.status_code == 202
+    assert events.status_code == 200
+    assert "tool_call" in events.text
+    assert traversal.status_code == 404
+
+
+def test_missing_web_directory_keeps_api_available(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = create_app(artifact_root=tmp_path, web_root=tmp_path / "missing-web")
+
+    with TestClient(app) as client:
+        root = client.get("/")
+        health = client.get("/health")
+
+    assert root.status_code == 200
+    assert root.json()["web_status"] == "missing"
+    assert health.json()["status"] == "ok"
