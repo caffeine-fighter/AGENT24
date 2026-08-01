@@ -1,8 +1,9 @@
 # 외부 Agent source·manifest 계약
 
 이 문서는 외부 Agent를 Gym에 넣기 전의 P0 입력 경계를 고정한다. 입력은
-**GitHub 공개 저장소 URL + 선택적 ref**이며, source 내용은 실행하지 않고
-metadata와 allowlist된 manifest만 읽는다.
+**GitHub 공개 저장소 URL + 선택적 ref**이며, source 내용은 실행하지 않는다.
+owner manifest를 우선 읽고, manifest가 없을 때만 별도 검토된 static metadata
+profile을 사용할 수 있다.
 
 ## 1. SourceDescriptor
 
@@ -71,3 +72,15 @@ JSON/schema, path traversal, allowlist 밖 파일, symlink는 typed error다.
 저장소 루트의 `.agent24/manifest.json`은 known-good 데모 AUT 계약이다. private
 repository를 입력할 때는 로컬 `.env`의 `GITHUB_TOKEN`을 사용할 수 있으며, 토큰은
 GitHub metadata/contents 요청 헤더에만 전달되고 event·JSONL·오류 문구에 포함되지 않는다.
+
+## 3. Manifest 없는 participant source
+
+manifest 부재는 곧바로 오류나 임의의 synthetic fallback을 뜻하지 않는다. exact
+`repository@resolved_sha`가 reviewed static registry에 있으면 최대 4개 allowlisted
+path의 Git blob SHA·size·object type을 다시 확인해 compatibility profile을 만든다.
+owner manifest가 나중에 추가되면 static profile보다 항상 우선한다.
+
+Static profile은 `OWNER MANIFEST`와 혼동하지 않도록
+`LAB-INFERRED STATIC PROFILE`로 표시하며 experiments 0, findings 0인 report에서
+종료한다. 세부 path policy, audited source, event 계약은
+[`participant-repository-intake.md`](participant-repository-intake.md)를 따른다.

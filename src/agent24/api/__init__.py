@@ -11,6 +11,7 @@ from .preflight import (
     ManifestResponseError,
     ManifestUnavailableError,
     MappingManifestFetcher,
+    ParticipantCompatibilityResult,
 )
 from .runtime import OpenAIWhiteBoxAdapter
 
@@ -24,6 +25,7 @@ __all__ = [
     "ManifestResponseError",
     "ManifestUnavailableError",
     "MappingManifestFetcher",
+    "ParticipantCompatibilityResult",
     "RunAccepted",
     "RunRequest",
     "RuntimeSettings",
