@@ -30,7 +30,7 @@ execute the cases themselves.
 | `pytest` | `targets:` node ids | those nodes, via `pytest` |
 | `site` | `targets:` paths under `site/` | `node --test`, when node and the site build exist |
 | `gym_fixture` | `fixture_id` / `seed` / checks | loads the real fixture; runs `protected_replay` when declared |
-| `runtime_events` | `input` / `mode` / `expected_event_types` | a real `POST /api/runs` run and its SSE + JSONL streams |
+| `runtime_events` | `input` / `mode` / `expected_event_types` | a real `POST /api/runs` run and its SSE + JSONL streams, in **both** modes |
 
 ## Rules the schema enforces
 
@@ -43,15 +43,30 @@ execute the cases themselves.
   refuses quotes, `;`, `&`, `|`, `$`, backticks, `..` and pytest flags.
 - **No unbacked claims.** `expected_protected_state` requires the
   `protected_replay` checks that prove it.
-- **Live runs name their test.** A `mode: live` case needs a mocked OpenAI
-  client, which lives in the test suite, so it must bind to that node via
-  `proves` rather than duplicating the stub.
+- **No unbacked live passes.** A `mode: live` case runs the production
+  provider, runner and event path against `agent24.evals.live_stub`, a
+  network-free Responses API double shared with the test suite. Its own
+  `input`, `expected_event_types` and `forbid_in_stream` drive the run, so
+  editing the declaration changes the result (issue #120).
 
 ## `proves`
 
 A declarative case's `expectation` is prose. Where the harness cannot decide it,
-`proves` names the pytest nodes that do, and the runner executes them. Nothing
-is reported as machine-checked unless it was.
+`proves` names the pytest nodes that do, and the runner executes them. It is
+optional extra binding, not the only thing that runs.
+
+## Machine-checked vs prose
+
+Each case line says how much was actually machined:
+
+```
+[PASS] life_payment_intent_timeout_requires_reconciliation (gym_fixture) -- 8 checked, prose-only: expectation, expected_protected_state
+```
+
+`expectation` and `expected_protected_state` are human-readable claims. The
+structured fields next to them (`protected_replay`, `expected_event_types`,
+`forbid_in_stream`, ...) are what ran. A green line never implies the prose was
+verified mechanically.
 
 ## Output
 

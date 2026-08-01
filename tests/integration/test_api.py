@@ -1,19 +1,10 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
-from openai.types.responses import (
-    Response,
-    ResponseCompletedEvent,
-    ResponseFunctionToolCall,
-    ResponseOutputItemDoneEvent,
-    ResponseOutputMessage,
-    ResponseOutputText,
-)
 
 from agent24.agent import (
     PAPER_PLAYGROUND_SHA,
@@ -30,6 +21,7 @@ from agent24.api import (
     RuntimeSettings,
     create_app,
 )
+from agent24.evals.live_stub import StubOpenAIClient
 
 PINNED_SHA = "0123456789abcdef0123456789abcdef01234567"
 
@@ -83,96 +75,6 @@ def _target_payload(*, repository_url: str = "https://github.com/example/cake-ag
     }
 
 
-def _response(*, response_id: str, output: list[Any]) -> Response:
-    # ``model_construct`` lets the fixture stay focused on the fields consumed
-    # by the official Agents SDK runner, without inventing provider metadata.
-    return Response.model_construct(
-        id=response_id,
-        created_at=0.0,
-        model="gpt-4.1-mini",
-        object="response",
-        output=output,
-        status="completed",
-        usage=None,
-    )
-
-
-class _MockedOpenAIClient:
-    """Small Responses API client double used through ``OpenAIProvider``."""
-
-    last: _MockedOpenAIClient | None = None
-
-    def __init__(self, **kwargs: Any) -> None:
-        self.init_kwargs = kwargs
-        self.requests: list[dict[str, Any]] = []
-        self.responses = self
-        type(self).last = self
-
-    async def create(self, **kwargs: Any) -> AsyncIterator[Any]:
-        self.requests.append(kwargs)
-        input_items = kwargs.get("input", [])
-        has_tool_output = any(
-            (item.get("type") if isinstance(item, dict) else getattr(item, "type", None))
-            == "function_call_output"
-            for item in input_items
-        ) if isinstance(input_items, list) else False
-
-        if not has_tool_output:
-            function_call = ResponseFunctionToolCall(
-                id="fc_mock_1",
-                call_id="call_mock_1",
-                name="inspect_synthetic_gym",
-                arguments='{"query":"loop"}',
-                type="function_call",
-                status="completed",
-            )
-            response = _response(response_id="resp_mock_1", output=[function_call])
-            events = [
-                ResponseOutputItemDoneEvent(
-                    item=function_call,
-                    output_index=0,
-                    sequence_number=1,
-                    type="response.output_item.done",
-                ),
-                ResponseCompletedEvent(
-                    response=response,
-                    sequence_number=2,
-                    type="response.completed",
-                ),
-            ]
-        else:
-            output_text = ResponseOutputText(
-                annotations=[], text="Mock final diagnosis", type="output_text"
-            )
-            message = ResponseOutputMessage(
-                id="msg_mock_1",
-                content=[output_text],
-                role="assistant",
-                status="completed",
-                type="message",
-            )
-            response = _response(response_id="resp_mock_2", output=[message])
-            events = [
-                ResponseOutputItemDoneEvent(
-                    item=message,
-                    output_index=0,
-                    sequence_number=1,
-                    type="response.output_item.done",
-                ),
-                ResponseCompletedEvent(
-                    response=response,
-                    sequence_number=2,
-                    type="response.completed",
-                ),
-            ]
-
-        async def stream() -> AsyncIterator[Any]:
-            for event in events:
-                yield event
-
-        return stream()
-
-
 def _sse_data(body: str) -> list[dict[str, Any]]:
     return [
         json.loads(line.removeprefix("data: "))
@@ -197,7 +99,7 @@ def test_live_run_uses_mocked_openai_client_and_preserves_raw_tool_items(
     # constructor is replaced, so the test never makes a network request.
     import agents.models.openai_provider as provider_module
 
-    monkeypatch.setattr(provider_module, "AsyncOpenAI", _MockedOpenAIClient)
+    monkeypatch.setattr(provider_module, "AsyncOpenAI", StubOpenAIClient)
     app = create_app(artifact_root=tmp_path)
 
     with TestClient(app) as client:
@@ -234,8 +136,8 @@ def test_live_run_uses_mocked_openai_client_and_preserves_raw_tool_items(
     }
     assert sse_events[2]["payload"]["type"] == "function_call_output"
     assert sse_events[3]["payload"] == {"text": "Mock final diagnosis"}
-    assert _MockedOpenAIClient.last is not None
-    assert _MockedOpenAIClient.last.init_kwargs["api_key"] == "test-only-key"
+    assert StubOpenAIClient.last is not None
+    assert StubOpenAIClient.last.init_kwargs["api_key"] == "test-only-key"
     assert "test-only-key" not in sse_response.text
     assert "test-only-key" not in (tmp_path / f"{run_id}.jsonl").read_text(encoding="utf-8")
 
@@ -689,7 +591,7 @@ def test_live_target_passes_bounded_synthetic_evidence_to_openai(
     monkeypatch.setenv("OPENAI_API_KEY", "test-only-key")
     import agents.models.openai_provider as provider_module
 
-    monkeypatch.setattr(provider_module, "AsyncOpenAI", _MockedOpenAIClient)
+    monkeypatch.setattr(provider_module, "AsyncOpenAI", StubOpenAIClient)
     runtime = OpenAIWhiteBoxAdapter(preflight=_external_preflight())
     app = create_app(runtime=runtime, artifact_root=tmp_path)
 
@@ -711,8 +613,8 @@ def test_live_target_passes_bounded_synthetic_evidence_to_openai(
         "findings": 1,
         "safety_boundary": "SIMULATION_ONLY",
     }
-    assert _MockedOpenAIClient.last is not None
-    first_request = _MockedOpenAIClient.last.requests[0]
+    assert StubOpenAIClient.last is not None
+    first_request = StubOpenAIClient.last.requests[0]
     model_input = first_request["input"][0]["content"]
     assert "DIAGNOSTIC CONTEXT" in model_input
     assert '"execution_scope":"synthetic_archetype"' in model_input
