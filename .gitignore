@@ -22,6 +22,7 @@ build/
 node_modules/
 web/dist/
 .vite/
+*.tsbuildinfo
 
 # Editors and OS
 .idea/
@@ -30,6 +31,7 @@ web/dist/
 Thumbs.db
 
 # Local artifacts
+graphify-out/
 artifacts/*
 !artifacts/raw-streams/
 artifacts/raw-streams/*

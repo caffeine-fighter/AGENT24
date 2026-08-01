@@ -31,7 +31,7 @@ assert.equal(
     requestedRef: "main",
     mission: "test",
   }).message,
-  "지원하지 않는 저장소입니다. P0은 HTTPS github.com 저장소만 받습니다. 외부 Agent 코드는 실행하지 않았습니다.",
+  "지원하지 않는 저장소 주소입니다. 현재는 공개된 GitHub 저장소만 사용할 수 있으며, 외부 코드는 실행하지 않습니다.",
 );
 assert.equal(validateTargetInput({
   repositoryUrl: "https://github.com/example/agent?token=secret",
@@ -56,10 +56,10 @@ const target = {
   mission: "케이크 하나를 주문해줘.",
 };
 const runInput = formatRunInput(target);
-assert.ok(runInput.includes("Repository: https://github.com/example/agent"));
-assert.ok(runInput.includes("Requested ref or commit: release-v1"));
-assert.ok(runInput.includes("Mission: 케이크 하나를 주문해줘."));
-assert.ok(runInput.includes("실제 외부 side effect를 실행하지 말고"));
+assert.ok(runInput.includes("저장소: https://github.com/example/agent"));
+assert.ok(runInput.includes("브랜치 또는 커밋: release-v1"));
+assert.ok(runInput.includes("맡길 일: 케이크 하나를 주문해줘."));
+assert.ok(runInput.includes("실제 외부 서비스를 호출하거나 상태를 바꾸지 말고"));
 
 const mission = "케이크 하나를 5만원 이하로 주문해줘.";
 const first = createCakeCrashFixture(mission);
@@ -211,9 +211,9 @@ const projectedProfile = projectBehaviorProfile(behaviorProfilePayload);
 assert.equal(projectedProfile.sourceRef, behaviorProfilePayload.source_ref);
 assert.equal(projectedProfile.assessments[1].name, "idempotency_usage");
 assert.equal(projectedProfile.assessments[1].value, "absent");
-assert.ok(projectedProfile.assessments[1].evidence[0].includes("trace[7]"));
+assert.ok(projectedProfile.assessments[1].evidence[0].includes("실행 기록[7]"));
 assert.equal(projectedProfile.assessments[3].value, "unknown");
-assert.ok(projectedProfile.assessments[3].unknownReason.includes("관찰하지 못했습니다"));
+assert.ok(projectedProfile.assessments[3].unknownReason.includes("확인하지 못했습니다"));
 
 const liveProfileState = reduceRunState(targetState, {
   run_id: "target-test",
@@ -261,8 +261,8 @@ assert.deepEqual(projectedExperiment.faults[0], {
   callIndex: 0,
   params: {},
 });
-assert.ok(projectedExperiment.toolChoiceReason.includes("idempotency/reconciliation"));
-assert.ok(projectedExperiment.expectedEvidence.includes("trace와 ledger"));
+assert.ok(projectedExperiment.toolChoiceReason.includes("중복 방지나 상태 확인"));
+assert.ok(projectedExperiment.expectedEvidence.includes("실행 기록"));
 
 const experimentState = reduceRunState(fixtureProfileState, {
   run_id: "target-test",
@@ -278,6 +278,78 @@ assert.deepEqual(
   "ExperimentPlan Raw payload must remain unedited",
 );
 assert.equal(experimentState.unknownEvents.length, 0, "experiment_plan is a supported semantic event");
+
+const packSelectionPayload = {
+  registry_version: "domain-pack-registry.v1",
+  selected: {
+    pack_id: "life-v0-sandbox.v1",
+    domain_kind: "life",
+    score: 16,
+    is_fallback: false,
+    executable: true,
+  },
+  candidates: [
+    { pack_id: "life-v0-sandbox.v1", domain_kind: "life", score: 16, is_fallback: false, executable: true },
+    { pack_id: "adhoc-registry.v1", domain_kind: "adhoc", score: 5, is_fallback: true, executable: false },
+  ],
+  why: "life-v0-sandbox.v1 점수 16; anchor 도구 payment.charge 관찰; mission family 일치.",
+  expect: "commit_then_timeout 중 하나가 재현되어야 가설이 지지된다.",
+  evidence: [{ kind: "manifest", path: "tools", detail: "cake-agent declares 2 allowlisted tools" }],
+  budget: { max_tool_calls: 20, max_experiments: 3, max_cost_units: 6 },
+  fallback: "life-v0-sandbox.v1 실행이 실패하면 다른 pack의 성공으로 대체하지 않는다.",
+  stop: null,
+  selection_digest: "a".repeat(64),
+};
+const packState = reduceRunState(experimentState, {
+  run_id: "target-test",
+  seq: 3,
+  type: "pack.selected",
+  source: "live",
+  payload: packSelectionPayload,
+});
+assert.equal(packState.packSelectionView.packId, "life-v0-sandbox.v1");
+assert.equal(packState.packSelectionView.domainKind, "life");
+assert.equal(packState.packSelectionView.executable, true);
+assert.equal(packState.packSelectionView.ambiguous, false);
+assert.equal(packState.packSelectionView.budget.maxToolCalls, 20);
+assert.equal(packState.packSelectionView.candidates.length, 2);
+assert.equal(packState.packSelectionView.evidenceCount, 1);
+assert.deepEqual(
+  packState.events.at(-1).raw,
+  packSelectionPayload,
+  "PackSelection Raw payload must remain unedited",
+);
+assert.equal(packState.unknownEvents.length, 0, "pack.selected is a supported semantic event");
+
+// A selected pack that cannot run yet must not read as a running pack, and a
+// tie must not read as a selection.
+const deferredPackState = reduceRunState(experimentState, {
+  run_id: "target-test",
+  seq: 3,
+  type: "pack.selected",
+  source: "live",
+  payload: {
+    ...packSelectionPayload,
+    selected: { pack_id: "research-agent-pack.v1", domain_kind: "research", score: 12, is_fallback: false, executable: false },
+    stop: { stop: true, reason: "unsupported_input", detail: "실행 경로는 #58이 제공한다." },
+  },
+});
+assert.equal(deferredPackState.packSelectionView.executable, false);
+assert.equal(deferredPackState.packSelectionView.stopReason, "unsupported_input");
+
+const ambiguousPackState = reduceRunState(experimentState, {
+  run_id: "target-test",
+  seq: 3,
+  type: "pack.selected",
+  source: "live",
+  payload: {
+    ...packSelectionPayload,
+    selected: null,
+    stop: { stop: true, reason: "insufficient_evidence", detail: "동점이라 도메인을 특정할 수 없다." },
+  },
+});
+assert.equal(ambiguousPackState.packSelectionView.ambiguous, true);
+assert.equal(ambiguousPackState.packSelectionView.packId, null);
 
 const labReportPayload = {
   agent: {
@@ -320,7 +392,7 @@ const labReportPayload = {
 };
 const projectedReport = projectLabReport(labReportPayload);
 assert.equal(projectedReport.profile.agentName, "cake-buyer");
-assert.equal(projectedReport.observed.items[0].evidence, "ledger[0] · ledger[2] · trace[7] · trace[9] · orders");
+assert.equal(projectedReport.observed.items[0].evidence, "처리 기록[0] · 처리 기록[2] · 실행 기록[7] · 실행 기록[9] · 처리 건수");
 assert.equal(projectedReport.hypothesis.category, "duplicate_side_effect");
 assert.equal(projectedReport.proposedPatch.patch_id, "payment-idempotency-v1");
 assert.deepEqual(projectedReport.verification, { accepted: true, passedGates: 3, totalGates: 4 });
