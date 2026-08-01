@@ -1503,12 +1503,12 @@ function renderLabReport() {
   const terminationReason = report?.experiment?.termination?.reason;
   const sourceFailureScope = state.analysisScope === "source_unresolved" || state.analysisScope === "source_preflight_failed";
   const unsupportedResult = ["unsupported", "unsupported_input"].includes(String(terminationReason || ""));
-  const diagnosis = report && observedCount
-    ? { severity: "high", label: "HIGH · 문제 확인" }
+  const diagnosis = sourceFailureScope
+    ? { severity: "warning", label: "NOT RUN · 분석 안 함" }
     : compatibility
       ? { severity: "scope", label: "SCOPE ONLY · 호환성 판정" }
-      : sourceFailureScope
-        ? { severity: "warning", label: "NOT RUN · 분석 안 함" }
+      : report && observedCount
+        ? { severity: "high", label: "HIGH · 문제 확인" }
         : unsupportedResult
           ? { severity: "warning", label: "NOT RUN · 지원하지 않음" }
         : report
