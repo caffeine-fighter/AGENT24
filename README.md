@@ -15,6 +15,13 @@ YAI × OpenAI AGENT:24 해커톤 Creative 트랙 4인 팀용 모노레포입니�
 
 공식 안내: <https://yonsei-yai-hackathon.netlify.app/>
 
+## 배포된 웹 데모
+
+- [NIGHTMARE LAB production](https://nightmare-lab-agent24.conceivability.chatgpt.site) — 현재 owner-only Sites 링크
+- 한 입력으로 GitHub ref 확인 → OpenAI 실험 근거 생성 → `CLONE → CRASH → AUTOPSY → VACCINE → REPLAY`를 SSE Raw Stream으로 표시
+- hosted secret이 없거나 외부 호출이 실패하면 화면에 `offline_demo`를 명시하고 동일한 합성 fallback으로 완주
+- 운영 체크리스트: [#50 A/배포: NIGHTMARE LAB 웹 데모 링크 운영](https://github.com/caffeine-fighter/AGENT24/issues/50)
+
 ## Product concept
 
 - [NIGHTMARE LAB — Agent Failure Scientist](docs/nightmare-lab-concept.md): 다른 에이전트를 sandbox gym에서 자율적으로 실험해 최소 실패 조건을 진단하고 안전 패치를 재검증하는 제품 제안
