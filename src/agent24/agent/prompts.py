@@ -1,14 +1,15 @@
-"""Versioned prompt contract for the four judgement stages, plus the live demo.
+"""Versioned prompt contracts for offline stages and the two live paths.
 
-The Lab Agent's *decisions* are deterministic on purpose: experiment ranking
-lives in :mod:`agent24.agent.planner` and terminal states are derived in
-:mod:`agent24.agent.report`.  Neither is replaced by a language model, because a
-run that picks a different experiment or reaches a different verdict on the same
-input cannot be replayed or audited.
+Oracle and terminal claims stay controller-owned and deterministic.  For an
+external target, the live diagnostic path now lets the model choose one
+allowlisted experiment and drive the exact five-tool inspection sequence.  The
+deterministic planner remains an explicit reference and same-target fallback;
+the controller records any selection difference and validates every evidence
+and mitigation ID before publishing the model's final output.
 
-What a model is still needed for is judgement inside those rails -- naming a
-threat, wording a hypothesis, explaining a failure to a human.  This module is
-the thin contract around that seam.  It provides four things:
+The older four judgement assets still describe model judgement inside fixed
+rails -- naming a threat, wording a hypothesis, and proposing a patch.  This
+module is the thin contract around both seams.  It provides four things:
 
 **Versioned instruction bodies.**  ``prompts/<stage>.md``, one per stage,
 addressed by :class:`PromptStage`.  They are data files rather than string
@@ -51,6 +52,7 @@ from .models import (
     AgentCard,
     ClassifiedCapability,
     DiagnosisOutput,
+    DiagnosticFinalOutput,
     Divergence,
     ExperimentRecord,
     ExperimentSelectionOutput,
@@ -67,7 +69,7 @@ from .models import (
 from .planner import GYM_TOOLS
 from .report import CLAIM_TERMS, NOT_A_SAFETY_CERTIFICATE
 
-PROMPT_VERSION = "v2"
+PROMPT_VERSION = "v3"
 """Bumped whenever an instruction body changes.  Recorded in ``docs/prompt-log.md``."""
 
 LIVE_TOOL_NAME = "inspect_synthetic_gym"
@@ -108,6 +110,7 @@ class PromptStage(StrEnum):
     DIAGNOSIS = "diagnosis"
     PATCH_PROPOSAL = "patch_proposal"
     LIVE_EXPLAINER = "live_explainer"
+    DIAGNOSTIC_CONTROLLER = "diagnostic_controller"
 
 
 # --------------------------------------------------------------------------
@@ -244,9 +247,7 @@ def recover_from_schema_error(
 
 
 def _neutralize(text: str) -> str:
-    return text.replace(UNTRUSTED_OPEN, SENTINEL_REMOVED).replace(
-        UNTRUSTED_CLOSE, SENTINEL_REMOVED
-    )
+    return text.replace(UNTRUSTED_OPEN, SENTINEL_REMOVED).replace(UNTRUSTED_CLOSE, SENTINEL_REMOVED)
 
 
 def fence_untrusted(sections: Mapping[str, JsonValue]) -> str:
@@ -256,9 +257,7 @@ def fence_untrusted(sections: Mapping[str, JsonValue]) -> str:
     whole rendered message -- is byte-stable across processes.
     """
 
-    return "\n".join(
-        [UNTRUSTED_OPEN, _neutralize(canonical_json(dict(sections))), UNTRUSTED_CLOSE]
-    )
+    return "\n".join([UNTRUSTED_OPEN, _neutralize(canonical_json(dict(sections))), UNTRUSTED_CLOSE])
 
 
 def _mission_block(mission: Mission) -> str:
@@ -408,6 +407,13 @@ _STAGE_TABLE: tuple[tuple[PromptStage, type[BaseModel] | None, str | None, int, 
     (PromptStage.DIAGNOSIS, DiagnosisOutput, "diagnose", 1, False),
     (PromptStage.PATCH_PROPOSAL, PatchProposalOutput, "propose_patch", 1, False),
     (PromptStage.LIVE_EXPLAINER, None, None, LIVE_EXPLAINER_MAX_TURNS, True),
+    (
+        PromptStage.DIAGNOSTIC_CONTROLLER,
+        DiagnosticFinalOutput,
+        None,
+        LIVE_EXPLAINER_MAX_TURNS,
+        True,
+    ),
 )
 
 
@@ -480,11 +486,15 @@ def instructions(stage: PromptStage) -> str:
 LIVE_EXPLAINER_INSTRUCTIONS = instructions(PromptStage.LIVE_EXPLAINER)
 """Consumed by ``api.runtime`` so the live demo path shares this evidence boundary."""
 
+DIAGNOSTIC_CONTROLLER_INSTRUCTIONS = instructions(PromptStage.DIAGNOSTIC_CONTROLLER)
+"""Consumed by the live five-tool diagnostic controller."""
+
 
 __all__ = [
     "CLAIM_TERMS",
     "DEFAULT_BUDGET",
     "DIAGNOSTIC_CONTEXT_LABEL",
+    "DIAGNOSTIC_CONTROLLER_INSTRUCTIONS",
     "DEFAULT_SCHEMA_RECOVERY",
     "LIVE_EXPLAINER_INSTRUCTIONS",
     "LIVE_EXPLAINER_MAX_TURNS",

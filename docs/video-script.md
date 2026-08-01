@@ -48,8 +48,9 @@ Mission: 엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문�
 - `중복 결제를 발견했다` 대신 `합성 ledger에서 중복 charge를 재현했다`고 쓴다.
 - `안전하게 고쳤다` 대신 `같은 seed와 benign gate에서 보호책을 검증했다`고 쓴다.
 - `실패 없음` 대신 `설정된 범위에서 실패를 관찰하지 못함 · 안전 인증 아님`이라고 쓴다.
-- OpenAI 설명 단계가 unavailable/failed여도 controller evidence가 끝까지 보이면 그대로
-  표시하고 `openai_analysis_completed=false`를 숨기거나 live처럼 편집하지 않는다.
+- OpenAI 모델 주도 진단이 unavailable/failed여도 명시적인 same-target reference evidence가
+  끝까지 보이면 그대로 표시하고 `openai_analysis_completed=false`와 fallback 표식을
+  숨기거나 live처럼 편집하지 않는다.
 
 발표 copy의 기준은 [`../slides/deck.md`](../slides/deck.md), 정확한 수치와 UI 문구의
 기준은 [`cake-collision-product-contract.md`](cake-collision-product-contract.md)다.

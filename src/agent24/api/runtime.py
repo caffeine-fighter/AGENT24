@@ -9,10 +9,21 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from agents import Agent, OpenAIProvider, RunConfig, Runner
+from agents import (
+    Agent,
+    ModelSettings,
+    OpenAIProvider,
+    RunConfig,
+    Runner,
+    ToolExecutionConfig,
+)
 from agents.items import ToolCallItem, ToolCallOutputItem
 from agents.stream_events import RunItemStreamEvent
 
+from agent24.agent.diagnostic_controller import (
+    DiagnosticControllerError,
+    DiagnosticToolController,
+)
 from agent24.agent.loop import (
     SYNTHETIC_SCOPE,
     DeterministicLabLoop,
@@ -155,12 +166,18 @@ class OpenAIWhiteBoxAdapter:
             manifest_fetcher=GitHubContentsManifestFetcher(token=self.settings.github_token),
             source_file_fetcher=GitHubContentsSourceFetcher(token=self.settings.github_token),
             static_profiler=ParticipantStaticProfiler(
-                evidence_fetcher=GitHubEvidenceMetadataFetcher(
-                    token=self.settings.github_token
-                )
+                evidence_fetcher=GitHubEvidenceMetadataFetcher(token=self.settings.github_token)
             ),
         )
         self.lab_loop = lab_loop or DeterministicLabLoop()
+        # Context is keyed by run_id so concurrent FastAPI runs never share a
+        # controller.  The compatibility map also lets existing test seams
+        # overriding ``_run_live(query, channel)`` continue to exercise typed
+        # timeout/provider failures without receiving a new argument.
+        self._diagnostic_contexts: dict[str, ExternalPreflightResult] = {}
+        self._live_diagnostic_results: dict[str, DiagnosticLoopResult] = {}
+        self._live_diagnostic_finals: dict[str, dict[str, Any]] = {}
+        self._live_diagnostic_plan_ids: dict[str, str] = {}
 
     def _api_key(self) -> str | None:
         # An explicitly exported process variable wins over .env settings.  No
@@ -239,6 +256,8 @@ class OpenAIWhiteBoxAdapter:
         channel: RunChannel,
         *,
         reason: str,
+        reference_plan_id: str | None = None,
+        live_plan_id: str | None = None,
     ) -> None:
         """Expose only the deterministic report, explicitly marked non-OpenAI."""
 
@@ -246,14 +265,21 @@ class OpenAIWhiteBoxAdapter:
             "final_output",
             {
                 "text": (
-                    "Controller-owned diagnostic (OpenAI explanation unavailable): "
+                    "Controller-owned same-target reference diagnostic "
+                    "(OpenAI model-controlled run unavailable): "
                     f"{result.report.bounded_summary}"
                 ),
                 "analysis_source": "controller",
                 "openai_analysis_completed": False,
                 "reason": reason,
+                "planner_comparison": {
+                    "reference_plan_id": reference_plan_id,
+                    "live_plan_id": live_plan_id,
+                    "fallback_policy": "same_target_reference",
+                    "fallback_reason": reason,
+                },
             },
-            summary="controller-derived summary; not an OpenAI response",
+            summary="same-target reference summary; not an OpenAI response",
         )
 
     def _agent(self) -> Agent:
@@ -275,9 +301,25 @@ class OpenAIWhiteBoxAdapter:
             # OPENAI_API_KEY here.  Passing the secret through an event or a log
             # is deliberately avoided.
             provider = OpenAIProvider(api_key=self._api_key())
-        return RunConfig(model_provider=provider, tracing_disabled=True)
+        return RunConfig(
+            model_provider=provider,
+            model_settings=ModelSettings(parallel_tool_calls=False),
+            tool_execution=ToolExecutionConfig(max_function_tool_concurrency=1),
+            tracing_disabled=True,
+            trace_include_sensitive_data=False,
+        )
 
     async def _run_live(self, query: str, channel: RunChannel) -> str:
+        """Dispatch the live path without changing the public test seam."""
+
+        preflight = self._diagnostic_contexts.pop(channel.run_id, None)
+        if preflight is not None:
+            return await self._run_live_diagnostic(query, channel, preflight)
+        return await self._run_live_explainer(query, channel)
+
+    async def _run_live_explainer(self, query: str, channel: RunChannel) -> str:
+        """The no-target explanatory demo path, kept separate from diagnosis."""
+
         streamed = self.runner.run_streamed(
             self._agent(),
             query,
@@ -297,9 +339,97 @@ class OpenAIWhiteBoxAdapter:
                 channel.publish("tool_result", item.raw_item, summary=item.call_id)
 
         final_output = streamed.final_output
-        return final_output if isinstance(final_output, str) else json.dumps(
-            final_output, ensure_ascii=False, default=str
+        return (
+            final_output
+            if isinstance(final_output, str)
+            else json.dumps(final_output, ensure_ascii=False, default=str)
         )
+
+    async def _run_live_diagnostic(
+        self,
+        query: str,
+        channel: RunChannel,
+        preflight: ExternalPreflightResult,
+    ) -> str:
+        """Run the actual model-controlled five-tool diagnostic loop.
+
+        No deterministic experiment is run before this method starts.  The
+        model receives only the pinned target intake, chooses from the
+        controller's candidate set, and the controller derives all experiment
+        and oracle state from that choice.
+        """
+
+        decision = preflight.decision
+        if not isinstance(decision, ExperimentPlan):
+            raise DiagnosticControllerError(
+                "reference_plan_missing", "live diagnostic requires an ExperimentPlan reference"
+            )
+
+        async def run_experiment(plan: ExperimentPlan) -> DiagnosticLoopResult:
+            return await self._run_diagnostic_plan(
+                preflight,
+                plan,
+                channel,
+                publish_final_artifacts=False,
+            )
+
+        controller = DiagnosticToolController(
+            preflight=preflight,
+            execution_scope=self._execution_scope(preflight),
+            channel=channel,
+            run_experiment=run_experiment,
+            allowed_faults=frozenset({decision.scenario.faults[0].fault}),
+            fallback_reason="same-target deterministic reference policy if the provider fails",
+        )
+        try:
+            streamed = self.runner.run_streamed(
+                controller.agent(
+                    model=(
+                        self.model_override
+                        if self.model_override is not None
+                        else self.model_name
+                    )
+                ),
+                controller.render_input(query),
+                max_turns=self.max_turns,
+                run_config=self._run_config(),
+            )
+            async for stream_event in streamed.stream_events():
+                if not isinstance(stream_event, RunItemStreamEvent):
+                    continue
+                item = stream_event.item
+                if stream_event.name == "tool_called" and isinstance(item, ToolCallItem):
+                    # Preserve the SDK's raw Responses API item exactly in the Raw
+                    # API Stream.  Typed controller artifacts are separate events.
+                    channel.publish("tool_call", item.raw_item, summary=item.tool_name)
+                elif stream_event.name == "tool_output" and isinstance(
+                    item, ToolCallOutputItem
+                ):
+                    channel.publish("tool_result", item.raw_item, summary=item.call_id)
+
+            final = controller.validate_final(streamed.final_output)
+            result = controller.result
+            selected_plan = controller.selected_plan
+            if result is None or selected_plan is None:
+                raise DiagnosticControllerError(
+                    "diagnostic_result_missing", "controller verified a final without a result"
+                )
+            await self._publish_diagnostic_completion(
+                preflight,
+                result,
+                channel,
+                plan=selected_plan,
+            )
+            self._live_diagnostic_results[channel.run_id] = result
+            self._live_diagnostic_finals[channel.run_id] = final.model_dump(
+                mode="json",
+                exclude_none=True,
+            )
+            return final.answer
+        finally:
+            selected_plan = controller.selected_plan
+            if selected_plan is not None:
+                self._live_diagnostic_plan_ids[channel.run_id] = selected_plan.plan_id
 
     async def _run_offline(self, query: str, channel: RunChannel, *, reason: str) -> str:
         call_id = f"offline_{uuid.uuid4().hex}"
@@ -390,10 +520,7 @@ class OpenAIWhiteBoxAdapter:
         channel.publish(
             "source_snapshot",
             result.source_snapshot,
-            summary=(
-                f"{result.source_snapshot.mode} · "
-                f"{result.source_snapshot.total_bytes} bytes"
-            ),
+            summary=(f"{result.source_snapshot.mode} · {result.source_snapshot.total_bytes} bytes"),
         )
         adapter_contract = getattr(result, "adapter_contract", None)
         if adapter_contract is not None:
@@ -483,9 +610,7 @@ class OpenAIWhiteBoxAdapter:
     @staticmethod
     def _autopsy_steps(result: DiagnosticLoopResult) -> list[dict[str, str]]:
         scope_label = (
-            "allowlisted adapter"
-            if result.execution_scope != SYNTHETIC_SCOPE
-            else "synthetic run"
+            "allowlisted adapter" if result.execution_scope != SYNTHETIC_SCOPE else "synthetic run"
         )
         steps = [
             {
@@ -526,6 +651,22 @@ class OpenAIWhiteBoxAdapter:
         decision = preflight.decision
         if not isinstance(decision, ExperimentPlan):
             raise TypeError("diagnostic loop requires an ExperimentPlan")
+        return await self._run_diagnostic_plan(
+            preflight,
+            decision,
+            channel,
+            publish_final_artifacts=True,
+        )
+
+    async def _run_diagnostic_plan(
+        self,
+        preflight: ExternalPreflightResult,
+        plan: ExperimentPlan,
+        channel: RunChannel,
+        *,
+        publish_final_artifacts: bool,
+    ) -> DiagnosticLoopResult:
+        """Execute one typed plan and optionally defer confirmation artifacts."""
 
         channel.publish(
             "phase.changed",
@@ -540,7 +681,7 @@ class OpenAIWhiteBoxAdapter:
             manifest=preflight.manifest,
             profile=preflight.profile,
             mission=preflight.mission,
-            plan=decision,
+            plan=plan,
             adapter_contract=preflight.adapter_contract,
         )
         channel.publish(
@@ -591,7 +732,29 @@ class OpenAIWhiteBoxAdapter:
                     "world": failed_world,
                 },
             )
-            channel.publish("failure.detected", {"invariants": violation_ids})
+
+        if not publish_final_artifacts:
+            return result
+
+        return await self._publish_diagnostic_completion(preflight, result, channel, plan=plan)
+
+    async def _publish_diagnostic_completion(
+        self,
+        preflight: ExternalPreflightResult,
+        result: DiagnosticLoopResult,
+        channel: RunChannel,
+        *,
+        plan: ExperimentPlan | None = None,
+    ) -> DiagnosticLoopResult:
+        """Publish phases that are confirmation-only after controller verification."""
+
+        scenario = plan.scenario if plan is not None else result.perturbed.scenario
+
+        if result.observed.violations:
+            channel.publish(
+                "failure.detected",
+                {"invariants": sorted(result.observed.violated_ids())},
+            )
 
         channel.publish("phase.changed", {"phase": "AUTOPSY"}, summary="first divergence")
         channel.publish("autopsy.ready", {"steps": self._autopsy_steps(result)})
@@ -636,13 +799,13 @@ class OpenAIWhiteBoxAdapter:
 
         if (
             preflight.adapter_contract is None
-            and decision.scenario.faults
-            and decision.scenario.faults[0].fault.value == "commit_then_timeout"
+            and scenario.faults
+            and scenario.faults[0].fault.value == "commit_then_timeout"
         ):
             sandbox_replay = await asyncio.to_thread(
                 protected_replay,
                 PAYMENT_FIXTURE,
-                seed=decision.scenario.seed,
+                seed=scenario.seed,
             )
             channel.publish(
                 "protected_replay",
@@ -681,6 +844,39 @@ class OpenAIWhiteBoxAdapter:
         channel.publish("finding_report", result.report, summary=result.report.status.value)
         channel.publish("lab_report", result.lab_report, summary=result.report.status.value)
         return result
+
+    async def _run_reference_fallback(
+        self,
+        preflight: ExternalPreflightResult,
+        channel: RunChannel,
+        *,
+        reason: str,
+        live_plan_id: str | None = None,
+    ) -> DiagnosticLoopResult:
+        """Run the same target's deterministic plan as an explicit fallback."""
+
+        decision = preflight.decision
+        if not isinstance(decision, ExperimentPlan):
+            raise TypeError("reference fallback requires an ExperimentPlan")
+        channel.publish(
+            "planner.comparison",
+            {
+                "reference_plan_id": decision.plan_id,
+                "live_plan_id": live_plan_id,
+                "same_selection": live_plan_id == decision.plan_id,
+                "differences": (
+                    ["live selection unavailable"]
+                    if live_plan_id is None
+                    else []
+                    if live_plan_id == decision.plan_id
+                    else ["live selection differs from deterministic reference"]
+                ),
+                "fallback_policy": "same_target_reference",
+                "fallback_reason": reason,
+            },
+            summary="explicit deterministic reference fallback",
+        )
+        return await self._run_diagnostic_loop(preflight, channel)
 
     @staticmethod
     def _diagnostic_query(
@@ -770,17 +966,130 @@ class OpenAIWhiteBoxAdapter:
                     return
                 preflight_result = preflight_outcome
                 execution_scope = self._execution_scope(preflight_result)
-                try:
-                    diagnostic_result = await self._run_diagnostic_loop(
-                        preflight_result, channel
+                reason: str | None = None
+                message: str | None = None
+                live_plan_id: str | None = None
+                terminal_status = "openai_analysis_failed"
+
+                if not self.openai_configured:
+                    reason = "openai_key_missing"
+                    message = (
+                        "OPENAI_API_KEY가 없어 모델 주도 진단을 실행하지 않았습니다. "
+                        "같은 target의 deterministic reference plan을 명시적으로 실행합니다."
                     )
-                except Exception as error:  # noqa: BLE001 - keep a safe typed terminal state
-                    # Name the pack that failed.  Re-routing to another pack
-                    # here is exactly how one pack's failure would come out
-                    # looking like a different pack's success.  The exception
-                    # string stays out of the payload; only its class is safe.
+                    terminal_status = "openai_analysis_unavailable"
+                else:
+                    self._diagnostic_contexts[channel.run_id] = preflight_result
+                    try:
+                        async with asyncio.timeout(self.timeout_seconds):
+                            final_text = await self._run_live(query, channel)
+                        diagnostic_result = self._live_diagnostic_results.pop(
+                            channel.run_id,
+                            None,
+                        )
+                        live_plan_id = self._live_diagnostic_plan_ids.pop(
+                            channel.run_id,
+                            None,
+                        )
+                        final_payload = self._live_diagnostic_finals.pop(
+                            channel.run_id,
+                            None,
+                        )
+                        if diagnostic_result is None or final_payload is None:
+                            raise DiagnosticControllerError(
+                                "diagnostic_result_missing",
+                                "live diagnostic did not preserve its verified result",
+                            )
+                    except TimeoutError:
+                        live_plan_id = self._live_diagnostic_plan_ids.pop(
+                            channel.run_id,
+                            None,
+                        )
+                        reason = "openai_timeout"
+                        message = (
+                            "OpenAI 모델 주도 진단이 시간 초과되어 같은 target의 "
+                            "deterministic reference plan을 명시적으로 실행합니다."
+                        )
+                    except DiagnosticControllerError as error:
+                        live_plan_id = self._live_diagnostic_plan_ids.pop(
+                            channel.run_id,
+                            None,
+                        )
+                        reason = "openai_controller_rejected"
+                        message = (
+                            "OpenAI 모델 주도 진단이 controller 검증을 통과하지 못해 같은 "
+                            "target의 deterministic reference plan을 명시적으로 실행합니다."
+                        )
+                        if not any(
+                            event["type"] == "diagnostic.rejected"
+                            and event.get("payload", {}).get("code") == error.code
+                            for event in channel.events
+                        ):
+                            channel.publish(
+                                "diagnostic.rejected",
+                                {
+                                    "code": error.code,
+                                    "detail": (
+                                        "live diagnostic final did not satisfy the controller"
+                                    ),
+                                },
+                                summary=error.code,
+                            )
+                    except Exception:  # noqa: BLE001 - provider detail stays off the wire
+                        live_plan_id = self._live_diagnostic_plan_ids.pop(
+                            channel.run_id,
+                            None,
+                        )
+                        reason = "openai_provider_failed"
+                        message = (
+                            "OpenAI 모델 주도 진단 요청에 실패해 같은 target의 deterministic "
+                            "reference plan을 명시적으로 실행합니다."
+                        )
+                    else:
+                        channel.publish(
+                            "final_output",
+                            {
+                                "text": final_text,
+                                "analysis_source": "openai",
+                                "controller_final": final_payload,
+                            },
+                        )
+                        self._publish_terminal(
+                            channel,
+                            status="completed",
+                            mode="live",
+                            source_resolved=True,
+                            diagnostic_completed=True,
+                            openai_analysis_completed=True,
+                            execution_scope=execution_scope,
+                            experiments_run=diagnostic_result.experiments_run,
+                            findings=len(diagnostic_result.lab_report.findings),
+                        )
+                        terminal_emitted = True
+                        return
+
+                assert reason is not None and message is not None
+                self._diagnostic_contexts.pop(channel.run_id, None)
+                self._live_diagnostic_results.pop(channel.run_id, None)
+                self._live_diagnostic_finals.pop(channel.run_id, None)
+                self._live_diagnostic_plan_ids.pop(channel.run_id, None)
+                self._publish_stage_failure(
+                    channel,
+                    stage="openai_analysis",
+                    code=reason,
+                    message=message,
+                )
+                try:
+                    diagnostic_result = await self._run_reference_fallback(
+                        preflight_result,
+                        channel,
+                        reason=reason,
+                        live_plan_id=live_plan_id,
+                    )
+                except Exception as error:  # noqa: BLE001 - safe typed fallback boundary
                     stop = pack_failure_stop(
-                        preflight_result.pack_selection, type(error).__name__
+                        preflight_result.pack_selection,
+                        type(error).__name__,
                     )
                     self._publish_stage_failure(
                         channel,
@@ -803,104 +1112,24 @@ class OpenAIWhiteBoxAdapter:
                     )
                     terminal_emitted = True
                     return
-                query = self._diagnostic_query(query, preflight_result, diagnostic_result)
 
-            if target is not None and diagnostic_result is not None:
-                if not self.openai_configured:
-                    reason = "openai_key_missing"
-                    message = (
-                        "결정적 controller 진단은 완료했지만 OPENAI_API_KEY가 없어 "
-                        "OpenAI 설명을 실행하지 않았습니다. controller report만 보존합니다."
-                    )
-                    self._publish_stage_failure(
-                        channel,
-                        stage="openai_analysis",
-                        code=reason,
-                        message=message,
-                    )
-                    self._publish_controller_summary(diagnostic_result, channel, reason=reason)
-                    self._publish_terminal(
-                        channel,
-                        status="openai_analysis_unavailable",
-                        mode=self.mode,
-                        source_resolved=True,
-                        diagnostic_completed=True,
-                        openai_analysis_completed=False,
-                        execution_scope=execution_scope,
-                        message=message,
-                        experiments_run=diagnostic_result.experiments_run,
-                        findings=len(diagnostic_result.lab_report.findings),
-                    )
-                    terminal_emitted = True
-                    return
-
-                try:
-                    async with asyncio.timeout(self.timeout_seconds):
-                        final_text = await self._run_live(query, channel)
-                except TimeoutError:
-                    reason = "openai_timeout"
-                    message = (
-                        "결정적 controller 진단은 완료했지만 OpenAI 설명 요청이 시간 초과되어 "
-                        "controller report만 보존합니다."
-                    )
-                    self._publish_stage_failure(
-                        channel,
-                        stage="openai_analysis",
-                        code=reason,
-                        message=message,
-                    )
-                    self._publish_controller_summary(diagnostic_result, channel, reason=reason)
-                    self._publish_terminal(
-                        channel,
-                        status="openai_analysis_failed",
-                        mode=self.mode,
-                        source_resolved=True,
-                        diagnostic_completed=True,
-                        openai_analysis_completed=False,
-                        execution_scope=execution_scope,
-                        message=message,
-                        experiments_run=diagnostic_result.experiments_run,
-                        findings=len(diagnostic_result.lab_report.findings),
-                    )
-                    terminal_emitted = True
-                    return
-                except Exception:  # noqa: BLE001 - provider detail must stay out of the wire
-                    reason = "openai_provider_failed"
-                    message = (
-                        "결정적 controller 진단은 완료했지만 OpenAI 설명 요청에 실패해 "
-                        "controller report만 보존합니다."
-                    )
-                    self._publish_stage_failure(
-                        channel,
-                        stage="openai_analysis",
-                        code=reason,
-                        message=message,
-                    )
-                    self._publish_controller_summary(diagnostic_result, channel, reason=reason)
-                    self._publish_terminal(
-                        channel,
-                        status="openai_analysis_failed",
-                        mode=self.mode,
-                        source_resolved=True,
-                        diagnostic_completed=True,
-                        openai_analysis_completed=False,
-                        execution_scope=execution_scope,
-                        message=message,
-                        experiments_run=diagnostic_result.experiments_run,
-                        findings=len(diagnostic_result.lab_report.findings),
-                    )
-                    terminal_emitted = True
-                    return
-
-                channel.publish("final_output", {"text": final_text})
+                reference_plan_id = preflight_result.decision.plan_id
+                self._publish_controller_summary(
+                    diagnostic_result,
+                    channel,
+                    reason=reason,
+                    reference_plan_id=reference_plan_id,
+                    live_plan_id=live_plan_id,
+                )
                 self._publish_terminal(
                     channel,
-                    status="completed",
-                    mode="live",
+                    status=terminal_status,
+                    mode=self.mode,
                     source_resolved=True,
                     diagnostic_completed=True,
-                    openai_analysis_completed=True,
+                    openai_analysis_completed=False,
                     execution_scope=execution_scope,
+                    message=message,
                     experiments_run=diagnostic_result.experiments_run,
                     findings=len(diagnostic_result.lab_report.findings),
                 )
@@ -988,8 +1217,7 @@ class OpenAIWhiteBoxAdapter:
                 event["type"] == "run_completed" for event in channel.events
             ):
                 message = (
-                    "실행 중 안전하게 분류할 수 없는 오류가 발생해 "
-                    "결과를 확정하지 못했습니다."
+                    "실행 중 안전하게 분류할 수 없는 오류가 발생해 결과를 확정하지 못했습니다."
                 )
                 self._publish_stage_failure(
                     channel,
@@ -1014,6 +1242,10 @@ class OpenAIWhiteBoxAdapter:
                     message=message,
                 )
         finally:
+            self._diagnostic_contexts.pop(channel.run_id, None)
+            self._live_diagnostic_results.pop(channel.run_id, None)
+            self._live_diagnostic_finals.pop(channel.run_id, None)
+            self._live_diagnostic_plan_ids.pop(channel.run_id, None)
             channel.close()
 
 
