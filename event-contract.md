@@ -10,10 +10,20 @@
 POST /api/runs
 Content-Type: application/json
 
-{"input":"엄마 생일 케이크 하나를 5만원 이하로 주문해줘."}
+{
+  "input": "엄마 생일 케이크 하나를 5만원 이하로 주문해줘.",
+  "target": {
+    "repository_url": "https://github.com/owner/agent",
+    "requested_ref": "main",
+    "mission": "엄마 생일 케이크 하나를 5만원 이하로 주문해줘."
+  }
+}
 ```
 
 정상 응답은 `202 Accepted`이며 다음 필드를 포함합니다.
+
+`target`은 선택 필드라 기존 generic text 호출도 유지됩니다. 웹 form은 repository/ref/mission을
+한 번 제출하며, 서버는 target이 있을 때만 immutable source preflight를 수행합니다.
 
 ```json
 {
