@@ -10,6 +10,15 @@ const RUN_BODY = JSON.stringify({
   },
 });
 
+const EXTERNAL_RUN_BODY = JSON.stringify({
+  input: "synthetic crash test",
+  target: {
+    repository_url: "https://github.com/example/public-agent",
+    requested_ref: "main",
+    mission: "5만원 이하로 케이크 하나를 주문해줘",
+  },
+});
+
 async function request(path = "/", init = undefined) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
@@ -50,12 +59,24 @@ test("health never exposes credentials", async () => {
   const payload = await response.json();
   assert.equal(payload.status, "ok");
   assert.equal(typeof payload.openai_configured, "boolean");
+  assert.match(payload.build_commit, /^[a-f0-9]{40}$/);
+  assert.equal(payload.default_source_resolver, "sites-build-provenance");
   assert.equal("openai_api_key" in payload, false);
 });
 
 test("hosted fallback preserves the autonomous SSE demo", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
   delete process.env.OPENAI_API_KEY;
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(
+      typeof input === "string" || input instanceof URL ? input : input.url,
+    );
+    if (url.hostname === "api.github.com") {
+      throw new Error("default build source must not call GitHub");
+    }
+    return previousFetch(input, init);
+  };
   try {
     const accepted = await request("/api/runs", {
       method: "POST",
@@ -77,9 +98,12 @@ test("hosted fallback preserves the autonomous SSE demo", async () => {
     assert.match(stream, /"type":"run.started"/);
     assert.match(stream, /"type":"experiment_plan"/);
     assert.match(stream, /"type":"run.completed"/);
+    assert.match(stream, /"resolver":"sites-build-provenance"/);
+    assert.match(stream, /"resolved_sha":"[a-f0-9]{40}"/);
     assert.match(stream, /"fallback":true/);
     assert.match(stream, /SIMULATION_ONLY/);
   } finally {
+    globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = previousKey;
   }
@@ -137,7 +161,7 @@ test("hosted OpenAI path keeps credentials server-side and emits its evidence", 
     const accepted = await request("/api/runs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: RUN_BODY,
+      body: EXTERNAL_RUN_BODY,
     });
     assert.equal(accepted.status, 202);
     const run = await accepted.json();

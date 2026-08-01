@@ -36,7 +36,8 @@ Mission: 엄마 생일 케이크 하나를 5만원 이하로 주문하고 가족
 
 - [ ] `git rev-parse HEAD`와 발표할 source/ref를 기록했다.
 - [ ] `OPENAI_API_KEY`와 quota 유무만 확인했고 key 값을 화면·log에 노출하지 않았다.
-- [ ] private AGENT24 source pin을 위해 배포 환경의 `GITHUB_TOKEN`을 secret으로 설정했다.
+- [ ] `/health`의 `build_commit`과 실제 배포 source commit이 같고 기본 target resolver가 `sites-build-provenance`다.
+- [ ] 기본 AGENT24 외의 private target을 쓸 때만 read-only `GITHUB_TOKEN`을 배포 secret으로 설정했다.
 - [ ] `scripts/hosted-smoke.py`가 production에서 `run_mode=openai_hosted`와 `openai_response_observed=true`로 통과했다.
 - [ ] private repository라면 API 서버가 읽는 `GITHUB_TOKEN` 권한을 확인했다.
 - [ ] `scripts/external-smoke.py`용 `GITHUB_TOKEN`도 process environment에 주입했다.
