@@ -24,6 +24,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,6 +78,7 @@ SandboxFailureCode = Literal[
     "runtime_not_allowlisted",
     "resource_limits_unavailable",
     "fixture_not_allowlisted",
+    "protection_not_allowlisted",
     "runner_spawn_failed",
     "runner_crash",
     "cpu_time_exceeded",
@@ -232,6 +234,7 @@ class SandboxRunResult:
     final_state_hash: str | None
     fault_applications: tuple[dict[str, Any], ...]
     trace_digest: str
+    protection_mode: str | None = None
 
     @property
     def succeeded(self) -> bool:
@@ -254,6 +257,7 @@ class SandboxRunResult:
             "final_state_hash": self.final_state_hash,
             "fault_applications": list(self.fault_applications),
             "trace_digest": self.trace_digest,
+            "protection_mode": self.protection_mode,
         }
 
 
@@ -802,6 +806,7 @@ class LocalSandboxRunner:
         final_state_hash: str | None = None,
         fault_applications: list[dict[str, Any]] | None = None,
         agent_result: dict[str, Any] | None = None,
+        protection_mode: str | None = None,
     ) -> SandboxRunResult:
         evidence = {
             "source": source,
@@ -816,6 +821,7 @@ class LocalSandboxRunner:
             "initial_state_hash": initial_state_hash,
             "final_state_hash": final_state_hash,
             "fault_applications": fault_applications or [],
+            "protection_mode": protection_mode,
         }
         digest = _evidence_digest(evidence)
         self._append_event(
@@ -840,6 +846,7 @@ class LocalSandboxRunner:
             final_state_hash=final_state_hash,
             fault_applications=tuple(fault_applications or []),
             trace_digest=digest,
+            protection_mode=protection_mode,
         )
 
     def _completed_result(
@@ -857,6 +864,7 @@ class LocalSandboxRunner:
         initial_state_hash: str,
         final_state_hash: str,
         fault_applications: list[dict[str, Any]],
+        protection_mode: str | None = None,
     ) -> SandboxRunResult:
         evidence = {
             "source": source,
@@ -871,6 +879,7 @@ class LocalSandboxRunner:
             "initial_state_hash": initial_state_hash,
             "final_state_hash": final_state_hash,
             "fault_applications": fault_applications,
+            "protection_mode": protection_mode,
         }
         digest = _evidence_digest(evidence)
         self._append_event(
@@ -895,6 +904,7 @@ class LocalSandboxRunner:
             final_state_hash=final_state_hash,
             fault_applications=tuple(fault_applications),
             trace_digest=digest,
+            protection_mode=protection_mode,
         )
 
     @staticmethod
@@ -951,6 +961,8 @@ class LocalSandboxRunner:
         gym: SandboxGym,
         trace: list[dict[str, Any]],
         world_diffs: list[dict[str, Any]],
+        protection_mode: str | None = None,
+        event_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> tuple[dict[str, Any] | None, SandboxFailure | None]:
         if process.stdout is None or process.stderr is None or process.stdin is None:
             return None, SandboxFailure("runner_spawn_failed", "child pipes were unavailable")
@@ -965,6 +977,8 @@ class LocalSandboxRunner:
         result: dict[str, Any] | None = None
         failure: SandboxFailure | None = None
         call_index = 0
+        protected_key: str | None = None
+        unknown_payment_seen = False
         deadline = time.monotonic() + self.limits.wall_clock_seconds
         process_exit_deadline: float | None = None
 
@@ -984,8 +998,13 @@ class LocalSandboxRunner:
             except (BrokenPipeError, OSError, ValueError) as error:
                 raise _ProtocolWriteFailure("could not write child protocol") from error
 
+        def append_event(event_type: str, payload: dict[str, Any]) -> None:
+            self._append_event(trace, run_id, event_type, payload)
+            if event_sink is not None:
+                event_sink(trace[-1])
+
         def handle(frame: dict[str, Any]) -> None:
-            nonlocal ready, started, result, call_index
+            nonlocal ready, started, result, call_index, protected_key, unknown_payment_seen
             frame_type = frame.get("type")
             if frame_type == "ready":
                 if (
@@ -995,7 +1014,7 @@ class LocalSandboxRunner:
                 ):
                     raise ValueError("ready frame is malformed")
                 ready = True
-                self._append_event(trace, run_id, "runner.ready", {"protocol": frame["protocol"]})
+                append_event("runner.ready", {"protocol": frame["protocol"]})
                 send({"type": "start", "input": mission})
                 started = True
                 return
@@ -1020,16 +1039,97 @@ class LocalSandboxRunner:
                 except (SandboxContractError, TypeError, KeyError):
                     raise ValueError("tool arguments do not match the reviewed contract") from None
 
+                dispatch_arguments = arguments
+                policy_result: dict[str, Any] | None = None
+                if protection_mode == "blanket_block" and tool == "payment.charge":
+                    append_event(
+                        "gym.policy_applied",
+                        {
+                            "policy_id": "blanket-block-v1",
+                            "source": "host_boundary",
+                            "tool": tool,
+                            "original_arguments": arguments,
+                            "effective_arguments": None,
+                            "action": "block",
+                            "reason": "blanket block control; mission must fail",
+                        },
+                    )
+                    policy_result = {
+                        "ok": False,
+                        "status": "rejected",
+                        "error": "blocked_by_policy",
+                    }
+                elif protection_mode == "idempotent_reconcile" and tool == "payment.charge":
+                    key_material = dict(arguments)
+                    key_material["idempotency_key"] = None
+                    protected_key = (
+                        "agent24-protected:"
+                        + hashlib.sha256(
+                            _canonical_json(key_material).encode("utf-8")
+                        ).hexdigest()[:24]
+                    )
+                    dispatch_arguments = validate_tool_arguments(
+                        tool,
+                        {**arguments, "idempotency_key": protected_key},
+                    )
+                    append_event(
+                        "gym.policy_applied",
+                        {
+                            "policy_id": "idempotent-reconcile-v1",
+                            "source": "host_boundary",
+                            "tool": tool,
+                            "original_arguments": arguments,
+                            "effective_arguments": dispatch_arguments,
+                            "action": "rewrite_argument",
+                            "reason": (
+                                "inject a host-owned idempotency key before the first charge"
+                                if not unknown_payment_seen
+                                else "reconcile payment.status before permitting a retry"
+                            ),
+                        },
+                    )
+                    if unknown_payment_seen and protected_key is not None:
+                        reconciliation_arguments = {
+                            "payment_id": None,
+                            "idempotency_key": protected_key,
+                        }
+                        reconciliation_result = validate_tool_result(
+                            "payment.status",
+                            gym.payment_status(**reconciliation_arguments),
+                        )
+                        append_event(
+                            "gym.policy_reconciliation",
+                            {
+                                "policy_id": "idempotent-reconcile-v1",
+                                "source": "host_boundary",
+                                "tool": "payment.status",
+                                "arguments": reconciliation_arguments,
+                                "result": reconciliation_result,
+                            },
+                        )
+                        if reconciliation_result.get("found") is True:
+                            policy_result = {
+                                "ok": True,
+                                "status": "committed",
+                                "payment_id": reconciliation_result.get("payment_id"),
+                                "order_id": reconciliation_result.get("order_id"),
+                                "charged_krw": reconciliation_result.get("charged_krw"),
+                                "idempotent_replay": True,
+                            }
+
                 before_hash = gym.snapshot().state_hash
                 ledger_count = len(gym.ledger.entries)
-                self._append_event(
-                    trace,
-                    run_id,
+                append_event(
                     "gym.tool_call",
                     {"call_id": frame["call_id"], "tool": tool, "arguments": arguments},
                 )
                 try:
-                    tool_result = validate_tool_result(tool, gym.call(tool, **arguments))
+                    raw_tool_result = (
+                        policy_result
+                        if policy_result is not None
+                        else gym.call(tool, **dispatch_arguments)
+                    )
+                    tool_result = validate_tool_result(tool, raw_tool_result)
                 except (SandboxContractError, TypeError, ValueError, KeyError) as error:
                     del error
                     fail(
@@ -1038,16 +1138,12 @@ class LocalSandboxRunner:
                     return
                 after_hash = gym.snapshot().state_hash
                 new_entries = gym.ledger.to_list()[ledger_count:]
-                self._append_event(
-                    trace,
-                    run_id,
+                append_event(
                     "gym.tool_result",
                     {"call_id": frame["call_id"], "tool": tool, "result": tool_result},
                 )
                 if new_entries:
-                    self._append_event(
-                        trace,
-                        run_id,
+                    append_event(
                         "gym.ledger_mutation",
                         {"call_id": frame["call_id"], "entries": new_entries},
                     )
@@ -1059,8 +1155,10 @@ class LocalSandboxRunner:
                     "changed": before_hash != after_hash,
                 }
                 world_diffs.append(world_diff)
-                self._append_event(trace, run_id, "gym.world_diff", world_diff)
+                append_event("gym.world_diff", world_diff)
                 send({"type": "tool_result", "call_id": frame["call_id"], "result": tool_result})
+                if tool == "payment.charge" and tool_result.get("status") == "unknown":
+                    unknown_payment_seen = True
                 return
             if frame_type == "agent_result":
                 if not started or result is not None or set(frame) != {"type", "result"}:
@@ -1069,7 +1167,7 @@ class LocalSandboxRunner:
                     result = self._agent_result(frame["result"])
                 except ValueError as error:
                     raise _MalformedAgentOutput from error
-                self._append_event(trace, run_id, "agent_result", {"result": result})
+                append_event("agent_result", {"result": result})
                 return
             if frame_type == "agent_failure":
                 code = frame.get("code")
@@ -1096,8 +1194,11 @@ class LocalSandboxRunner:
                         fail("cpu_time_exceeded", "child CPU budget exceeded")
                         break
                 selected = selector.select(min(remaining, _MEMORY_POLL_SECONDS))
-                if not selected:
-                    continue
+                # A child may exit and close both pipes between ``poll`` and
+                # ``select``.  An empty selector result must still fall
+                # through to the process-exit check below; otherwise the host
+                # waits until the wall-clock deadline and misclassifies
+                # successful exits or SIGXCPU as timeouts.
                 for key, _ in selected:
                     try:
                         chunk = (
@@ -1177,6 +1278,9 @@ class LocalSandboxRunner:
         seed: int = 42,
         fixture_id: str = SANDBOX_FIXTURE_ID,
         fault_enabled: bool = True,
+        fault_apply_on_call: int | None = None,
+        protection_mode: Literal["idempotent_reconcile", "blanket_block"] | None = None,
+        event_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> SandboxRunResult:
         """Run one reviewed local Agent and return typed evidence, never fallback."""
 
@@ -1223,6 +1327,21 @@ class LocalSandboxRunner:
                 "fixture_not_allowlisted", "fixture is outside the reviewed SandboxGym contract"
             )
             return self._failed_result(run_id=run_id, mission=mission, trace=[], failure=failure)
+        if protection_mode not in {None, "idempotent_reconcile", "blanket_block"}:
+            failure = SandboxFailure(
+                "protection_not_allowlisted",
+                "protection mode is outside the reviewed host-boundary contract",
+            )
+            return self._failed_result(run_id=run_id, mission=mission, trace=[], failure=failure)
+        if fault_apply_on_call is not None and (
+            isinstance(fault_apply_on_call, bool)
+            or fault_apply_on_call < 1
+            or fault_apply_on_call > self.limits.max_tool_calls
+        ):
+            failure = SandboxFailure(
+                "fixture_not_allowlisted", "fault call index is outside the reviewed contract"
+            )
+            return self._failed_result(run_id=run_id, mission=mission, trace=[], failure=failure)
         if (
             not isinstance(seed, int)
             or isinstance(seed, bool)
@@ -1258,6 +1377,9 @@ class LocalSandboxRunner:
                 "fixture_id": fixture_id,
                 "seed": seed,
                 "input": mission,
+                "fault_enabled": fault_enabled,
+                "fault_apply_on_call": fault_apply_on_call,
+                "protection_mode": protection_mode,
                 "limits": {
                     "wall_clock_seconds": self.limits.wall_clock_seconds,
                     "cpu_seconds": self.limits.cpu_seconds,
@@ -1292,7 +1414,13 @@ class LocalSandboxRunner:
             )
 
         try:
-            gym = load_fixture(fixture_id, seed=seed, run_id=run_id, fault_enabled=fault_enabled)
+            gym = load_fixture(
+                fixture_id,
+                seed=seed,
+                run_id=run_id,
+                fault_enabled=fault_enabled,
+                fault_apply_on_call=fault_apply_on_call,
+            )
         except (KeyError, ValueError, TypeError):
             failure = SandboxFailure(
                 "fixture_not_allowlisted", "the reviewed SandboxGym fixture could not be loaded"
@@ -1405,6 +1533,8 @@ class LocalSandboxRunner:
                     gym=gym,
                     trace=trace,
                     world_diffs=world_diffs,
+                    protection_mode=protection_mode,
+                    event_sink=event_sink,
                 )
         except SandboxPreparationError as error:
             failure = SandboxFailure(error.code, error.public_message)
@@ -1451,6 +1581,7 @@ class LocalSandboxRunner:
                 final_state_hash=final_state_hash,
                 fault_applications=fault_applications,
                 agent_result=agent_result,
+                protection_mode=protection_mode,
             )
         if agent_result is None:
             failure = SandboxFailure("protocol_malformed", "child ended without an Agent result")
@@ -1467,6 +1598,7 @@ class LocalSandboxRunner:
                 initial_state_hash=initial_state_hash,
                 final_state_hash=final_state_hash,
                 fault_applications=fault_applications,
+                protection_mode=protection_mode,
             )
         return self._completed_result(
             run_id=run_id,
@@ -1481,6 +1613,7 @@ class LocalSandboxRunner:
             initial_state_hash=initial_state_hash,
             final_state_hash=final_state_hash,
             fault_applications=fault_applications,
+            protection_mode=protection_mode,
         )
 
 

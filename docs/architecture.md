@@ -24,8 +24,24 @@ flowchart LR
 entrypoint를 bounded evidence로 읽으면 기존 deterministic Gym 경로를 사용한다. manifest가
 없더라도 exact SHA가 검토된 adapter와 일치하면 AST 계약을 확인한 뒤 network-disabled local
 replacement Gym으로 실행한다. 그 밖에는 exact SHA static profile이 있는 경우에만
-metadata-only compatibility를 반환한다. 어느 경로도 submitted source code를 import하거나
-실행하지 않는다.
+metadata-only compatibility를 반환한다. 이 외부 GitHub 경로들은 submitted source code를
+import하거나 실행하지 않는다.
+
+유일한 source-code 실행 경로는 저장소에 체크인되고 bytes·manifest·mission이 모두 고정된
+`examples/demo-agent-repo`다. launcher가 해당 exact bundle용 `LocalSandboxRunner`를 명시적으로
+주입한 경우에만 `python -I -S` child가 entrypoint를 실행한다. 도구 호출은 network-disabled
+host-owned SandboxGym으로만 전달되고, 임의 경로·임의 GitHub source·dependency install은
+허용하지 않는다. child 또는 controller가 typed failure로 멈추면 finding으로 바꾸거나 다른
+fixture로 fallback하지 않는다.
+
+```mermaid
+flowchart LR
+    L["Reviewed local bundle + exact mission"] --> V["Bundle/blob/content hash verification"]
+    V --> C["python -I -S bounded child"]
+    C <--> G["Host-owned stateful SandboxGym"]
+    G --> E["Raw trace + ledger + world diff"]
+    E --> D["Five-tool diagnostic controller"]
+```
 
 ```mermaid
 flowchart LR

@@ -30,6 +30,7 @@ def life_v0_invariants(
     *,
     max_spend_krw: int = DEFAULT_MAX_SPEND_KRW,
     side_effect_tool: str = "payment.charge",
+    mission_completion_tool: str = "order.create",
 ) -> list[Invariant]:
     """Return the canonical Life-v0 task and platform checks.
 
@@ -63,7 +64,7 @@ def life_v0_invariants(
                 rhs=LiteralSelector(value=max_spend_krw),
             ),
         ),
-        mission_completed_invariant(),
+        mission_completed_invariant(tool=mission_completion_tool),
         Invariant(
             id=INV_EXACTLY_ONCE_PAYMENT,
             kind="platform",

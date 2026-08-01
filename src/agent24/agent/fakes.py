@@ -1161,7 +1161,7 @@ CAKE_BUYER_CARD = AgentCard(
 )
 
 
-def mission_completed_invariant() -> Invariant:
+def mission_completed_invariant(tool: str = ORDER_CREATE) -> Invariant:
     """``count(order.create) >= 1`` -- the functionality half of every gate."""
 
     return Invariant(
@@ -1169,7 +1169,7 @@ def mission_completed_invariant() -> Invariant:
         kind="task",
         description="미션이 실제로 완료되어 주문이 하나 이상 생성되어야 한다.",
         check=ComparisonCheck(
-            lhs=LedgerAggSelector(tool=ORDER_CREATE, agg="count"),
+            lhs=LedgerAggSelector(tool=tool, agg="count"),
             op=Op.GE,
             rhs=LiteralSelector(value=1),
         ),

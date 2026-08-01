@@ -627,7 +627,7 @@ cases:
   - id: local-demo-agent-contract
     runner: pytest
     issue: 99
-    expectation: the parent preflight accepts only the exact local bundle schemas, records bundle and file provenance, preserves explicit safety declarations, and rejects schema drift before entrypoint execution
+    expectation: the parent preflight accepts only the exact local bundle schemas, records bundle and file provenance, preserves explicit safety declarations, and the default demo executes the reviewed entrypoint in a bounded child rather than substituting a synthetic target
     targets:
       - tests/unit/test_source_manifest.py::test_local_bundle_source_is_explicit_and_never_looks_like_public_github
       - tests/unit/test_external_preflight.py::test_local_demo_bundle_preflight_preserves_sha_path_and_content_hash_evidence
@@ -638,9 +638,20 @@ cases:
   - id: local-sandbox-runner-boundary
     runner: pytest
     issue: 100
-    expectation: the checked-in local bundle is hash-verified and runs through the bounded child runner while host-owned SandboxGym evidence remains linked and boundary violations terminate with typed failures
+    expectation: the checked-in local bundle is hash-verified and runs through the bounded child runner while host-owned SandboxGym evidence remains linked, protected replay keeps one payment effect, and boundary violations terminate with typed failures
     targets:
       - tests/unit/test_sandbox_runner.py
+
+  - id: local-sandbox-diagnostic-e2e
+    runner: pytest
+    issue: 102
+    expectation: the exact reviewed local AUT runs through the stateful SandboxGym under one source SHA, fixture, seed and initial snapshot; faulted ledger records two payments while host idempotency and reconciliation preserve mission success with one, three vulnerable and protected replay digests are stable, neighbor and benign gates pass, blanket block is rejected, raw evidence IDs join stream, report and five-tool controller output, and runner crash or budget stop creates no finding
+    targets:
+      - tests/unit/test_sandbox_runner.py::test_host_boundary_reconciles_unknown_payment_without_changing_source
+      - tests/unit/test_sandbox_runner.py::test_blanket_payment_block_is_a_failed_mission_not_a_verified_fix
+      - tests/integration/test_local_demo.py::test_local_demo_runs_example_participant_local_bundle
+      - tests/integration/test_local_demo.py::test_live_local_demo_uses_five_controller_tools_over_actual_sandbox
+      - tests/integration/test_local_demo.py::test_target_runner_crash_or_budget_stop_never_becomes_a_finding
 
   # OpenAI model-controlled bounded diagnostic orchestration (issue #101).
   - id: openai-bounded-controller-contract
@@ -658,6 +669,21 @@ cases:
     targets:
       - tests/integration/test_api.py::test_live_target_passes_bounded_synthetic_evidence_to_openai
       - tests/integration/test_api.py::test_live_target_rejects_a_premature_model_final_then_runs_named_reference
+      - tests/integration/test_api.py::test_external_timeout_preserves_controller_evidence_without_fixture_events
+
+  # Local-only demo release terminals and browser/API boundaries (issue #103).
+  # The quota-spending three-run provider smoke remains separately opt-in in
+  # tests/integration/test_openai_diagnostic_smoke.py and is never run by CI.
+  - id: local-demo-release-terminal-matrix
+    runner: pytest
+    issue: 103
+    expectation: the exact local bundle completes through the five-tool controller in live mode; missing key, unresolved source, sandbox runner failure and provider timeout each retain their own typed terminal without fixture substitution, fabricated findings or secret disclosure
+    targets:
+      - tests/integration/test_local_demo.py::test_live_local_demo_uses_five_controller_tools_over_actual_sandbox
+      - tests/integration/test_local_demo.py::test_local_demo_runs_example_participant_local_bundle
+      - tests/unit/test_sandbox_runner.py::test_cpu_and_memory_budgets_end_as_typed_failures
+      - tests/integration/test_api.py::test_source_preflight_failure_stops_without_target_claims
+      - tests/integration/test_local_demo.py::test_target_runner_crash_or_budget_stop_never_becomes_a_finding
       - tests/integration/test_api.py::test_external_timeout_preserves_controller_evidence_without_fixture_events
 
   # Live case binding (issue #120).  A `mode: live` case used to return an

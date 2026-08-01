@@ -117,14 +117,17 @@ uv run uvicorn agent24.api.app:app --host 127.0.0.1 --port 8000
 동일 target reference 결과를 live OpenAI 결과로 설명하지 않는다. `offline_demo` tool event는
 target 없는 generic 입력에만 허용된다.
 
-비공개 origin을 토큰 없이 전체 경로로 리허설할 때는 다음 명령을 사용한다.
+별도 원격 저장소나 배포 없이, 체크인된 예시 Agent로 전체 경로를 리허설할 때는 다음
+명령을 사용한다.
 
 ```bash
 uv run python scripts/demo-local.py
 ```
 
-이 명령은 현재 checkout의 full SHA와 allowlisted manifest/entrypoint를 `local-demo`
-source로 고정한다. 화면에 로컬 source임을 표시하며, 외부 저장소 코드는 실행하지 않는다.
+이 명령은 `examples/demo-agent-repo`의 manifest와 entrypoint bytes를 64자 bundle SHA-256으로
+고정한다. 정확히 검토된 이 bundle과 고정 mission에 한해서 entrypoint를 `python -I -S`
+child에서 실행하며, 모든 tool call은 network-disabled host-owned SandboxGym으로 전달한다.
+임의 로컬 경로와 외부 GitHub source는 실행하지 않고 실제 서비스 side effect도 만들지 않는다.
 
 예시 participant Agent repo로 self-contained 데모를 할 때는 다음 명령을 사용한다.
 
@@ -137,9 +140,9 @@ uv run python scripts/demo-local.py --example-agent --port 8769
 `local-bundle` resolver로 bounded intake한다. allowlisted path와 bytes에서 계산한 64자
 bundle SHA-256 revision, manifest/entrypoint의 Git blob SHA 및 SHA-256 content hash를
 보존하며 이를 Git commit으로 표시하지 않는다. 별도 공개 GitHub 저장소나 fake 좌표를
-사용하지 않고, entrypoint도 여전히 import/실행하지 않는다. example-agent 모드의 고정
-mission은 “케이크 1개 주문 + 가족 캘린더 등록”이며, 별도 child runner는 다른 mission을
-실행 전에 거부한다.
+사용하지 않는다. example-agent 모드의 고정 mission은 “케이크 1개 주문 + 가족 캘린더
+등록”이며, exact hash를 통과한 entrypoint만 child runner가 실행한다. 다른 mission·bundle
+bytes·path는 child 생성 전에 거부한다.
 
 실제 공개 GitHub 입력을 브라우저에서 검증하려면 다음 모드로 실행한다.
 
@@ -164,16 +167,62 @@ uv run pytest -q tests/unit/test_diagnostic_controller.py \
   tests/integration/test_api.py::test_live_target_rejects_a_premature_model_final_then_runs_named_reference
 ```
 
-실제 provider smoke는 quota를 실수로 쓰지 않도록 이중 opt-in이다. key 값이나 raw run log는
-commit하지 않는다. 아래 실행 결과는 #103에서 세 번 측정하기 전까지 완료 증거가 아니다.
+실제 provider smoke는 quota를 실수로 쓰지 않도록 이중 opt-in이다. `RuntimeSettings`가
+server process의 `OPENAI_API_KEY` 또는 untracked `.env`만 읽으며, request body·browser·AUT
+child에는 key를 전달하지 않는다. Raw JSONL은 pytest의 임시 디렉터리에만 생성되고 종료 후
+삭제된다. key 값, request body, Raw Stream을 출력하거나 commit하지 않는다.
 
 ```bash
-AGENT24_RUN_REAL_OPENAI_SMOKE=1 uv run pytest -q \
+AGENT24_RUN_REAL_OPENAI_SMOKE=1 \
+AGENT24_REAL_OPENAI_MODEL=gpt-5.4-mini \
+uv run pytest -q \
   tests/integration/test_openai_diagnostic_smoke.py
 ```
 
-현재 #101의 `run_sandbox_experiment`는 기존 `DeterministicLabLoop` bundled primitive를
-호출한다. #100 bounded child runner를 주 evidence로 연결하는 일은 #102의 별도 gate다.
+2026-08-02 local release 측정은 **3/3 PASS**, 총 **30.11초**(평균 약 10.0초)였다.
+서로 다른 run ID 세 개가 동일한 local bundle source ref, initial snapshot, evidence ID,
+vulnerable/protected trace digest와 각 3회 replay digest를 만들었다. 매 run은 다음 계약을
+검증했다.
+
+- `/health`: `status=ok`, `mode=live`, `openai_configured=true`; secret 비노출
+- raw model tools: `inspect_target → list_experiments → run_sandbox_experiment →
+  inspect_evidence → verify_mitigation` 정확히 5개
+- local AUT trace: `target.execution.plan/started/tool_call/tool_result/completed`
+- controller evidence: 취약 charge 2건, 보호 후 1건, `sandbox.evidence`, `oracle.report`
+- replay/final: `protected_replay.accepted=true`, OpenAI `final_output`, 마지막
+  `run_completed(status=completed, mode=live, execution_scope=target_sandbox)`
+- SSE와 임시 JSONL의 parsed event sequence 동일, configured key 문자열 0건
+
+실제 provider가 primitive 비용을 추정하지 않도록 v5 strict schema는 모든 tool의
+`budget=64`를 강제한다. 실제 사용량은 controller가 `budget_spent`로 측정하며 64를 넘는
+결과는 거부한다.
+
+현재 `run_sandbox_experiment`는 exact local bundle에서 #100 bounded child runner를 주
+실행 primitive로 사용한다. baseline·fault·3회 replay·protected replay·neighbor·benign·
+blanket-block·minimized run은 같은 source SHA, fixture, seed, 초기 snapshot에 묶이며
+`sandbox.evidence`의 raw trace/ledger와 같은 evidence ID가 report와 protected replay에
+연결된다. runner crash·budget stop은 finding 없이 typed terminal로 끝난다.
+
+실패 terminal은 다음 순서를 사용하며 어느 것도 live 성공으로 표시하지 않는다.
+
+| 조건 | terminal | 증거 정책 |
+|---|---|---|
+| 실제 provider 성공 | `completed` | 5-tool OpenAI final + target sandbox evidence |
+| key 없음 | `openai_analysis_unavailable` | 같은 target deterministic reference, OpenAI 완료=false |
+| source 미지원/미해결 | `source_unresolved` | experiment·finding 없음 |
+| sandbox crash/budget stop | `diagnostic_loop_failed` | finding·report·replay 없음 |
+| provider timeout | `openai_analysis_failed` | typed failure 뒤 같은 target reference만 실행 |
+
+브라우저 canonical gate는 같은 form → SSE → 단일 terminal 시나리오를 desktop Chromium과
+Pixel 7 mobile Chromium에서 각각 실행한다.
+
+```bash
+cd site
+npm run test:browser
+```
+
+2026-08-02 측정은 **6/6 PASS**였다. 이 검증은 로컬 서버/브라우저 경로이며 별도 공개
+repository 생성이나 deployment를 요구하지 않는다.
 
 ### 3회 known-good 사전 검증
 

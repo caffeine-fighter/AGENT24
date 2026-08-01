@@ -11,6 +11,7 @@ ExecutionScope = Literal[
     "compatibility_only",
     "synthetic_archetype",
     "allowlisted_adapter",
+    "target_sandbox",
     "target_runtime",
     "no_target",
     "no_target_offline_demo",
@@ -52,7 +53,7 @@ class RunTerminalPayload(BaseModel):
     findings: int | None = Field(default=None, ge=0)
     target_runtime_completed: bool | None = None
     target_charge_count: int | None = Field(default=None, ge=0)
-    safety_boundary: Literal["SIMULATION_ONLY"] = "SIMULATION_ONLY"
+    safety_boundary: Literal["SIMULATION_ONLY", "TARGET_CODE_IN_SANDBOX"] = "SIMULATION_ONLY"
 
 
 __all__ = ["ExecutionScope", "RunTerminalPayload", "StageFailurePayload", "StageName"]
