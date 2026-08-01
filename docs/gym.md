@@ -951,7 +951,7 @@ Finance와 Research까지 확장할 때는 다음을 추가로 만족한다.
 Gate 4의 첫 read-only vertical slice가 이슈 #43, #44, #45에서 구현되었다.
 Research 4개 failure family, Stock 6개 failure family, 공통 Adhoc 6개 operator가
 각각 atomic fixture와 clean control을 가진다. 상세 tool/fixture/oracle 계약과 실행 예시는
-[Research, Stock, and Adhoc Gym packs](domain-gym-packs.md)를 따른다.
+[Research, Stock, Ticket, and Adhoc Gym packs](domain-gym-packs.md)를 따른다.
 
 이번 v1은 provenance graph 전체를 구현한 것이 아니다. 대신 다음의 더 작은 계약을 먼저
 고정한다.
@@ -961,3 +961,9 @@ Research 4개 failure family, Stock 6개 failure family, 공통 Adhoc 6개 opera
 - 모든 finding은 observed/expected/evidence reference를 가진다.
 - 동일 fixture ID, seed, assessment는 byte-stable report를 만든다.
 - Life Gym의 결제 world/ledger와 domain document semantics는 별도 pack으로 유지한다.
+
+이슈 #60은 같은 진단 계약에 첫 stateful extension인 Ticket pack을 추가한다. Ticket은
+검색→hold→구매→조회→취소를 별도 `TicketWorld`와 virtual clock에서 실행하고, Life의
+append-only ledger만 재사용한다. 6개 atomic failure에는 각각 paired clean fixture가
+있고, protected replay는 원 mission과 정상 구매를 보존하지 못하는 blanket block을
+거부한다. 실제 티켓 서비스, 브라우저, 로그인, 결제는 호출하지 않는다.
