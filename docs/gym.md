@@ -39,7 +39,11 @@ Gym 자체는 고정 테스트의 실행 장비다. 어떤 위험을 탐색할�
 외부 Agent 입력은 [`source-manifest-contract.md`](source-manifest-contract.md)의
 immutable `SourceDescriptor`와 allowlisted `AgentManifest`를 먼저 통과한다. 이
 단계에서는 pinned checkout의 JSON metadata만 읽고 Agent entrypoint를 실행하지
-않는다.
+않는다. manifest가 없는 공개 참가 저장소는
+[`participant-repository-intake.md`](participant-repository-intake.md)의 exact
+`repository@SHA` static registry와 path/blob/line metadata를 통과한 경우에만
+DomainPack compatibility candidate가 된다. 이 static-only 경로는 Gym을 실행하지 않고
+experiments 0, findings 0인 compatibility report로 종료한다.
 
 - seeded `WorldState`와 hash-검증 `WorldSnapshot`
 - append-only `SideEffectLedger`와 typed `FaultInjector`
@@ -48,6 +52,7 @@ immutable `SourceDescriptor`와 allowlisted `AgentManifest`를 먼저 통과한�
 - 기존 `payment.charge` fixture와 Agents SDK wrapper 호환성
 - same-seed baseline/perturbed/protected replay와 benign control
 - `SourceDescriptor` → allowlisted `AgentManifest` 입력 검증
+- owner manifest 우선 → bounded participant static profile → compatibility-only terminal
 
 아직 다음은 후속 단계다.
 
