@@ -88,6 +88,8 @@ report = gym.diagnose(gym.vulnerable_assessment())
 
 The pack diagnoses source, time, security, entity, and instruction-boundary
 violations. It does not predict returns or decide whether BUY/SELL is profitable.
+An AUT reference to an unknown record ID is retained as a cited source-provenance
+finding instead of aborting the diagnosis.
 
 ### Atomic fixtures and oracle findings
 
@@ -130,6 +132,8 @@ Registered scenario families:
 
 Only six allowlisted operators are accepted. Every spec has a fixed seed,
 fixture version, evidence paths, and a tool-call budget of at most eight.
+Multi-capability scenarios require every declared capability, and read-only
+tool names such as `payment.status` do not imply a side effect.
 `controller_ground_truth()` exposes the paired benign result to the Lab
 controller, while `probe()` returns only the raw faulted result.
 
