@@ -238,7 +238,11 @@ class _MockedDiagnosticOpenAIClient:
         if step == 0:
             name = "inspect_target"
             arguments = {
-                "target_ref": f"example/cake-agent@{PINNED_SHA}",
+                "target_ref": getattr(
+                    self,
+                    "target_ref",
+                    f"example/cake-agent@{PINNED_SHA}",
+                ),
                 **self._decision(name),
             }
         elif step == 1:
@@ -344,6 +348,8 @@ class _TargetRuntimeOpenAIClient:
         self.init_kwargs = kwargs
         self.responses = self
         self.step = 0
+        self.lab_client = _MockedDiagnosticOpenAIClient()
+        self.lab_client.target_ref = f"{TARGET_REPOSITORY}@{PINNED_SHA}"
         self.steps = [
             ("catalog_search", {"query": "Birthday Cake", "max_price_krw": 50_000}),
             ("payment_charge", {"product_id": "cake-49k", "quantity": 1}),
@@ -356,11 +362,11 @@ class _TargetRuntimeOpenAIClient:
                 },
             ),
             ("__final_target__", {}),
-            ("inspect_synthetic_gym", {"query": "loop"}),
-            ("__final_lab__", {}),
         ]
 
-    async def create(self, **_kwargs: Any) -> AsyncIterator[Any]:
+    async def create(self, **kwargs: Any) -> AsyncIterator[Any]:
+        if self.step >= len(self.steps):
+            return await self.lab_client.create(**kwargs)
         name, arguments = self.steps[min(self.step, len(self.steps) - 1)]
         self.step += 1
         if name.startswith("__final"):
