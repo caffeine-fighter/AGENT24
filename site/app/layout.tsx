@@ -10,20 +10,20 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     metadataBase,
-    title: "NIGHTMARE LAB — AI 에이전트 안전 실험실",
+    title: "NIGHTMARE LAB | AI 에이전트 안전성 테스트",
     description:
-      "행동형 AI 에이전트를 실제로 배포하기 전에 가상 환경에서 실패를 재현하고 필요한 보호책을 검증합니다.",
+      "도구를 직접 쓰는 AI 에이전트를 배포하기 전에, 가상 환경에서 실패를 재현하고 안전장치를 확인해 보세요.",
     alternates: { canonical: metadataBase },
     openGraph: {
-      title: "NIGHTMARE LAB — AI 에이전트 안전 실험실",
-      description: "에이전트를 실제로 배포하기 전에 가상 환경에서 먼저 시험해 보세요.",
+      title: "NIGHTMARE LAB | AI 에이전트 안전성 테스트",
+      description: "AI 에이전트가 실수하는 순간을 가상 환경에서 재현하고 안전장치까지 확인해 보세요.",
       type: "website",
       url: metadataBase,
     },
     twitter: {
       card: "summary",
-      title: "NIGHTMARE LAB — AI 에이전트 안전 실험실",
-      description: "AI 에이전트를 실전에 투입하기 전에 가상 환경에서 안전하게 시험합니다.",
+      title: "NIGHTMARE LAB | AI 에이전트 안전성 테스트",
+      description: "AI 에이전트를 배포하기 전에 실패와 안전장치를 가상 환경에서 확인해 보세요.",
     },
   };
 }
