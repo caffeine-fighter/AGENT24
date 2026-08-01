@@ -517,7 +517,7 @@ def test_live_target_passes_bounded_synthetic_evidence_to_openai(
     assert "test-only-key" not in model_input
 
 
-def test_source_preflight_failure_falls_back_without_target_claims(
+def test_source_preflight_failure_stops_without_target_claims(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -538,17 +538,31 @@ def test_source_preflight_failure_falls_back_without_target_claims(
         events = _sse_data(client.get(accepted.json()["events_url"]).text)
 
     event_types = [event["type"] for event in events]
-    assert "run_failed" in event_types
-    assert "offline_demo" in event_types
+    assert event_types == ["run_started", "phase.changed", "run_failed", "run_completed"]
     assert "source_descriptor" not in event_types
     assert "behavior_profile" not in event_types
     assert "experiment_plan" not in event_types
+    assert "offline_demo" not in event_types
+    assert "tool_call" not in event_types
+    assert "tool_result" not in event_types
+    source_failure_message = (
+        "외부 Agent source preflight를 완료하지 못해 제출한 Agent 분석과 "
+        "synthetic target 실험을 실행하지 않았습니다."
+    )
     failure = next(event for event in events if event["type"] == "run_failed")
     assert failure["payload"] == {
         "status": "offline_demo",
         "code": "source_preflight_failed",
+        "message": source_failure_message,
     }
-    assert events[-1]["payload"] == {"status": "offline_demo", "mode": "offline_demo"}
+    assert events[-1]["payload"] == {
+        "status": "source_preflight_failed",
+        "mode": "offline_demo",
+        "experiments_run": 0,
+        "findings": 0,
+        "message": source_failure_message,
+        "safety_boundary": "SIMULATION_ONLY",
+    }
 
 
 class _FailingLabLoop:

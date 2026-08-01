@@ -3,10 +3,48 @@
 결선 7분은 `슬라이드 2분 + live demo 3분 + Surprise Task 2분`으로 고정한다.
 repository/ref/mission을 한 번 제출한 뒤에는 어떤 단계 버튼도 누르지 않는다.
 
-> **항상 먼저 말할 경계:** “이 실행은 synthetic archetype 측정입니다. 외부 저장소
-> 코드는 실행하지 않았고 실제 결제·메일·일정 변경도 없습니다.”
+> **항상 먼저 말할 경계:** “이 실행은 고정된 source contract와 network-disabled local
+> replacement를 쓰는 모의 실험입니다. 제출 Python과 실제 결제·메일·일정 변경은 없습니다.”
 
-## Known-good 계약
+## 현재 작동 데모 계약 · 공개 GitHub UCP adapter
+
+현재 실제 GitHub 입력을 받는 주 경로는 아래의 공개 UCP Agent이다. local FastAPI
+(`scripts/demo-local.py --live-github`)와 Sites hosted API가 같은 source/ref/mission을
+받아 각각 bounded source contract를 확인하고, `ucp-shopping-v0` adapter의
+network-disabled local replacement Gym만 실행한다.
+
+```text
+Repository: https://github.com/Upsonic/UCP-Agent
+Ref: 3f98ef03111e560afe92347333865ccac9081d93
+Mission: 구매 완료 뒤 응답이 끊겨도 중복 결제가 없는지 안전하게 검증해 주세요.
+```
+
+성공 run은 다음 evidence를 모두 보여야 한다.
+
+- GitHub ref가 위 40자 SHA로 resolve되고 `upsonic_shopping_agent.py` 한 파일만
+  bounded download된다. 현재 rehearsal source snapshot은 2,875 bytes다.
+- local 경로는 source를 AST로, hosted 경로는 bounded static contract로 확인하고
+  `adapter.matched`에 관찰된 UCP tool 목록·source hash·검사 방법을 남긴다.
+- 선택된 fault는 `commit_then_timeout` on `complete_purchase`다.
+- `CLONE → CRASH → AUTOPSY → VACCINE → REPLAY`가 모두 Raw Stream에 남는다.
+- 보호 전: complete purchase 2건, 주문 2개, 총 ₩98,000, 합성 지갑 ₩402,000이다.
+- controller oracle이 exactly-once, purchase count, total spend 위반을 측정한다.
+- 보호 후: complete purchase 1건, 주문 1개, 총 ₩49,000, 합성 지갑 ₩451,000이다.
+- same-seed·neighbor·benign gate가 통과하고 `protected_replay.accepted=true`다.
+- report는 `verified_mitigation`을 사용하되, stale order-status와 upstream runtime은
+  residual risk로 남긴다. terminal은 명시적 `offline_demo`일 수 있다.
+- 현재 관찰 event 수는 local API 38개, hosted Sites 41개다. 이는 현재 rehearsal의
+  계수이며 UI/API contract가 모든 실행에서 같은 고정 개수를 약속하는 것은 아니다.
+
+항상 먼저 말할 경계는 다음과 같다. “고정된 source contract를 정적으로 확인하고
+network-disabled local replacement를 실행한 모의 실험입니다. 제출 Python·upstream
+dependency와 실제 merchant·결제 side effect는 실행하지 않았습니다.”
+
+ref가 틀리거나 source preflight가 실패하면 `run_failed`와
+`run_completed(status=source_unresolved/source_preflight_failed)`만 남기고 Gym을
+실행하지 않는다. 이 경로를 성공 결과로 포장하지 않는다.
+
+## 보조 호환 계약 · owner manifest
 
 ```text
 Repository: https://github.com/caffeine-fighter/AGENT24
@@ -28,7 +66,7 @@ Mission: 엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문�
 - terminal은 `live` 또는 명시적 `offline_demo`다. offline이어도 위 controller
   evidence가 먼저 완주해야 한다.
 
-33개 event는 2026-08-01의 offline 설명 rehearsal에서 측정한 값이다. live OpenAI
+아래 owner manifest 계약의 33개 event는 2026-08-01의 offline 설명 rehearsal에서 측정한 값이다. live OpenAI
 설명은 SDK tool turn에 따라 event가 더 생길 수 있으므로 발표에서는 “최소 event 수”로
 일반화하지 않고 해당 rehearsal의 관찰값이라고 말한다.
 
@@ -37,7 +75,9 @@ Mission: 엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문�
 - [ ] `git rev-parse HEAD`와 발표할 source/ref를 기록했다.
 - [ ] `OPENAI_API_KEY`와 quota 유무만 확인했고 key 값을 화면·log에 노출하지 않았다.
 - [ ] `/health`의 `build_commit`과 실제 배포 commit이 같으며 submitted-source SHA와 혼동하지 않는다.
-- [ ] D1 P0 known-good target은 공개 GitHub이고 allowlist manifest를 제공한다.
+- [x] D1 P0 known-good target은 공개 GitHub의 고정 UCP adapter이며, bounded entrypoint
+  contract와 network-disabled local replacement를 확인했다. owner manifest 경로는
+  보조 호환 경로로 유지한다.
 - [ ] `scripts/hosted-smoke.py`가 production에서 `run_mode=openai_hosted`와 `openai_response_observed=true`로 통과했다.
 - [ ] private repository라면 API 서버가 읽는 `GITHUB_TOKEN` 권한을 확인했다.
 - [ ] `scripts/external-smoke.py`용 `GITHUB_TOKEN`도 process environment에 주입했다.
@@ -68,6 +108,37 @@ uv run uvicorn agent24.api.app:app --host 127.0.0.1 --port 8000
 
 브라우저에서 <http://127.0.0.1:8000>을 연다. API key가 없으면 화면과 stream에
 `offline_demo`가 표시되며 deterministic controller 경로는 계속 실행된다.
+
+비공개 origin을 토큰 없이 전체 경로로 리허설할 때는 다음 명령을 사용한다.
+
+```bash
+uv run python scripts/demo-local.py
+```
+
+이 명령은 현재 checkout의 full SHA와 allowlisted manifest/entrypoint를 `local-demo`
+source로 고정한다. 화면에 로컬 source임을 표시하며, 외부 저장소 코드는 실행하지 않는다.
+
+예시 participant Agent repo로 self-contained 데모를 할 때는 다음 명령을 사용한다.
+
+```bash
+uv run python scripts/demo-local.py --example-agent --port 8769
+```
+
+그리고 <http://127.0.0.1:8769/index.html?demo=example-agent>를 연다. 이 경로는
+`examples/demo-agent-repo`의 manifest와 entrypoint를 `local-example-fixture` source로
+bounded intake하며, `example-org/nightmare-cake-agent@demo-v1`는 실제 원격 저장소가
+아닌 local fixture alias임을 화면에 표시한다. entrypoint는 여전히 import/실행하지 않는다.
+
+실제 공개 GitHub 입력을 브라우저에서 검증하려면 다음 모드로 실행한다.
+
+```bash
+uv run python scripts/demo-local.py --live-github --port 8769
+```
+
+이 모드는 UI가 입력한 repository/ref를 GitHub metadata로 full SHA에 고정하고, bounded
+manifest/entrypoint 또는 exact-reviewed `ucp-shopping-v0` adapter를 선택한다. adapter
+경로는 `ALLOWLISTED ADAPTER`, `complete_purchase`, `network disabled`와 원본 Raw Stream을
+화면에 남기며 submitted Python이나 upstream dependency를 실행하지 않는다.
 
 ### 3회 known-good 사전 검증
 
@@ -121,7 +192,7 @@ uv run python scripts/surprise-smoke.py --base-url http://127.0.0.1:8000
 | live 경과 | 화면 행동 | 발표자 cue |
 |---|---|---|
 | `0:00–0:20` | form의 repository/ref/mission과 상단 simulation badge를 보여준다. | “세 값을 한 번 제출하고 이후에는 손을 떼겠습니다.” |
-| `0:20–0:40` | `악몽 시작`을 한 번 누른 뒤 cursor를 치운다. resolved SHA와 `CLONE`을 가리킨다. | “source를 immutable commit으로 고정하고 manifest만 읽습니다.” |
+| `0:20–0:40` | `악몽 시작`을 한 번 누른 뒤 cursor를 치운다. resolved SHA와 `CLONE`을 가리킨다. | “source를 immutable commit으로 고정하고 manifest와 선언된 entrypoint를 bounded evidence로 읽습니다.” |
 | `0:40–1:20` | BehaviorProfile 다섯 assessment, selected fault의 `WHY`와 `EXPECT`, Raw Stream을 보여준다. | “성격을 추측하지 않고 evidence 또는 unknown으로 기록합니다.” |
 | `1:20–2:05` | charge 2건, timeout unknown, 2개·₩98,000, 세 invariant와 first divergence를 보여준다. | “관찰 사실과 원인 가설을 분리합니다.” |
 | `2:05–2:35` | antibody policy와 `PROPOSED`를 보여준다. | “전부 막지 않고 idempotency와 reconciliation만 추가합니다.” |
@@ -166,10 +237,10 @@ run id는 repository에 남기지 않고 아래 aggregate evidence만 기록했�
 
 | 항목 | 실행 결과 | 판정 |
 |---|---|---|
-| private repository smoke, token 미주입 | GitHub API 404 → `SourceAccessError` | 예상된 preflight failure. token/fallback 설명을 검증함 |
+| private repository smoke, token 미주입 | GitHub API 404 → `SourceAccessError` | 예상된 `source_preflight_failed` terminal과 token 안내를 검증함 |
 | token을 process header 경로로 주입한 `external-smoke.py --runs 3` | full SHA `69f7f2bcb18716e5c1f06b4d31a7e90a7dfff90d`, manifest SHA-256 `4ea67bec1bf484b6e965595ce22130b26fbb18745b8a8ceedbbce5d12838fe1b`, `stable=true`, `3/3`, `accepted=true` | PASS |
 | full structured API, OpenAI key 없음 | 33 events, contiguous `seq=0..32`, 2건·₩98,000 → 1건·₩49,000, 네 check PASS, terminal `offline_demo` | PASS |
-| source token 없음 fallback | `run_started → phase.changed → run_failed(source_preflight_failed) → offline_demo → tool_call → tool_result → final_output → run_completed` | PASS |
+| source token 없음 | `run_started → phase.changed → run_failed(source_preflight_failed) → run_completed(experiments=0)` | PASS |
 | repository 고정 Surprise matrix | 5/5, 각 6 events, expected scenario 일치, 고유 run id, `external_side_effects=false` | PASS |
 | 돈·커뮤니케이션·시간·데이터·bonus exact mission | 5/5, 각 6 events, expected scenario 일치, `external_side_effects=false` | PASS |
 | deterministic web fixture reducer | `node web/tests/core.test.mjs` 통과 | PASS |

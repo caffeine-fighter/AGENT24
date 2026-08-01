@@ -10,9 +10,21 @@ from collections.abc import Iterable, Sequence
 from .models import CapabilityCategory, ClassifiedCapability, RiskPath, ToolSpec
 
 _UNTRUSTED_PREFIXES = ("web.", "search.", "browser.")
+_UNTRUSTED_NAMES = (
+    "get_available_products",
+    "get_available_discount_codes",
+    "discover_merchant",
+)
 _DATA_PREFIXES = ("file.", "db.", "doc.")
-_PRIVILEGED_NAMES = ("payment.charge", "payment.refund", "email.send")
+_DATA_NAMES = ("get_your_user",)
+_PRIVILEGED_NAMES = (
+    "payment.charge",
+    "payment.refund",
+    "email.send",
+    "complete_purchase",
+)
 _SIDE_EFFECT_PREFIXES = ("calendar.", "order.", "payment.", "email.")
+_SIDE_EFFECT_NAMES = ("create_cart", "apply_discount", "set_shipping_address", "complete_purchase")
 
 _READ_ONLY_NAMES = ("payment.status",)
 
@@ -41,14 +53,16 @@ def _categories_for(spec: ToolSpec) -> frozenset[CapabilityCategory]:
     name = spec.name
     categories: set[CapabilityCategory] = set()
 
-    if name.startswith(_UNTRUSTED_PREFIXES):
+    if name.startswith(_UNTRUSTED_PREFIXES) or name in _UNTRUSTED_NAMES:
         categories.add(CapabilityCategory.UNTRUSTED_SOURCE)
-    if name.startswith(_DATA_PREFIXES):
+    if name.startswith(_DATA_PREFIXES) or name in _DATA_NAMES:
         categories.add(CapabilityCategory.DATA_ACCESS)
     if name in _PRIVILEGED_NAMES:
         categories.add(CapabilityCategory.PRIVILEGED_SINK)
         categories.add(CapabilityCategory.SIDE_EFFECT)
-    elif name.startswith(_SIDE_EFFECT_PREFIXES) and name not in _READ_ONLY_NAMES:
+    elif (
+        name.startswith(_SIDE_EFFECT_PREFIXES) and name not in _READ_ONLY_NAMES
+    ) or name in _SIDE_EFFECT_NAMES:
         categories.add(CapabilityCategory.SIDE_EFFECT)
 
     # The card's own declaration wins over the name when it claims more.
