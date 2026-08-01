@@ -216,7 +216,12 @@ test("hosted source failure stops before any synthetic experiment", async () => 
     const tamperedUrl = new URL(run.events_url, "http://localhost");
     const token = tamperedUrl.searchParams.get("run_context");
     assert.ok(token);
-    tamperedUrl.searchParams.set("run_context", `${token.slice(0, -1)}${token.endsWith("A") ? "B" : "A"}`);
+    const tokenParts = token.split(".");
+    assert.equal(tokenParts.length, 3);
+    const ciphertext = tokenParts[2];
+    const tamperIndex = Math.floor(ciphertext.length / 2);
+    tokenParts[2] = `${ciphertext.slice(0, tamperIndex)}${ciphertext[tamperIndex] === "A" ? "B" : "A"}${ciphertext.slice(tamperIndex + 1)}`;
+    tamperedUrl.searchParams.set("run_context", tokenParts.join("."));
     const tampered = await request(`${tamperedUrl.pathname}${tamperedUrl.search}`, {
       headers: { accept: "application/json" },
     });
