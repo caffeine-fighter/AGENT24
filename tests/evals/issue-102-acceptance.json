@@ -1,0 +1,49 @@
+{
+  "schema_version": "agent24.issue-acceptance.v1",
+  "issue": 102,
+  "title": "[Task/Demo-5] stateful SandboxGym 진단·mitigation·protected replay E2E",
+  "source": "https://github.com/caffeine-fighter/AGENT24/issues/102",
+  "note": "Copied verbatim from the issue body. Tests are network-free, so this vendored copy is what the traceability guard reads; it is deliberately a separate artifact from the buckets it audits, so a check cannot be made to disappear by editing the test module.",
+  "checks": [
+    {
+      "id": "AC-01-aut-runner-evidence",
+      "text": "main diagnostic evidence가 FakeGym-only가 아니라 allowlisted AUT runner + stateful SandboxGym에서 나온다."
+    },
+    {
+      "id": "AC-02-shared-provenance",
+      "text": "baseline/perturbed/protected가 같은 source SHA, fixture version, seed, initial snapshot을 사용한다."
+    },
+    {
+      "id": "AC-03-ledger-measured-charges",
+      "text": "commit_then_timeout 보호 전 2회 charge/order와 보호 후 1회 charge/order를 ledger로 측정한다."
+    },
+    {
+      "id": "AC-04-evidence-cites-refs",
+      "text": "first divergence, minimized counterexample, invariant violation이 raw trace/ledger ref를 인용한다."
+    },
+    {
+      "id": "AC-05-three-gates",
+      "text": "mitigation이 same-seed, neighbor, benign control을 모두 통과해야 verified다."
+    },
+    {
+      "id": "AC-06-blanket-block-rejected",
+      "text": "blanket blocking은 mission failure로 거부한다."
+    },
+    {
+      "id": "AC-07-three-identical-digests",
+      "text": "3회 replay digest가 동일하다."
+    },
+    {
+      "id": "AC-08-raw-stream-binding",
+      "text": "Raw Stream과 report가 같은 run_id/evidence ref로 연결된다."
+    },
+    {
+      "id": "AC-09-no-false-promotion",
+      "text": "unsupported/crash/budget exhaustion은 finding으로 승격되지 않는다."
+    },
+    {
+      "id": "AC-10-python-and-reducer-tests",
+      "text": "Python integration/eval과 frontend reducer tests가 있다."
+    }
+  ]
+}
