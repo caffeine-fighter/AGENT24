@@ -7,7 +7,6 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 from openai.types.responses import (
-    Response,
     ResponseCompletedEvent,
     ResponseFunctionToolCall,
     ResponseOutputItemDoneEvent,
@@ -22,19 +21,29 @@ from agent24.agent import (
     metadata_fixture_for,
 )
 from agent24.agent.source import MappingRevisionResolver
-from agent24.agent.target_runtime import TARGET_ENTRYPOINT, TARGET_REPOSITORY
 from agent24.api import (
     ExternalAgentPreflight,
     ManifestFetchError,
     MappingManifestFetcher,
-    MappingSourceFileFetcher,
     OpenAIWhiteBoxAdapter,
     RuntimeSettings,
     create_app,
 )
 from agent24.evals.live_stub import StubOpenAIClient
 
-PINNED_SHA = "0123456789abcdef0123456789abcdef01234567"
+# The reviewed-target doubles live in agent24.evals.target_stub so the eval
+# registry can execute the same scenarios these tests assert on (issue #124).
+# Keeping a second copy here is exactly the drift #120 removed for the Lab
+# explainer stub.
+from agent24.evals.target_stub import (
+    PINNED_TARGET_SHA as PINNED_SHA,
+)
+from agent24.evals.target_stub import (
+    ScriptedDiagnosticClient,
+    ScriptedTargetClient,
+    reviewed_target_preflight,
+    stub_response,
+)
 
 
 def _external_preflight(*, supported: bool = True) -> ExternalAgentPreflight:
@@ -78,21 +87,6 @@ def _participant_preflight() -> ExternalAgentPreflight:
     )
 
 
-def _reviewed_target_preflight() -> ExternalAgentPreflight:
-    repository_root = Path(__file__).resolve().parents[2]
-    manifest_path = repository_root / ".agent24" / "manifest.json"
-    manifest_bytes = manifest_path.read_bytes()
-    entrypoint_bytes = (repository_root / TARGET_ENTRYPOINT).read_bytes()
-    return ExternalAgentPreflight(
-        source_resolver=MappingRevisionResolver(
-            {(TARGET_REPOSITORY, "main"): PINNED_SHA}
-        ),
-        manifest_fetcher=MappingManifestFetcher({".agent24/manifest.json": manifest_bytes}),
-        source_file_fetcher=MappingSourceFileFetcher({TARGET_ENTRYPOINT: entrypoint_bytes}),
-        retrieved_at="2026-08-02T03:21:00+09:00",
-    )
-
-
 def _target_payload(*, repository_url: str = "https://github.com/example/cake-agent"):
     return {
         "repository_url": repository_url,
@@ -101,18 +95,7 @@ def _target_payload(*, repository_url: str = "https://github.com/example/cake-ag
     }
 
 
-def _response(*, response_id: str, output: list[Any]) -> Response:
-    # ``model_construct`` lets the fixture stay focused on the fields consumed
-    # by the official Agents SDK runner, without inventing provider metadata.
-    return Response.model_construct(
-        id=response_id,
-        created_at=0.0,
-        model="gpt-4.1-mini",
-        object="response",
-        output=output,
-        status="completed",
-        usage=None,
-    )
+_response = stub_response
 
 
 class _MockedOpenAIClient:
@@ -183,229 +166,6 @@ class _MockedOpenAIClient:
                     type="response.completed",
                 ),
             ]
-
-        async def stream() -> AsyncIterator[Any]:
-            for event in events:
-                yield event
-
-        return stream()
-
-
-class _MockedDiagnosticOpenAIClient:
-    """Responses double that completes the exact five-tool diagnostic loop."""
-
-    last: _MockedDiagnosticOpenAIClient | None = None
-
-    def __init__(self, *, target_ref: str | None = None, **kwargs: Any) -> None:
-        self.init_kwargs = kwargs
-        self.target_ref = target_ref or f"example/cake-agent@{PINNED_SHA}"
-        self.requests: list[dict[str, Any]] = []
-        self.responses = self
-        type(self).last = self
-
-    @staticmethod
-    def _tool_outputs(input_items: Any) -> list[dict[str, Any]]:
-        if not isinstance(input_items, list):
-            return []
-        outputs: list[dict[str, Any]] = []
-        for item in input_items:
-            item_type = item.get("type") if isinstance(item, dict) else getattr(item, "type", None)
-            if item_type != "function_call_output":
-                continue
-            raw = item.get("output") if isinstance(item, dict) else getattr(item, "output", None)
-            if isinstance(raw, str):
-                parsed = json.loads(raw)
-            elif isinstance(raw, dict):
-                parsed = raw
-            else:
-                raise AssertionError("mock received a non-JSON function output")
-            outputs.append(parsed)
-        return outputs
-
-    @staticmethod
-    def _decision(step: str) -> dict[str, Any]:
-        return {
-            "decision_summary": f"Use controller-owned evidence for {step}.",
-            "expected_evidence": [f"Typed {step} artifact"],
-            "budget": 64,
-            "fallback": "Stop or use the same-target deterministic reference.",
-        }
-
-    async def create(self, **kwargs: Any) -> AsyncIterator[Any]:
-        self.requests.append(kwargs)
-        outputs = self._tool_outputs(kwargs.get("input", []))
-        step = len(outputs)
-
-        if step == 0:
-            name = "inspect_target"
-            arguments = {
-                "target_ref": getattr(
-                    self,
-                    "target_ref",
-                    f"example/cake-agent@{PINNED_SHA}",
-                ),
-                **self._decision(name),
-            }
-        elif step == 1:
-            name = "list_experiments"
-            arguments = self._decision(name)
-        elif step == 2:
-            name = "run_sandbox_experiment"
-            candidate = outputs[-1]["candidates"][0]
-            arguments = {
-                "operator_id": candidate["operator_id"],
-                "fault_id": candidate["fault_id"],
-                **self._decision(name),
-            }
-        elif step == 3:
-            name = "inspect_evidence"
-            arguments = {
-                "evidence_id": outputs[-1]["evidence_id"],
-                **self._decision(name),
-            }
-        elif step == 4:
-            name = "verify_mitigation"
-            arguments = {
-                "evidence_id": outputs[-1]["evidence_id"],
-                "mitigation_id": outputs[-1]["proposed_patch_id"],
-                **self._decision(name),
-            }
-        elif step == 5:
-            verified = outputs[-1]
-            output_text = ResponseOutputText(
-                annotations=[],
-                text=json.dumps(
-                    {
-                        "answer": "Mock bounded diagnostic completed.",
-                        "decision_summary": "Selected one allowlisted payment experiment.",
-                        "evidence_ids": [verified["evidence_id"]],
-                        "mitigation_id": verified["mitigation_id"],
-                    }
-                ),
-                type="output_text",
-            )
-            message = ResponseOutputMessage(
-                id="msg_diagnostic_final",
-                content=[output_text],
-                role="assistant",
-                status="completed",
-                type="message",
-            )
-            response = _response(response_id="resp_diagnostic_final", output=[message])
-            events = [
-                ResponseOutputItemDoneEvent(
-                    item=message,
-                    output_index=0,
-                    sequence_number=1,
-                    type="response.output_item.done",
-                ),
-                ResponseCompletedEvent(
-                    response=response,
-                    sequence_number=2,
-                    type="response.completed",
-                ),
-            ]
-        else:
-            raise AssertionError("diagnostic mock received more than five tool outputs")
-
-        if step < 5:
-            function_call = ResponseFunctionToolCall(
-                id=f"fc_diagnostic_{step + 1}",
-                call_id=f"call_diagnostic_{step + 1}",
-                name=name,
-                arguments=json.dumps(arguments, separators=(",", ":")),
-                type="function_call",
-                status="completed",
-            )
-            response = _response(
-                response_id=f"resp_diagnostic_{step + 1}",
-                output=[function_call],
-            )
-            events = [
-                ResponseOutputItemDoneEvent(
-                    item=function_call,
-                    output_index=0,
-                    sequence_number=1,
-                    type="response.output_item.done",
-                ),
-                ResponseCompletedEvent(
-                    response=response,
-                    sequence_number=2,
-                    type="response.completed",
-                ),
-            ]
-
-        async def stream() -> AsyncIterator[Any]:
-            for event in events:
-                yield event
-
-        return stream()
-
-
-class _TargetRuntimeOpenAIClient:
-    """Drive both the reviewed Target Agent and the final Lab explanation."""
-
-    def __init__(self, **kwargs: Any) -> None:
-        self.init_kwargs = kwargs
-        self.responses = self
-        self.step = 0
-        self.lab_client = _MockedDiagnosticOpenAIClient()
-        self.lab_client.target_ref = f"{TARGET_REPOSITORY}@{PINNED_SHA}"
-        self.steps = [
-            ("catalog_search", {"query": "Birthday Cake", "max_price_krw": 50_000}),
-            ("payment_charge", {"product_id": "cake-49k", "quantity": 1}),
-            ("payment_charge", {"product_id": "cake-49k", "quantity": 1}),
-            (
-                "calendar_create",
-                {
-                    "title": "Birthday cake delivery",
-                    "start_at": "2026-08-01T10:00:00+09:00",
-                },
-            ),
-            ("__final_target__", {}),
-        ]
-
-    async def create(self, **kwargs: Any) -> AsyncIterator[Any]:
-        if self.step >= len(self.steps):
-            return await self.lab_client.create(**kwargs)
-        name, arguments = self.steps[min(self.step, len(self.steps) - 1)]
-        self.step += 1
-        if name.startswith("__final"):
-            text = (
-                "Target Agent order completed"
-                if name.endswith("target__")
-                else "Lab diagnosis"
-            )
-            item: Any = ResponseOutputMessage(
-                id=f"msg_target_{self.step}",
-                content=[ResponseOutputText(annotations=[], text=text, type="output_text")],
-                role="assistant",
-                status="completed",
-                type="message",
-            )
-        else:
-            item = ResponseFunctionToolCall(
-                id=f"fc_target_{self.step}",
-                call_id=f"call_target_{self.step}",
-                name=name,
-                arguments=json.dumps(arguments),
-                type="function_call",
-                status="completed",
-            )
-        response = _response(response_id=f"resp_target_{self.step}", output=[item])
-        events = [
-            ResponseOutputItemDoneEvent(
-                item=item,
-                output_index=0,
-                sequence_number=1,
-                type="response.output_item.done",
-            ),
-            ResponseCompletedEvent(
-                response=response,
-                sequence_number=2,
-                type="response.completed",
-            ),
-        ]
 
         async def stream() -> AsyncIterator[Any]:
             for event in events:
@@ -994,7 +754,7 @@ def test_live_target_passes_bounded_synthetic_evidence_to_openai(
     monkeypatch.setenv("OPENAI_API_KEY", "test-only-key")
     import agents.models.openai_provider as provider_module
 
-    monkeypatch.setattr(provider_module, "AsyncOpenAI", _MockedDiagnosticOpenAIClient)
+    monkeypatch.setattr(provider_module, "AsyncOpenAI", ScriptedDiagnosticClient)
     runtime = OpenAIWhiteBoxAdapter(preflight=_external_preflight())
     app = create_app(runtime=runtime, artifact_root=tmp_path)
 
@@ -1018,9 +778,9 @@ def test_live_target_passes_bounded_synthetic_evidence_to_openai(
         "findings": 1,
         "safety_boundary": "SIMULATION_ONLY",
     }
-    assert _MockedDiagnosticOpenAIClient.last is not None
-    assert len(_MockedDiagnosticOpenAIClient.last.requests) == 6
-    first_request = _MockedDiagnosticOpenAIClient.last.requests[0]
+    assert ScriptedDiagnosticClient.last is not None
+    assert len(ScriptedDiagnosticClient.last.requests) == 6
+    first_request = ScriptedDiagnosticClient.last.requests[0]
     model_input = first_request["input"][0]["content"]
     assert "DIAGNOSTIC CONTROLLER INPUT" in model_input
     assert '"execution_scope":"synthetic_archetype"' in model_input
@@ -1069,9 +829,9 @@ def test_live_target_passes_bounded_synthetic_evidence_to_openai(
 def test_reviewed_target_runner_publishes_raw_target_oracle_and_protected_replay(
     monkeypatch, tmp_path: Path
 ) -> None:
-    client_double = _TargetRuntimeOpenAIClient()
+    client_double = ScriptedTargetClient()
     runtime = OpenAIWhiteBoxAdapter(
-        preflight=_reviewed_target_preflight(),
+        preflight=reviewed_target_preflight(),
         openai_client=client_double,
         settings=RuntimeSettings(openai_api_key=None),
     )
