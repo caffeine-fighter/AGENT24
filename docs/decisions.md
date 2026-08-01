@@ -13,5 +13,7 @@
 | 2026-08-01 | 결제 protected replay는 unknown confirm 뒤 새 intent를 만들지 않고 기존 intent를 retrieve함 | 같은 seed에서 duplicate charge를 제거하면서 정상 결제 control을 보존하는 최소 policy를 측정하기 위함 | C / replay | B의 generic oracle/report가 연결될 때 |
 | 2026-08-01 | Research·Stock은 Life world에 필드를 추가하지 않고 read-only domain pack과 assessment 기반 oracle로 분리 | 문서 신뢰성 의미가 검증된 결제 ledger에 침투하는 것을 막고, 위험 fixture의 존재와 AUT의 실제 실패를 구분 | C / gym | 공통 provenance graph가 두 pack에서 반복 구현될 때 |
 | 2026-08-01 | 외부 source는 metadata-only로 유지하고 manifest가 선택한 Life-v0 synthetic behavior archetype을 진단 | 임의 code 실행 없이 one-input E2E를 완주하면서 synthetic 측정을 실제 target 관찰로 과장하지 않기 위함 | A / integration | 승인된 실행 adapter와 sandbox contract가 추가될 때 |
+| 2026-08-01 | `site/`에 Sites용 Worker 실행 표면을 추가하고 기존 FastAPI·정적 UI를 원본 구현으로 유지 | Python 서버를 실행하지 못하는 호스팅에서도 공유 링크·OpenAI 계획 호출·SSE 데모를 제공하되, 24시간 해커톤의 검증된 로컬 경로를 재작성하지 않음 | A / deployment | Python runtime을 직접 호스팅하는 프로덕션 환경이 준비될 때 |
+| 2026-08-01 | hosted planner는 `commit_then_timeout` 한 변수만 허용하고 OpenAI에는 선택 이유·기대 증거만 맡김 | 모델의 적응성을 노출하면서 scenario·oracle·패치·판정의 결정성을 controller가 계속 소유하게 함 | A / deployment | hosted domain pack이 Research·Stock·Adhoc까지 확장될 때 |
 
 Keep entries short. Record choices that affect architecture, model/tool selection, scope, cost, privacy, or the demo path.
