@@ -1,3 +1,9 @@
-# Add behavior-focused cases after the product goal is fixed at kickoff.
-cases: []
-
+cases:
+  - id: live_tool_round_trip
+    input: "inspect the loop"
+    expected_event_types: [run_started, tool_call, tool_result, final_output, run_completed]
+    invariant: "tool_call and tool_result payloads remain raw and share run_id/seq with JSONL"
+  - id: offline_missing_key
+    input: "unsafe delete"
+    expected_event_types: [run_started, offline_demo, tool_call, tool_result, final_output, run_completed]
+    invariant: "offline_demo is explicit and no credential is present in the event stream"
