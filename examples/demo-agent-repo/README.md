@@ -38,9 +38,11 @@ deterministic SHA-256 bundle revision over the allowlisted paths and bytes, each
 path, Git blob SHA, and per-file SHA-256 content hash. The bundle digest is
 marked `bundle_sha256`, never presented as a Git commit.
 
-The parent demo runs the corresponding network-disabled synthetic SandboxGym.
-It does not import or execute this entrypoint, call OpenAI, access GitHub, or
-call real payment/calendar APIs. The local source target is:
+The default parent demo executes this exact reviewed entrypoint in a bounded
+`python -I -S` child. The child does not call OpenAI, access GitHub, or call
+real payment/calendar APIs. Its only external-looking calls are dispatched by
+the host-owned, network-disabled local replacement SandboxGym. The local source
+target is:
 
 ```json
 {
@@ -50,8 +52,7 @@ call real payment/calendar APIs. The local source target is:
 }
 ```
 
-The separate #100 runner vertical slice executes this exact reviewed bundle
-locally through a stdlib-only `python -I -S` child. The host copies only the
+The runner copies only the
 verified manifest and entrypoint into a read-only temporary source tree; the
 child can request only the four host-dispatched SandboxGym tools. It does not
 receive the fixture seed, fault metadata, oracle, ledger, controller state, or
@@ -86,6 +87,7 @@ root:
 uv run python scripts/demo-local.py --example-agent --port 8769
 ```
 
-Then open `http://127.0.0.1:8769/index.html?demo=example-agent`. This is local
-synthetic evidence only. Creating or publishing a separate public repository is
-explicitly outside this demo contract.
+Then open `http://127.0.0.1:8769/index.html?demo=example-agent`. This is actual
+reviewed local target-code evidence inside the bounded sandbox; the services and
+side effects remain synthetic/local. Creating or publishing a separate public
+repository is explicitly outside this demo contract.

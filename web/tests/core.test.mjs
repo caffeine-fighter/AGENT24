@@ -935,8 +935,31 @@ assert.equal(reportState.reportView.profile.agentName, "cake-buyer");
 assert.deepEqual(reportState.events.at(-1).raw, labReportPayload, "LabReport Raw payload must remain unedited");
 assert.equal(reportState.unknownEvents.length, 0, "lab_report is a supported semantic event");
 
+const sandboxEvidencePayload = {
+  run_id: "diagnostic-test",
+  evidence_id: "evidence-local-aut",
+  execution_scope: "target_sandbox",
+  source: { source_ref: "local://examples/cake-agent@sha256:reviewed" },
+  fixture_id: "commit_then_timeout",
+  seed: 17,
+  initial_snapshot_hash: "snapshot-1",
+  perturbed: { ledger: [{ tool: "payment.charge" }, { tool: "payment.charge" }] },
+  protected: { ledger: [{ tool: "payment.charge" }] },
+  replay_digests: ["digest-a", "digest-a", "digest-a"],
+  protected_replay_digests: ["digest-b", "digest-b", "digest-b"],
+};
 const diagnosticEvents = [
-  { type: "gym.baseline.completed", payload: { run_digest: "sha256:baseline" } },
+  {
+    type: "gym.baseline.completed",
+    payload: { run_digest: "sha256:baseline", execution_scope: "target_sandbox" },
+  },
+  { type: "sandbox.evidence", payload: sandboxEvidencePayload },
+  { type: "target.tool_call", payload: { tool: "payment.charge", call_id: "target-call" } },
+  { type: "target.tool_result", payload: { tool: "payment.charge", call_id: "target-call", status: "timeout" } },
+  { type: "target.policy_applied", payload: { policy_id: "idempotent-reconcile-v1" } },
+  { type: "target.policy_reconciliation", payload: { policy_id: "idempotent-reconcile-v1" } },
+  { type: "target.ledger_mutation", payload: { entries: [{ tool: "payment.charge" }] } },
+  { type: "target.world_diff", payload: { changed: true } },
   { type: "gym.tool_call", payload: { tool: "payment.charge" } },
   { type: "gym.tool_result", payload: { status: "timeout" } },
   { type: "oracle.report", payload: { passed: false, violations: [{ invariant_id: "x" }] } },
@@ -953,10 +976,38 @@ const diagnosticState = diagnosticEvents.reduce(
   createInitialState(),
 );
 assert.equal(diagnosticState.baselineEvidence.run_digest, "sha256:baseline");
+assert.deepEqual(diagnosticState.sandboxEvidence, sandboxEvidencePayload);
+assert.deepEqual(
+  diagnosticState.events.find((event) => event.type === "sandbox.evidence").raw,
+  sandboxEvidencePayload,
+  "sandbox evidence Raw payload must remain unedited",
+);
+assert.equal(diagnosticState.executionScope, "target_sandbox");
+assert.equal(diagnosticState.analysisScope, "target_sandbox");
 assert.equal(diagnosticState.oracleReport.passed, false);
 assert.equal(diagnosticState.protectedReplay.accepted, true);
 assert.equal(diagnosticState.findingReport.status, "verified_mitigation");
 assert.equal(diagnosticState.unknownEvents.length, 0, "diagnostic events are supported");
+
+const targetTerminalState = reduceRunState(diagnosticState, {
+  run_id: "diagnostic-test",
+  seq: diagnosticEvents.length,
+  timestamp: "2026-08-01T07:00:20.000Z",
+  type: "run_completed",
+  payload: {
+    status: "openai_analysis_unavailable",
+    mode: "live",
+    source_resolved: true,
+    diagnostic_completed: true,
+    openai_analysis_completed: false,
+    execution_scope: "target_sandbox",
+    safety_boundary: "TARGET_CODE_IN_SANDBOX",
+  },
+});
+assert.equal(targetTerminalState.status, "complete");
+assert.equal(targetTerminalState.executionScope, "target_sandbox");
+assert.equal(targetTerminalState.analysisScope, "target_sandbox");
+assert.equal(targetTerminalState.events.at(-1).raw.safety_boundary, "TARGET_CODE_IN_SANDBOX");
 
 const noFailureView = projectLabReport({
   findings: [],
