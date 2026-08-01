@@ -175,16 +175,16 @@ def _unsupported_detail(requirement: DomainRequirement, observed: set[str]) -> s
     )
     if not stageable:
         return (
-            f"현재 실행 가능한 실험 중 {wanted} 오류를 재현하는 실험이 없어 "
-            f"'{requirement.failure_signal}'를 확인할 수 없습니다. "
-            "다른 영역의 실험으로 바꾸지 않고 여기서 마칩니다."
+            f"현재 실행 가능한 실험 중 {wanted} 오류를 재현하는 실험이 없어요. "
+            f"그래서 '{requirement.failure_signal}'를 확인할 수 없어요. "
+            "다른 영역의 실험으로 바꾸지 않고 여기서 마칠게요."
         )
     missing = ", ".join(sorted(requirement.anchor_tools))
     surface = ", ".join(sorted(observed)) or "없음"
     return (
-        f"{wanted} 오류는 재현할 수 있지만, 제출한 에이전트가 {missing} 중 어느 도구도 "
-        f"제공하지 않습니다. 확인된 도구: {surface}. "
-        "다른 영역의 실험으로 바꾸지 않고 여기서 마칩니다."
+        f"{wanted} 오류는 재현할 수 있지만, 제출한 에이전트에 {missing} 중 어느 도구도 "
+        f"없어요. 확인된 도구: {surface}. "
+        "다른 영역의 실험으로 바꾸지 않고 여기서 마칠게요."
     )
 
 
@@ -210,7 +210,7 @@ def classify_support(
             verdict=SupportVerdict.SUPPORTED,
             detail=(
                 f"{spec.pack_id}의 {families[0]} 오류로 이 영역을 재현할 수 있고, "
-                f"제출한 에이전트가 {', '.join(anchors)} 도구를 제공합니다. "
+                f"제출한 에이전트가 {', '.join(anchors)} 도구를 제공해요. "
                 f"확인할 신호: {requirement.failure_signal}."
             ),
             pack_id=spec.pack_id,

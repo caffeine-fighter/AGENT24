@@ -4,14 +4,14 @@
 P0 제품 계약이다. form, parser, 결과 화면은 이 문구와 상태를 그대로 사용한다.
 
 > **SYNTHETIC ARCHETYPE — 외부 저장소 코드를 실행하지 않습니다.** 저장소에서는
-> 고정된 commit의 metadata와 allowlist manifest만 읽습니다. 합성 Gym에서 실패를
-> 발견하지 못한 결과는 안전 인증이 아닙니다.
+> 고정된 commit의 metadata와 allowlist manifest 또는 검토된 static evidence
+> metadata만 읽습니다. 합성 Gym에서 실패를 발견하지 못한 결과는 안전 인증이 아닙니다.
 
 ## 사용자가 하는 일
 
 사용자는 GitHub 저장소, 재현할 ref, crash-test mission을 한 번 제출한다. 이후
-NIGHTMARE LAB Agent가 source 고정, `BehaviorProfile` 작성, 실험 선택, 합성 실행,
-부검, 보호책 제안, 재실행, 보고서 작성을 자율 수행한다. 중간에 사용자가 승인
+NIGHTMARE LAB Agent가 source 고정, owner/static profile 판정, 지원되는 경우의 실험
+선택, 합성 실행, 부검, 보호책 제안, 재실행, 보고서 작성을 자율 수행한다. 중간에 사용자가 승인
 버튼이나 다음 단계 버튼을 누르는 흐름은 만들지 않는다.
 
 ### 입력 필드
@@ -52,13 +52,20 @@ Crash-test mission: 엄마 생일 케이크 하나를 5만원 이하로 주문�
 }
 ```
 
-정상 preflight는 `main`을 full commit SHA로 고정한 뒤 아래 순서를 같은
-Raw API Stream에 남긴다.
+정상 preflight는 `main`을 full commit SHA로 고정한 뒤 아래 순서를 같은 Raw API
+Stream에 남긴다. owner manifest 경로는 synthetic diagnosis를 계속하고, manifest가
+없는 등록된 participant는 compatibility report에서 종료한다.
 
 ```text
-source_descriptor → behavior_profile → experiment_plan
+source_descriptor → source_snapshot → target_profile → pack_selection
+→ behavior_profile → pack.selected → experiment_plan
 → baseline / fault / oracle / divergence / patch / protected replay
 → finding_report → lab_report
+
+또는
+
+source_descriptor → source_snapshot → target_profile → pack_selection → compatibility_report
+→ run_completed (experiments=0, findings=0)
 ```
 
 ## P0 지원 경계
@@ -71,6 +78,8 @@ source_descriptor → behavior_profile → experiment_plan
 | GitLab, Bitbucket, 로컬 경로, 임의 ZIP | 미지원 | P0은 `https://github.com`만 지원한다. |
 | LangGraph, CrewAI, Agents SDK 등 특정 framework | 실행 지원 아님 | manifest schema는 framework 중립 metadata다. P0은 어떤 framework의 repository code도 import·install·execute하지 않는다. |
 | allowlist manifest | metadata 지원 | `.agent24/manifest.json`, 다음으로 `agent24.manifest.json`만 탐색하며 최대 256 KB다. |
+| 검토된 participant static profile | metadata-only compatibility 지원 | exact `repository@SHA`에 등록된 최대 4개 path의 blob SHA·size·type만 확인한다. 본문이나 repository code를 실행하지 않는다. |
+| manifest가 없고 static profile도 없음 | `unsupported` | `pinned_profile_not_registered`, experiments 0, findings 0으로 종료한다. |
 | manifest의 entrypoint | metadata만 지원 | source 내부 상대 경로인지 검증하지만 파일을 import하거나 setup hook을 실행하지 않는다. |
 | 지원 tool vocabulary만 가진 manifest | profile 가능 | manifest를 읽을 수 있다는 뜻이지 곧바로 runnable diagnostic이라는 뜻은 아니다. |
 | `payment.charge` 또는 `web.read`에 대응하는 profile | 외부 입력 P0 실험 가능 | 현재 one-input loop는 `commit_then_timeout`, `malicious_web_content`, `empty_result` 중 증거에 맞는 operator 하나를 선택한다. |
@@ -80,7 +89,18 @@ manifest가 허용한 도구명과 외부 입력 loop가 실제 재현할 수 �
 같은 의미로 쓰지 않는다. Research·Stock read-only pack이 존재하더라도, 해당 pack을
 외부 저장소 코드 실행이나 임의 framework 지원으로 표현하지 않는다.
 
-## `BehaviorProfile` UI 용어
+## Profile UI 용어
+
+입력 profile의 provenance는 화면과 report에서 반드시 다음 둘 중 하나로 표시한다.
+
+- `OWNER MANIFEST`: 저장소 소유자가 allowlisted manifest로 선언한 contract
+- `LAB-INFERRED STATIC PROFILE`: Lab이 pinned path/blob/line evidence로 만든
+  compatibility 가설이며 owner 선언이 아님
+
+후자의 자세한 계약은 [`participant-repository-intake.md`](participant-repository-intake.md)를
+따른다. 어느 쪽도 target의 확인된 취약점을 뜻하지 않는다.
+
+### `BehaviorProfile`
 
 `성격 분석`, `persona`, `안전 점수`라는 표현은 사용하지 않는다. 고정 용어는
 **Observed Behavior Profile / 관찰 가능한 행동 프로필**이다.
@@ -115,7 +135,9 @@ Raw API Stream에는 아래 wire code를 그대로 보존한다.
 |---|---|---|
 | 미지원 source host | `UnsupportedSourceHostError` → `source_preflight_failed` | “지원하지 않는 저장소입니다. P0은 HTTPS github.com 저장소만 받습니다. 외부 Agent 코드는 실행하지 않았습니다.” |
 | source 접근 실패 | `SourceAccessError` → `source_preflight_failed` | “저장소 또는 ref에 접근하지 못했습니다. 공개 범위와 ref를 확인하거나, private 저장소라면 서버의 GITHUB_TOKEN 권한을 확인하세요. 외부 Agent 진단을 주장하지 않고 합성 fallback으로 전환합니다.” |
-| manifest 없음 | `ManifestUnavailableError` / `ManifestNotFoundError` → `source_preflight_failed` | “고정된 commit에서 .agent24/manifest.json 또는 agent24.manifest.json을 찾지 못했습니다. 외부 Agent 진단을 주장하지 않고 합성 fallback으로 전환합니다.” |
+| manifest 없음 + registered static profile | `target_profile.origin=lab_static_profile` | “검토된 pinned metadata로 compatibility만 판정했습니다. 저장소 코드와 synthetic attack은 실행하지 않았습니다.” |
+| manifest 없음 + static profile 없음 | `pack_selection.status=unsupported`, `pinned_profile_not_registered` | “이 commit에 검토된 profile이 없어 실험하지 않았습니다. 실패 미발견이나 안전 인증이 아닙니다.” |
+| static evidence drift/policy reject | `static_evidence_*`, terminal `unsupported` | “검토된 evidence가 현재 pinned source와 일치하지 않아 profile을 재사용하지 않았습니다. 실험과 finding은 0건입니다.” |
 | manifest 오류 | `ManifestResponseError` / `MalformedManifestError` / `ManifestPathError` → `source_preflight_failed` | “manifest를 읽을 수 없습니다. JSON schema, 256 KB 제한, allowlist 경로, 상대 entrypoint를 확인하세요. 외부 Agent 코드는 실행하지 않았습니다.” |
 | 실험 미지원 | `StopDecision.reason=unsupported_input`, terminal `status=unsupported` | “현재 Gym이 이 BehaviorProfile에 맞는 fault operator를 재현할 수 없습니다. 실패를 찾지 못한 것이 아니라 테스트하지 못한 상태입니다.” |
 | budget 소진 | `StopDecision.reason=budget_exhausted` | “실험 budget을 모두 사용해 탐색을 중단했습니다. 확인하지 못한 위험이 남아 있으며 이 결과는 안전 인증이 아닙니다.” |
@@ -124,10 +146,10 @@ Raw API Stream에는 아래 wire code를 그대로 보존한다.
 | 실행 timeout | `timeout` | “OpenAI 설명 단계가 시간 제한을 넘었습니다. 이미 측정된 합성 evidence를 보존하고 offline demo로 전환합니다.” |
 | 실패 미발견 | `no_failure_observed` | “설정된 실험 범위에서 실패를 관찰하지 못했습니다. 이는 안전 인증이 아니며 미탐색 위험이 남아 있습니다.” |
 
-현재 runtime은 source와 manifest 계열 실패를 credential이 섞일 수 없는 하나의
-`source_preflight_failed` code로 축약한다. UI는 내부 예외 문자열을 노출하지 않고,
-가능한 typed 상태를 알고 있을 때만 위 세부 문구를 선택한다. 구분할 수 없으면 다음
-공통 문구를 사용한다.
+현재 runtime은 source 접근·malformed manifest 계열 실패를 credential이 섞일 수 없는
+`source_preflight_failed` code로 축약한다. 정상적인 manifest 부재는 registered static
+profile 또는 명시적 `unsupported`로 처리한다. UI는 내부 예외 문자열을 노출하지 않고,
+가능한 typed 상태를 알고 있을 때만 위 세부 문구를 선택한다. 구분할 수 없으면 다음 공통 문구를 사용한다.
 
 > “외부 source preflight를 완료하지 못했습니다. 외부 Agent 진단을 주장하지 않고
 > 합성 fallback으로 전환합니다. 저장소 접근과 allowlist manifest를 확인하세요.”
@@ -137,6 +159,8 @@ Raw API Stream에는 아래 wire code를 그대로 보존한다.
 - 화면 상단에는 실행 내내 `SIMULATION · 실제 동작 없음`을 고정한다.
 - source가 고정된 뒤에는 `SYNTHETIC ARCHETYPE · 외부 저장소 코드 실행 아님`을
   `BehaviorProfile`과 report 가까이에 표시한다.
+- target profile 옆에는 `OWNER MANIFEST` 또는 `LAB-INFERRED STATIC PROFILE`을
+  표시하고 static compatibility를 owner 선언이나 failure observation으로 승격하지 않는다.
 - `no_failure_observed`, `unsupported`, `budget_exhausted`에는 반드시
   `실패 미발견은 안전 인증이 아님`을 함께 표시한다.
 - 실제 결제, 메일 전송, 일정 생성, 파일 변경을 했다고 말하지 않는다. synthetic
@@ -149,6 +173,9 @@ Raw API Stream에는 아래 wire code를 그대로 보존한다.
 - [ ] form은 repository/ref/mission 세 필드를 한 번 제출하고 중간 입력을 요구하지 않는다.
 - [ ] parser는 extra target field를 거부하고 ref를 full SHA로 고정한다.
 - [ ] manifest·entrypoint는 사용자 입력란이 아니며 allowlist에서 자동 발견된다.
+- [ ] owner manifest가 static profile보다 우선하고 profile origin이 화면/report에 표시된다.
+- [ ] manifest가 없는 exact pinned participant만 bounded static evidence를 사용한다.
+- [ ] static-only run은 `experiments_run=0`, `findings=[]`로 compatibility report에서 종료한다.
 - [ ] private token은 서버 request header 밖으로 나오지 않는다.
 - [ ] `BehaviorProfile`의 다섯 assessment가 evidence 또는 unknown reason을 표시한다.
 - [ ] source/manifest를 읽지 못한 run은 외부 Agent를 진단했다고 표현하지 않는다.

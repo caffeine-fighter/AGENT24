@@ -26,6 +26,15 @@ from agent24.agent.manifest import ALLOWED_MANIFEST_PATHS, load_manifest
 from agent24.agent.mission_support import classify_support, documented_mission
 from agent24.agent.models import ExperimentPlan, FaultKind, Mission, MissionFamily, StopDecision
 from agent24.agent.packs import PackSelection, select_domain_pack
+from agent24.agent.participant_intake import (
+    ParticipantCompatibilityResult,
+    ParticipantStaticProfiler,
+    ParticipantTargetProfile,
+    SourceSnapshot,
+    TargetCompatibilityReport,
+    TargetPackSelection,
+    build_owner_manifest_compatibility,
+)
 from agent24.agent.planner import select_p0_experiment
 from agent24.agent.profile import AgentManifest, BehaviorProfile, build_behavior_profile
 from agent24.agent.source import (
@@ -150,6 +159,10 @@ class ExternalPreflightResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     source: SourceDescriptor
+    source_snapshot: SourceSnapshot
+    target_profile: ParticipantTargetProfile
+    compatibility_selection: TargetPackSelection
+    compatibility_report: TargetCompatibilityReport
     manifest: AgentManifest
     mission: Mission
     profile: BehaviorProfile
@@ -165,26 +178,40 @@ class ExternalAgentPreflight:
         *,
         source_resolver: RevisionResolver | None = None,
         manifest_fetcher: ManifestFetcher | None = None,
+        static_profiler: ParticipantStaticProfiler | None = None,
         retrieved_at: str | None = None,
     ) -> None:
         self.source_resolver = source_resolver or GitHubApiRevisionResolver()
         self.manifest_fetcher = manifest_fetcher or GitHubContentsManifestFetcher()
+        self.static_profiler = static_profiler or ParticipantStaticProfiler()
         self.retrieved_at = retrieved_at
 
-    def run(self, target: ExternalTarget) -> ExternalPreflightResult:
+    def run(
+        self, target: ExternalTarget
+    ) -> ExternalPreflightResult | ParticipantCompatibilityResult:
         source = resolve_source(
             target.repository_url,
             ref=target.requested_ref,
             resolver=self.source_resolver,
             retrieved_at=self.retrieved_at,
         )
-        manifest_path, manifest_bytes = self.manifest_fetcher.fetch(source)
+        try:
+            manifest_path, manifest_bytes = self.manifest_fetcher.fetch(source)
+        except ManifestUnavailableError:
+            return self.static_profiler.profile(source)
         with tempfile.TemporaryDirectory(prefix="agent24-manifest-") as temporary_root:
             root = Path(temporary_root)
             path = root / manifest_path
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(manifest_bytes)
             manifest = load_manifest(root, source, manifest_path=manifest_path)
+
+        compatibility = build_owner_manifest_compatibility(
+            source,
+            manifest,
+            manifest_path=manifest_path,
+            manifest_bytes=manifest_bytes,
+        )
 
         mission = Mission(
             text=target.mission,
@@ -244,6 +271,10 @@ class ExternalAgentPreflight:
 
         return ExternalPreflightResult(
             source=source,
+            source_snapshot=compatibility.source_snapshot,
+            target_profile=compatibility.target_profile,
+            compatibility_selection=compatibility.pack_selection,
+            compatibility_report=compatibility.compatibility_report,
             manifest=manifest,
             mission=mission,
             profile=profile,
@@ -264,4 +295,5 @@ __all__ = [
     "ManifestResponseError",
     "ManifestUnavailableError",
     "MappingManifestFetcher",
+    "ParticipantCompatibilityResult",
 ]

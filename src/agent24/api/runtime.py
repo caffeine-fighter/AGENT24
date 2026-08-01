@@ -21,6 +21,11 @@ from agent24.agent.loop import (
 from agent24.agent.manifest import ManifestLoadError
 from agent24.agent.models import ExperimentPlan, StopDecision, run_digest
 from agent24.agent.packs import pack_failure_stop
+from agent24.agent.participant_intake import (
+    GitHubEvidenceMetadataFetcher,
+    ParticipantCompatibilityResult,
+    ParticipantStaticProfiler,
+)
 from agent24.agent.prompts import (
     DIAGNOSTIC_CONTEXT_LABEL,
     LIVE_EXPLAINER_INSTRUCTIONS,
@@ -99,6 +104,11 @@ class OpenAIWhiteBoxAdapter:
         self.preflight = preflight or ExternalAgentPreflight(
             source_resolver=GitHubApiRevisionResolver(token=self.settings.github_token),
             manifest_fetcher=GitHubContentsManifestFetcher(token=self.settings.github_token),
+            static_profiler=ParticipantStaticProfiler(
+                evidence_fetcher=GitHubEvidenceMetadataFetcher(
+                    token=self.settings.github_token
+                )
+            ),
         )
         self.lab_loop = lab_loop or DeterministicLabLoop()
 
@@ -224,6 +234,47 @@ class OpenAIWhiteBoxAdapter:
             return None
 
         channel.publish("source_descriptor", result.source, summary=result.source.source_ref)
+        channel.publish(
+            "source_snapshot",
+            result.source_snapshot,
+            summary=(
+                f"{result.source_snapshot.mode} · "
+                f"{result.source_snapshot.total_bytes} bytes"
+            ),
+        )
+        channel.publish(
+            "target_profile",
+            result.target_profile,
+            summary=result.target_profile.profile_label,
+        )
+        if isinstance(result, ParticipantCompatibilityResult):
+            channel.publish(
+                "pack_selection",
+                result.pack_selection,
+                summary=result.pack_selection.status.value,
+            )
+            channel.publish(
+                "compatibility_report",
+                result.compatibility_report,
+                summary=result.compatibility_report.status.value,
+            )
+            channel.publish(
+                "run_completed",
+                {
+                    "status": result.pack_selection.status.value,
+                    "mode": "compatibility_only",
+                    "message": result.compatibility_report.message,
+                    "experiments_run": 0,
+                },
+                summary=result.pack_selection.status.value,
+            )
+            return None
+
+        channel.publish(
+            "pack_selection",
+            result.compatibility_selection,
+            summary=result.compatibility_selection.status.value,
+        )
         channel.publish("behavior_profile", result.profile, summary=result.profile.agent_name)
         # Published before the stop branch on purpose: the routing decision is
         # exactly what a reader needs when the run terminates as unsupported,

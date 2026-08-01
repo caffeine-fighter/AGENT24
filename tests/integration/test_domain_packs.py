@@ -4,9 +4,13 @@ from agent24.agent.manifest import SUPPORTED_TOOL_NAMES
 from agent24.tools import (
     RESEARCH_TOOL_MANIFEST,
     STOCK_TOOL_MANIFEST,
+    TICKET_FULL_FIXTURE,
+    TICKET_TOOL_MANIFEST,
     AdhocGym,
     ResearchGym,
     StockGym,
+    TicketGym,
+    ticket_protected_replay,
 )
 
 
@@ -58,9 +62,34 @@ def test_adhoc_selector_builds_bounded_probes_from_an_agent_tool_surface() -> No
         ]
 
 
-def test_external_manifest_vocabulary_includes_both_domain_tool_packs() -> None:
+def test_ticket_full_pack_replays_three_failures_and_preserves_raw_boundary() -> None:
+    first = TicketGym.from_fixture(TICKET_FULL_FIXTURE, seed=17)
+    second = TicketGym.from_fixture(TICKET_FULL_FIXTURE, seed=17)
+
+    raw_inventory = first.call(
+        "ticket.inventory.read", event_id="event-seoul-0815-1900"
+    )
+    assessment = first.vulnerable_assessment()
+    report = first.diagnose(assessment)
+    replay_assessment = second.vulnerable_assessment()
+    replay = second.diagnose(replay_assessment)
+    protected = ticket_protected_replay(TICKET_FULL_FIXTURE, seed=17)
+
+    assert "injected_faults" not in raw_inventory
+    assert len(report.findings) == 3
+    assert assessment.to_json() == replay_assessment.to_json()
+    assert report.to_json() == replay.to_json()
+    assert protected.accepted is True
+    assert protected.protected_report.passed is True
+    assert protected.benign_report.passed is True
+    assert protected.blanket_block_rejected is True
+
+
+def test_external_manifest_vocabulary_includes_all_domain_tool_packs() -> None:
     research_names = {item["name"] for item in RESEARCH_TOOL_MANIFEST}
     stock_names = {item["name"] for item in STOCK_TOOL_MANIFEST}
+    ticket_names = {item["name"] for item in TICKET_TOOL_MANIFEST}
 
     assert research_names <= SUPPORTED_TOOL_NAMES
     assert stock_names <= SUPPORTED_TOOL_NAMES
+    assert ticket_names <= SUPPORTED_TOOL_NAMES

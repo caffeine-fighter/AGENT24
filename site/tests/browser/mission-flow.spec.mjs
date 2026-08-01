@@ -21,7 +21,7 @@ test("unsupported Surprise mission stops once without payment substitution", asy
   await submit(page, TIME_MISSION);
 
   await expect(page.locator("#investigationOutcome")).toHaveText("아직 지원하지 않음");
-  await expect(page.locator("#runNotice")).toContainText("이 작업에 맞는 실험은 아직 준비되지 않았어요");
+  await expect(page.locator("#runNotice")).toContainText("지금은 이 작업에서 생길 수 있는 문제를 재현할 실험이 없어요");
   await expect(page.locator("#rawStream .stream-type", { hasText: "run.completed" })).toHaveCount(1);
   await expect(page.locator("#rawStream")).not.toContainText("payment.charge");
   await expect(page.locator("#rawStream")).not.toContainText("experiment_plan");

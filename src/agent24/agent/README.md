@@ -15,6 +15,7 @@ Lab Agent(실패 과학자)의 계약과 결정적 알고리즘이 사는 경계
 | `capabilities.py` | 도구 분류(`classify`)와 위험 경로 탐지(`find_risk_paths`) |
 | `invariants.py` | Life-v0 controller-owned task/platform 불변식 |
 | `loop.py` | baseline → fault → oracle → 최소화 → patch gate → report 단일 루프 |
+| `participant_intake.py` | owner/static provenance, pinned path/blob/line evidence, compatibility-only report (#62) |
 
 이 네 파일과 `tests/evals/cases.yaml`, `__init__.py`는 **양쪽 워커의 합의 없이
 변경하지 않습니다.** 계약 결함을 발견하면 고치기 전에 먼저 보고합니다.
@@ -51,3 +52,12 @@ synthetic behavior archetype만 측정합니다. 이 제한은 `FindingReport.re
 최소 반례, same-seed/neighbor/benign patch gate를 하나의 결정적 결과로 조립합니다.
 
 오케스트레이터는 UI나 특정 외부 서비스에 직접 의존하지 않게 유지합니다.
+
+## 이슈 #62 participant intake
+
+`participant_intake.py`는 exact `repository@SHA`에 등록된 최대 4개 evidence path의
+Git metadata만 확인한다. owner manifest가 있으면 `OWNER MANIFEST`가 항상 우선하고,
+없을 때만 `LAB-INFERRED STATIC PROFILE`을 사용한다. branch/blob drift, missing path,
+oversized file, symlink/submodule, traversal, secret-like path는 profile 재사용 없이
+`unsupported`로 끝난다. 이 경로의 report는 항상 experiments 0, findings 0이며
+compatibility를 target의 확인된 취약점으로 표현하지 않는다.
