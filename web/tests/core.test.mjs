@@ -31,7 +31,7 @@ assert.equal(
     requestedRef: "main",
     mission: "test",
   }).message,
-  "지원하지 않는 저장소 주소입니다. 현재는 공개된 GitHub 저장소만 사용할 수 있으며, 외부 코드는 실행하지 않습니다.",
+  "주소를 확인해 주세요. 지금은 공개된 GitHub 저장소만 확인할 수 있으며, 저장소 코드를 직접 실행하지는 않아요.",
 );
 assert.equal(validateTargetInput({
   repositoryUrl: "https://github.com/example/agent?token=secret",
@@ -213,7 +213,7 @@ assert.equal(projectedProfile.assessments[1].name, "idempotency_usage");
 assert.equal(projectedProfile.assessments[1].value, "absent");
 assert.ok(projectedProfile.assessments[1].evidence[0].includes("실행 기록[7]"));
 assert.equal(projectedProfile.assessments[3].value, "unknown");
-assert.ok(projectedProfile.assessments[3].unknownReason.includes("확인하지 못했습니다"));
+assert.ok(projectedProfile.assessments[3].unknownReason.includes("확인하지 못했어요"));
 
 const liveProfileState = reduceRunState(targetState, {
   run_id: "target-test",
