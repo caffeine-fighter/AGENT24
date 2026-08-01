@@ -191,11 +191,13 @@ operation 축의 설명 경로 상태이며 finding이 아닙니다.
 
 추가 필드는 허용하며 기존 필드를 삭제하거나 의미를 바꾸지 않습니다.
 
-## 자동 fallback
+## 연결 실패 시 내장 예시
 
 웹은 먼저 `POST /api/runs`를 시도합니다. local static surface는 1.6초, hosted
 surface는 bounded OpenAI planning을 위해 22초 안에 정상 `run_id`를 기다립니다.
-첫 live event 이전에 API/SSE가 실패하면 동일 reducer에 `life.payment_intent_timeout.v1` fixture를
-공급합니다. fixture는 실제 외부 동작을 하지 않고 `source: fixture`와
-`FIXTURE FALLBACK · 제출 target 분석 결과가 아님`으로 표시됩니다. 입력 계약 오류
-`422`는 fixture로 바꾸지 않고 form 오류로 종료합니다.
+첫 실행 기록을 받기 전에 API/SSE가 실패하면 동일 reducer에 내장 예시를 공급합니다.
+돈 입력은 `life.payment_intent_timeout.v1`을 사용하고, 지원하지 않는 Surprise 입력은
+결제 예시로 바꾸지 않은 채 `unsupported`로 끝냅니다. 내장 예시는 실제 외부 작업을
+하지 않으며 화면에 “API에 연결하지 못해 내장 예시를 보여드려요. 제출한 저장소를
+분석한 결과는 아니에요.”라고 표시됩니다. 입력값 오류 `422`는 내장 예시로 바꾸지 않고
+폼 오류로 끝냅니다.
