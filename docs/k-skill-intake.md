@@ -1,7 +1,8 @@
 # K-Skill source-intake and risk-profile contract
 
-This document covers the source-intake/provenance slice of issue #61. It does
-not implement the synthetic Gym mapping owned by the issue's other worker.
+This document covers the source-intake/provenance slice of issue #61 and the
+first executable mapping slice of issue #115. The latter is deliberately a
+separate contract: metadata intake still never authorizes upstream execution.
 
 ## Boundary
 
@@ -36,8 +37,62 @@ triage registry.
 Every result keeps `execution_authorized=false`, `max_experiments=0`,
 `observation_status=not_executed`, and an empty `failure_claims` collection. A
 profile therefore means “declared surface reviewed,” not “target tested,”
-“failure observed,” or “safe.” The separate synthetic-mapping worker must make
-any executable DomainPack decision and preserve this claim boundary.
+“failure observed,” or “safe.” A separate synthetic mapping must make any
+executable fixture decision and preserve this claim boundary.
+
+## Reviewed synthetic mapping
+
+`KSkillMappingRegistry` binds the exact source commit, tree, catalog digest,
+skill id, and each declared hypothesis to either an allowlisted archetype or a
+specific typed unsupported reason. It does not translate upstream tool names
+into `AgentManifest`, use fuzzy domain routing, or infer a fixture from prose.
+The current snapshot accounts for all 43 declared hypotheses: 15 Ticket
+hypothesis mappings are executable and 28 remain explicitly unsupported.
+
+Each Ticket profile has one distinct default archetype so five real fixtures
+are exercised rather than one replay being counted five times.
+
+| Skill | Default synthetic fixture | Declared hypothesis |
+|---|---|---|
+| `catchtable-sniper` | `ticket.stale-availability.v1` | hold/cancel reconciliation |
+| `express-bus-booking` | `ticket.commit-then-timeout.v1` | partial success followed by retry |
+| `intercity-bus-booking` | `ticket.cancel-ambiguity.v1` | hold/cancel reconciliation |
+| `ktx-booking` | `ticket.event-identity-confusion.v1` | scoped approval: target |
+| `srt-booking` | `ticket.price-fee-currency-drift.v1` | scoped approval: amount/currency |
+
+Every executable probe runs the existing vulnerable, protected, paired benign,
+and blanket-block Ticket controls at one deterministic seed. Its report records
+the controller-derived first divergence and exact structured tool arguments and
+results. The report keeps `declared_hypothesis` separate from
+`observed_synthetic_findings`, retains `target_observation_status=not_executed`,
+and carries no target failure claim.
+
+The approval operator is synthetic and contains no person, account, session,
+credential, or payment instrument. It accepts only a current grant whose
+action, target, amount, currency, issue time, and expiry all match. Missing,
+wrong-action, wrong-target, wrong-amount, wrong-currency, stale, and not-yet-valid
+controls must all be rejected before an approval archetype is accepted.
+
+The other eight profiles and uncovered Ticket hypotheses do not borrow a
+mismatched fixture:
+
+- Adhoc-bound legal, document, installation, and deletion surfaces remain
+  `domain_replay_unavailable` until Adhoc has an oracle, protected replay,
+  benign run, and blanket gate.
+- Life-bound messaging and public-report actions remain
+  `no_matching_declared_archetype`; the payment replay is not substituted.
+- Sensitive-flow hypotheses remain `sensitive_flow_operator_unavailable` until
+  an opaque, non-secret flow oracle exists.
+- Research/Stock polling hypotheses remain
+  `polling_budget_operator_unavailable`; their unrelated content-integrity
+  faults are not presented as K-Skill evidence.
+
+Mapping selection recomputes the metadata snapshot digest and checks its exact
+path/blob/size set before authorizing a local fixture. One-input runtime wiring
+remains deferred until issue #91's serialized intake envelope integrity fix is
+corrected and merged. The intake's `execution_authorized=false` and
+`max_experiments=0` continue to describe upstream execution; synthetic
+authorization exists only on the separate mapping result.
 
 ## Metadata-only validation
 
@@ -102,8 +157,12 @@ The immutable, extra-field-forbidden typed records use
 ## Verification
 
 ```bash
-PYTHONPATH=src python -m pytest tests/unit/test_k_skill_intake.py -q
+PYTHONPATH=src python -m pytest \
+  tests/unit/test_k_skill_intake.py \
+  tests/unit/test_k_skill_mapping.py \
+  tests/unit/test_k_skill_probes.py -q
 ./scripts/verify.ps1
 ```
 
-The issue #61 eval entries are `k-skill-*` in `tests/evals/cases.yaml`.
+The issue #61 and #115 eval entries are `k-skill-*` in
+`tests/evals/cases.yaml`.
