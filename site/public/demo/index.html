@@ -8,6 +8,7 @@
       content="NIGHTMARE LAB — 도구를 직접 쓰는 AI 에이전트를 배포하기 전에 가상 환경에서 실패와 안전장치를 확인해 보세요."
     />
     <title>NIGHTMARE LAB — AI 에이전트 안전 실험실</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -70,11 +71,11 @@
                 required
               />
             </div>
-            <label for="missionInput">에이전트에게 시킬 일</label>
+            <label for="missionInput">에이전트에게 맡길 일</label>
             <textarea id="missionInput" name="mission" rows="3" maxlength="2000" required>엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문해줘.</textarea>
             <div class="mission-actions">
               <button id="runButton" class="primary-button" type="submit">
-                <span>실험 시작하기</span>
+                <span>안전 실험 시작</span>
                 <span aria-hidden="true">↗</span>
               </button>
               <button id="resetButton" class="ghost-button" type="button">결과 지우기</button>
@@ -95,7 +96,7 @@
 
         <section class="outcome-panel panel" aria-label="실행 결과">
           <p id="scopeNotice" class="scope-notice" data-scope="synthetic_archetype">
-            <strong>실제 서비스에는 연결하지 않아요.</strong> 저장소 정보와 허용된 설정만 읽어 가상 환경에서 행동을 재현해요. 문제가 보이지 않아도 안전이 보장되는 것은 아니에요.
+            <strong>실제 서비스에는 연결하지 않아요.</strong> 가상 환경에서만 실행합니다. 저장소 정보와 허용된 설정만 읽어 행동을 재현하며, 문제를 찾지 못했더라도 안전하다고 단정할 수 없습니다.
           </p>
           <div class="outcome-grid">
             <article data-outcome="submission" data-status="pending">
@@ -279,7 +280,7 @@
       <aside class="stream-column panel" aria-label="실시간 실행 기록">
         <header class="stream-header">
           <div>
-            <p class="eyebrow">개발자용 원본 이벤트</p>
+            <p class="eyebrow">개발자용 원본 API 이벤트</p>
             <h2>실시간 실행 기록</h2>
           </div>
           <div class="stream-actions">

@@ -20,19 +20,25 @@ flowchart LR
 
 ## External target intake
 
-외부 GitHub target은 실행 전에 full SHA로 고정한다. allowlisted owner manifest가 있으면
-기존 deterministic Gym 경로를 사용하고, manifest가 없으면 exact SHA에 검토된 static
-profile이 있는 경우에만 metadata-only compatibility를 반환한다.
+외부 GitHub target은 실행 전에 full SHA로 고정한다. allowlisted owner manifest와 선언된
+entrypoint를 bounded evidence로 읽으면 기존 deterministic Gym 경로를 사용한다. manifest가
+없더라도 exact SHA가 검토된 adapter와 일치하면 AST 계약을 확인한 뒤 network-disabled local
+replacement Gym으로 실행한다. 그 밖에는 exact SHA static profile이 있는 경우에만
+metadata-only compatibility를 반환한다. 어느 경로도 submitted source code를 import하거나
+실행하지 않는다.
 
 ```mermaid
 flowchart LR
     I["Repository + ref + mission"] --> S["SourceDescriptor · full SHA"]
     S --> M{"Owner manifest?"}
     M -- yes --> O["OWNER MANIFEST"]
-    M -- no --> P{"Reviewed repository@SHA?"}
+    M -- no --> A{"Allowlisted adapter?"}
+    A -- yes --> G["ADAPTER · local replacement Gym"]
+    A -- no --> P{"Reviewed repository@SHA?"}
     P -- yes --> L["LAB-INFERRED STATIC PROFILE"]
     P -- no --> X["UNSUPPORTED · 0 experiments"]
     O --> R["Canonical pack router"]
+    G --> R
     R --> D["Executable pack만 synthetic diagnosis"]
     L --> C["Compatibility report · no finding"]
 ```

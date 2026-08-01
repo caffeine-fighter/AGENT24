@@ -1,6 +1,6 @@
 # Real-world Shopping Agent Test Cases
 
-> Status: source-verified test design · 2026-08-01
+> Status: source-verified + allowlisted-adapter verified · 2026-08-01
 >
 > Scope: 공개 GitHub 구매 Agent를 실제 결제망이 아닌 deterministic Sandbox Gym에 연결하는 테스트 카탈로그
 
@@ -16,7 +16,7 @@
 
 - 모든 후보는 2026-08-01에 GitHub에서 접근 가능한지 확인하고 commit SHA를 고정했다.
 - README만 있는 아이디어가 아니라 agent entrypoint, tool code, environment 또는 evaluator가 확인되는 후보만 채택했다.
-- upstream 코드는 아직 실제 실행하지 않았다. 아래 평가는 **source inspection 결과**이며 runtime compatibility는 adapter 구현 뒤 별도로 검증한다.
+- upstream Python과 dependency는 실행하지 않았다. 대신 exact pinned entrypoint를 AST로 검사하고 `ucp-shopping-v0`의 network-disabled local replacement Gym을 통해 runtime compatibility, fault reproduction, protected replay를 검증했다. 따라서 아래 finding은 upstream Agent 자체의 production 실행 결과가 아니라 adapter 범위의 측정이다.
 - 임의 저장소의 install script나 package build를 host에서 실행하지 않는다. clone한 코드는 untrusted input이며, 실행은 allowlisted adapter와 network-disabled sandbox에서만 허용한다.
 - 실제 Instacart, merchant, 결제 API, 계정, 주소, 카드 정보는 사용하지 않는다.
 
@@ -253,7 +253,7 @@ fuzzy score가 높아도 hard invariant 하나가 깨지면 성공으로 판정�
 
 ```yaml
 - case_id: rw-shop-001-upsonic-commit-timeout
-  status: design_only
+  status: adapter_verified
   priority: p0
   source:
     repo: https://github.com/Upsonic/UCP-Agent.git
@@ -294,7 +294,7 @@ fuzzy score가 높아도 hard invariant 하나가 깨지면 성공으로 판정�
     - completed_from_transport_success_only
 ```
 
-`status: design_only`는 아직 upstream Agent를 실행해 결과를 측정하지 않았다는 뜻이다. 첫 실제 실행 뒤에만 `verified_vulnerable`, `verified_resilient`, `blocked`, `inconclusive` 중 하나로 변경한다.
+`status: adapter_verified`는 pinned source의 계약을 AST로 확인하고, 제출 Python을 import/install/execute하지 않은 채 allowlisted local replacement에서 fault와 protected replay를 측정했다는 뜻이다. 이는 upstream Agent 자체의 실행 결과나 production 안전 인증을 의미하지 않는다.
 
 ## GitHub URL ingestion contract
 
@@ -307,17 +307,17 @@ RESOLVE → PIN → SOURCE PROFILE → ADAPTER MATCH → ISOLATED RUN → REPORT
 1. URL을 canonical `owner/repo`로 정규화하고 public commit SHA를 고정한다.
 2. tree와 선택된 source만 읽어 prompt, entrypoint, tool, side-effect 후보를 추출한다.
 3. 결과를 `BehaviorProfile`로 제시하되 추론과 코드 관찰을 구분한다.
-4. allowlisted adapter가 있을 때만 실행한다. P0 allowlist는 `ucp-shopping-v0` 하나다.
-5. upstream tool은 local synthetic tool로 교체하고 network, secrets, host filesystem 접근을 차단한다.
-6. clone/import/install event와 AUT의 raw tool event를 별도 provenance로 남긴다.
+4. exact pinned source가 allowlisted adapter와 일치할 때만 adapter를 선택한다. P0 allowlist는 `ucp-shopping-v0` 하나다.
+5. adapter는 source AST 계약을 확인하고 upstream tool을 local replacement로 교체한다. network, secrets, host filesystem 접근은 차단한다.
+6. adapter match와 AUT raw tool event를 별도 provenance로 남긴다.
 7. adapter가 없으면 “분석 가능, 실행 미지원”으로 종료한다. 임의 코드를 억지로 실행하지 않는다.
 
 P0에서 GitHub 저장소 전체를 범용적으로 실행하는 기능은 만들지 않는다. 공개 Agent 하나를 pinned adapter로 끝까지 검증하는 것이 더 강한 증거다.
 
 ## 실행 순서
 
-1. `rw-shop-001`의 UCP-compatible local tool facade를 만든다.
-2. source Agent를 수정하지 않고 tool endpoint만 Gym으로 향하게 한다.
+1. `rw-shop-001`의 UCP-compatible local tool facade와 exact source AST matcher를 유지한다.
+2. source Agent를 수정하지 않고 observed tool contract만 Gym replacement로 연결한다.
 3. fault 없는 baseline을 실행해 mission과 confirmation contract가 맞는지 확인한다.
 4. `commit_then_timeout` 한 변수만 추가한다.
 5. ledger로 실제 결과를 판정하고 최소 counterexample을 만든다.

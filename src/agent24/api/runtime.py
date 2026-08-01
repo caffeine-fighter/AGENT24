@@ -41,6 +41,7 @@ from .preflight import (
     ExternalPreflightResult,
     ExternalTarget,
     GitHubContentsManifestFetcher,
+    GitHubContentsSourceFetcher,
     ManifestFetchError,
 )
 
@@ -104,6 +105,7 @@ class OpenAIWhiteBoxAdapter:
         self.preflight = preflight or ExternalAgentPreflight(
             source_resolver=GitHubApiRevisionResolver(token=self.settings.github_token),
             manifest_fetcher=GitHubContentsManifestFetcher(token=self.settings.github_token),
+            source_file_fetcher=GitHubContentsSourceFetcher(token=self.settings.github_token),
             static_profiler=ParticipantStaticProfiler(
                 evidence_fetcher=GitHubEvidenceMetadataFetcher(
                     token=self.settings.github_token
@@ -207,29 +209,38 @@ class OpenAIWhiteBoxAdapter:
 
     async def _run_external_preflight(
         self,
-        query: str,
         target: ExternalTarget,
         channel: RunChannel,
     ) -> ExternalPreflightResult | None:
-        """Publish pinned planning artifacts, or finish with an honest fallback."""
+        """Publish pinned planning artifacts, or finish with an honest terminal."""
 
         channel.publish("phase.changed", {"phase": "CLONE"}, summary="external preflight")
         try:
             result = await asyncio.to_thread(self.preflight.run, target)
         except (SourceResolutionError, ManifestLoadError, ManifestFetchError):
+            message = (
+                "외부 Agent source preflight를 완료하지 못해 제출한 Agent 분석과 "
+                "synthetic target 실험을 실행하지 않았습니다."
+            )
             channel.publish(
                 "run_failed",
-                {"status": "offline_demo", "code": "source_preflight_failed"},
+                {
+                    "status": "offline_demo",
+                    "code": "source_preflight_failed",
+                    "message": message,
+                },
                 summary="External Agent source or manifest unavailable",
-            )
-            await self._run_offline(
-                query,
-                channel,
-                reason="External Agent source or manifest unavailable",
             )
             channel.publish(
                 "run_completed",
-                {"status": "offline_demo", "mode": "offline_demo"},
+                {
+                    "status": "source_preflight_failed",
+                    "mode": "offline_demo",
+                    "experiments_run": 0,
+                    "findings": 0,
+                    "message": message,
+                    "safety_boundary": "SIMULATION_ONLY",
+                },
             )
             return None
 
@@ -242,6 +253,13 @@ class OpenAIWhiteBoxAdapter:
                 f"{result.source_snapshot.total_bytes} bytes"
             ),
         )
+        adapter_contract = getattr(result, "adapter_contract", None)
+        if adapter_contract is not None:
+            channel.publish(
+                "adapter.matched",
+                adapter_contract,
+                summary=adapter_contract.adapter_id,
+            )
         channel.publish(
             "target_profile",
             result.target_profile,
@@ -329,12 +347,17 @@ class OpenAIWhiteBoxAdapter:
 
     @staticmethod
     def _autopsy_steps(result: DiagnosticLoopResult) -> list[dict[str, str]]:
+        scope_label = (
+            "allowlisted adapter"
+            if result.execution_scope != SYNTHETIC_SCOPE
+            else "synthetic run"
+        )
         steps = [
             {
                 "kind": "observed",
                 "text": (
-                    f"Life-v0 synthetic run에서 {len(result.observed.violations)}개 "
-                    "invariant 위반을 controller oracle이 측정"
+                    f"{len(result.observed.violations)}개 invariant 위반을 controller oracle이 "
+                    f"{scope_label}에서 측정"
                 ),
             }
         ]
@@ -369,18 +392,31 @@ class OpenAIWhiteBoxAdapter:
         if not isinstance(decision, ExperimentPlan):
             raise TypeError("diagnostic loop requires an ExperimentPlan")
 
-        channel.publish("phase.changed", {"phase": "CRASH"}, summary="synthetic fault run")
+        channel.publish(
+            "phase.changed",
+            {"phase": "CRASH"},
+            summary=(
+                "allowlisted adapter fault run"
+                if preflight.adapter_contract is not None
+                else "synthetic fault run"
+            ),
+        )
         result = await self.lab_loop.run(
             manifest=preflight.manifest,
             profile=preflight.profile,
             mission=preflight.mission,
             plan=decision,
+            adapter_contract=preflight.adapter_contract,
         )
         channel.publish(
             "gym.baseline.completed",
             {
-                "execution_scope": "synthetic_archetype",
-                "scope_note": SYNTHETIC_SCOPE,
+                "execution_scope": (
+                    "allowlisted_adapter"
+                    if preflight.adapter_contract is not None
+                    else "synthetic_archetype"
+                ),
+                "scope_note": result.execution_scope,
                 "scenario_id": result.baseline.scenario.scenario_id,
                 "seed": result.baseline.scenario.seed,
                 "run_digest": f"sha256:{run_digest(result.baseline)}",
@@ -410,9 +446,13 @@ class OpenAIWhiteBoxAdapter:
             channel.publish(
                 "damage.updated",
                 {
-                    "label": "SYNTHETIC INVARIANT VIOLATION",
+                    "label": (
+                        "ALLOWLISTED ADAPTER INVARIANT VIOLATION"
+                        if preflight.adapter_contract is not None
+                        else "SYNTHETIC INVARIANT VIOLATION"
+                    ),
                     "headline": f"{len(violation_ids)}개 invariant 위반 측정",
-                    "detail": f"{', '.join(violation_ids)} · {SYNTHETIC_SCOPE}",
+                    "detail": f"{', '.join(violation_ids)} · {result.execution_scope}",
                     "world": failed_world,
                 },
             )
@@ -459,8 +499,10 @@ class OpenAIWhiteBoxAdapter:
                 summary="accepted" if verification.accepted else "rejected",
             )
 
-        if decision.scenario.faults and (
-            decision.scenario.faults[0].fault.value == "commit_then_timeout"
+        if (
+            preflight.adapter_contract is None
+            and decision.scenario.faults
+            and decision.scenario.faults[0].fault.value == "commit_then_timeout"
         ):
             sandbox_replay = await asyncio.to_thread(
                 protected_replay,
@@ -474,6 +516,32 @@ class OpenAIWhiteBoxAdapter:
                 if sandbox_replay.accepted
                 else "SandboxGym payment replay rejected",
             )
+        elif preflight.adapter_contract is not None and result.protected is not None:
+            channel.publish(
+                "protected_replay",
+                {
+                    "accepted": bool(
+                        result.verification is not None and result.verification.accepted
+                    ),
+                    "execution_scope": "allowlisted_adapter",
+                    "perturbed": {
+                        "purchase_count": sum(
+                            entry.tool == "complete_purchase" for entry in result.perturbed.ledger
+                        ),
+                        "orders": len(result.perturbed.world_state.get("orders", [])),
+                    },
+                    "protected": {
+                        "purchase_count": sum(
+                            entry.tool == "complete_purchase" for entry in result.protected.ledger
+                        ),
+                        "orders": len(result.protected.world_state.get("orders", [])),
+                    },
+                    "scope_note": result.execution_scope,
+                },
+                summary="allowlisted adapter replay accepted"
+                if result.verification is not None and result.verification.accepted
+                else "allowlisted adapter replay rejected",
+            )
 
         channel.publish("finding_report", result.report, summary=result.report.status.value)
         channel.publish("lab_report", result.lab_report, summary=result.report.status.value)
@@ -486,8 +554,12 @@ class OpenAIWhiteBoxAdapter:
         result: DiagnosticLoopResult,
     ) -> str:
         context = {
-            "execution_scope": "synthetic_archetype",
-            "scope_note": SYNTHETIC_SCOPE,
+            "execution_scope": (
+                "allowlisted_adapter"
+                if preflight.adapter_contract is not None
+                else "synthetic_archetype"
+            ),
+            "scope_note": result.execution_scope,
             "source_ref": preflight.source.source_ref,
             "pack_id": preflight.pack_selection.pack_id,
             "plan_id": preflight.decision.plan_id,
@@ -499,7 +571,7 @@ class OpenAIWhiteBoxAdapter:
             ),
         }
         return (
-            f"{query}\n\n{DIAGNOSTIC_CONTEXT_LABEL} (controller-owned JSON; synthetic scope):\n"
+            f"{query}\n\n{DIAGNOSTIC_CONTEXT_LABEL} (controller-owned JSON; execution scope):\n"
             f"{json.dumps(context, ensure_ascii=False, separators=(',', ':'))}"
         )
 
@@ -536,7 +608,7 @@ class OpenAIWhiteBoxAdapter:
             preflight_result = None
             diagnostic_result = None
             if target is not None:
-                preflight_result = await self._run_external_preflight(query, target, channel)
+                preflight_result = await self._run_external_preflight(target, channel)
                 if preflight_result is None:
                     return
                 try:

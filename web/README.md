@@ -12,6 +12,28 @@
 
 브라우저에서 <http://127.0.0.1:8000>을 엽니다. API 경로가 정적 파일보다 우선하므로 같은 origin에서 `/api/runs`, `/health`, SSE를 그대로 사용합니다.
 
+GitHub origin이 비공개라서 local token이 없는 리허설에서는 다음 launcher를 사용하면
+현재 checkout의 full SHA와 owner manifest를 `local-demo` source로 고정한 뒤 실제
+Python preflight와 Sandbox Gym을 끝까지 실행합니다.
+
+```bash
+uv run python scripts/demo-local.py
+```
+
+화면과 Raw Stream에는 `local-demo`와 manifest/entrypoint bounded 경계가 표시됩니다.
+저장소 entrypoint는 분석용으로만 읽고 import/실행하지 않으며, 결제·메일·일정은 모두
+synthetic world에만 기록됩니다.
+
+예시 participant Agent fixture를 보려면 다음 launcher를 사용합니다.
+
+```bash
+uv run python scripts/demo-local.py --example-agent --port 8769
+```
+
+그 다음 <http://127.0.0.1:8769/index.html?demo=example-agent>를 엽니다.
+화면의 repo alias는 parent repo 안의 local fixture임을 나타내며 공개 GitHub 저장소로
+주장하지 않습니다.
+
 웹만 따로 개발할 때는 두 서버를 사용할 수 있습니다.
 
 ```powershell
