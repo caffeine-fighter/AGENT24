@@ -65,6 +65,16 @@ Agents SDK strict schema를 해당 wrapper에서만 해제했고, 로컬 domain 
 실제 결제, 메일, 파일 시스템, 웹 네트워크는 호출하지 않는다. UI와 FastAPI는 이 계층의
 state와 evidence를 표시하는 소비자이며 sandbox backend를 직접 조작하지 않는다.
 
+## Read-only domain packs
+
+`ResearchGym`, `StockGym`, `AdhocGym`은 Life world를 확장하지 않는 별도 read-only
+경계다. Research/Stock tool은 synthetic 문서·공시·뉴스·entity metadata만 반환하고,
+AUT assessment를 받는 controller-side `diagnose()`가 evidence-bounded finding을 만든다.
+Adhoc registry는 allowlisted scenario와 최대 8회 tool-call budget만 허용한다.
+
+fixture, tool, assessment, oracle 계약은 [domain-gym-packs.md](../../../docs/domain-gym-packs.md)에
+정리되어 있다.
+
 ## Provider-like flow
 
 새 결제 시연은 다음 순서로 구성한다.
