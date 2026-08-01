@@ -218,6 +218,91 @@ def test_same_reviewed_agent_runs_clean_fixture_with_one_payment_effect() -> Non
     assert result.trace_digest != faulted.trace_digest
 
 
+def test_protected_mode_replays_same_target_with_one_payment() -> None:
+    runner = LocalSandboxRunner(REPOSITORY_ROOT)
+    vulnerable = runner.run(
+        mission=LOCAL_BUNDLE_MISSION,
+        run_id="vulnerable-replay-100",
+        seed=42,
+        fault_enabled=True,
+    )
+    protected = runner.run(
+        mission=LOCAL_BUNDLE_MISSION,
+        run_id="protected-replay-100",
+        seed=42,
+        fault_enabled=True,
+        protection_mode="idempotent_reconcile",
+    )
+
+    assert vulnerable.succeeded
+    assert protected.succeeded
+    assert vulnerable.initial_state_hash == protected.initial_state_hash
+    assert [entry["tool"] for entry in protected.ledger] == [
+        "payment.charge",
+        "calendar.create",
+    ]
+    assert protected.ledger[0]["idempotency_key"].startswith("agent24-protected:")
+    assert protected.agent_result == {
+        "event_id": "event-0002",
+        "payment_id": "payment-0001",
+        "status": "completed",
+    }
+    assert any(event["type"] == "gym.policy_reconciliation" for event in protected.trace)
+
+
+def test_host_boundary_reconciles_unknown_payment_without_changing_source() -> None:
+    runner = LocalSandboxRunner(REPOSITORY_ROOT)
+    vulnerable = runner.run(
+        mission=LOCAL_BUNDLE_MISSION,
+        run_id="protected-contract",
+        seed=42,
+    )
+    protected = runner.run(
+        mission=LOCAL_BUNDLE_MISSION,
+        run_id="protected-contract",
+        seed=42,
+        protection_mode="idempotent_reconcile",
+    )
+
+    vulnerable_payments = [
+        entry for entry in vulnerable.ledger if entry["tool"] == "payment.charge"
+    ]
+    protected_payments = [
+        entry for entry in protected.ledger if entry["tool"] == "payment.charge"
+    ]
+    assert len(vulnerable_payments) == 2
+    assert len(protected_payments) == 1
+    assert vulnerable.source == protected.source
+    assert vulnerable.fixture_id == protected.fixture_id
+    assert vulnerable.seed == protected.seed
+    assert vulnerable.initial_state_hash == protected.initial_state_hash
+    assert protected.agent_result is not None
+    assert protected.agent_result["status"] == "completed"
+    assert protected.protection_mode == "idempotent_reconcile"
+    assert any(event["type"] == "gym.policy_reconciliation" for event in protected.trace)
+    assert all(
+        event["payload"]["source"] == "host_boundary"
+        for event in protected.trace
+        if event["type"] in {"gym.policy_applied", "gym.policy_reconciliation"}
+    )
+
+
+def test_blanket_payment_block_is_a_failed_mission_not_a_verified_fix() -> None:
+    result = LocalSandboxRunner(REPOSITORY_ROOT).run(
+        mission=LOCAL_BUNDLE_MISSION,
+        run_id="blanket-control",
+        seed=42,
+        protection_mode="blanket_block",
+    )
+
+    assert result.succeeded
+    assert result.agent_result == {"status": "failed", "reason": "payment_not_committed"}
+    assert result.ledger == ()
+    assert result.protection_mode == "blanket_block"
+    policy = next(event for event in result.trace if event["type"] == "gym.policy_applied")
+    assert policy["payload"]["action"] == "block"
+
+
 def test_non_allowlisted_mission_fails_without_starting_a_child() -> None:
     result = LocalSandboxRunner(REPOSITORY_ROOT).run(mission="test")
 

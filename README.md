@@ -65,7 +65,7 @@ uv sync --extra dev
 .\scripts\demo.ps1
 ```
 
-<http://127.0.0.1:8000>을 열면 `ExampleCakeAgent` local bundle과 “케이크 1개 주문 + 가족 캘린더 등록” mission이 기본 입력됩니다. 로컬 `.env`에 `OPENAI_API_KEY`가 있으면 상단 상태 배너에 live 경로 사용 가능이라고 표시되고, 없으면 모델 주도 진단을 실행하지 않는다고 표시됩니다. structured target은 같은 target의 deterministic reference plan을 명시적으로 실행하며, target 없는 입력에서만 `offline_demo` fixture를 사용합니다.
+<http://127.0.0.1:8000>을 열면 `ExampleCakeAgent` local bundle과 “케이크 1개 주문 + 가족 캘린더 등록” mission이 기본 입력됩니다. 로컬 `.env`에 `OPENAI_API_KEY`가 있으면 상단 상태 배너에 live 경로 사용 가능이라고 표시되고, 없으면 모델 주도 진단을 실행하지 않는다고 명시됩니다. 기본 target은 고정된 entrypoint를 bounded child에서 실제 실행하며, deterministic reference plan은 OpenAI 모델 제어가 불가능할 때만 같은 target에 대해 명시적으로 사용됩니다. target 없는 입력에서만 `offline_demo` fixture를 사용합니다.
 
 macOS/Linux에서도 기본 launcher가 검토된 `ExampleCakeAgent` bundle을 고정 SHA-256으로
 입력해 전체 preflight → Gym → report 경로를 실행합니다.
@@ -74,8 +74,10 @@ macOS/Linux에서도 기본 launcher가 검토된 `ExampleCakeAgent` bundle을 �
 uv run python scripts/demo-local.py
 ```
 
-이 경로는 화면에 `local-bundle`과 manifest/entrypoint bounded 경계를 표시하며, Agent
-entrypoint는 분석용으로만 읽고 import/실행하지 않습니다. 실제 외부 side effect도 없습니다.
+이 경로는 화면에 `local-bundle`과 manifest/entrypoint bounded 경계를 표시하며, 고정된
+`ExampleCakeAgent` entrypoint를 `python -I -S` child에서 실제 실행합니다. child는
+network-disabled host-owned local replacement API만 호출하고, 실제 외부 결제·캘린더
+side effect는 없습니다. 실행하지 않은 외부 GitHub source를 이 결과로 대신하지 않습니다.
 
 기존처럼 AGENT24 checkout 자체를 target으로 리허설하려면 다음 명령을 사용합니다.
 
@@ -98,10 +100,9 @@ uv run python scripts/demo-local.py --live-github --port 8769
 `ALLOWLISTED ADAPTER`로 표시되고 `complete_purchase`를 network-disabled local
 replacement Gym에서만 측정합니다.
 
-검토된 local bundle을 실제로 bounded child runner에서 시현하려면 다음 명령을
-사용합니다. API/OpenAI orchestration과 분리된 #100 vertical slice이며, 실행 결과는
-stdout JSON으로만 반환하고 run log를 파일에 쓰지 않습니다. 이 예시 Agent는 단일
-mission 계약이므로 기본 “케이크 1개 주문 + 가족 캘린더 등록” 입력만 실행합니다.
+같은 local bundle의 child runner만 독립적으로 확인하려면 다음 명령을 사용합니다.
+실행 결과는 stdout JSON으로만 반환하고 run log를 파일에 쓰지 않습니다. 이 예시 Agent는
+단일 mission 계약이므로 기본 “케이크 1개 주문 + 가족 캘린더 등록” 입력만 실행합니다.
 
 ```bash
 uv run python scripts/run-local-agent.py

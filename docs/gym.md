@@ -45,6 +45,12 @@ evidence로 읽되 Agent entrypoint를 실행하지 않는다. manifest가 없�
 DomainPack compatibility candidate가 된다. 이 static-only 경로는 Gym을 실행하지 않고
 experiments 0, findings 0인 compatibility report로 종료한다.
 
+별도 로컬 데모 경로는 체크인된 `examples/demo-agent-repo`의 manifest·entrypoint bytes,
+bundle SHA-256, mission이 모두 exact allowlist와 일치할 때만 `LocalSandboxRunner`를
+명시적으로 주입한다. 이 runner는 entrypoint를 `python -I -S` child에서 실행하되 network,
+process spawn, 외부 filesystem과 host secret 접근을 차단하고 tool execution·fault·ledger는
+host-owned SandboxGym이 소유한다. 이는 임의 외부 repository 실행 지원이 아니다.
+
 - seeded `WorldState`와 hash-검증 `WorldSnapshot`
 - append-only `SideEffectLedger`와 typed `FaultInjector`
 - `StripeLikePaymentProvider`의 `create → confirm → retrieve` 결제 흐름
@@ -53,13 +59,16 @@ experiments 0, findings 0인 compatibility report로 종료한다.
 - same-seed baseline/perturbed/protected replay와 benign control
 - `SourceDescriptor` → allowlisted `AgentManifest` 입력 검증
 - owner manifest 우선 → bounded participant static profile → compatibility-only terminal
+- exact local AUT child runner → raw target tool/ledger/world events → `sandbox.evidence`
+- 다섯 strict tool controller와 같은 evidence ID를 쓰는 finding/report/protected replay
+- neighbor·benign·blanket-block·minimized control 및 취약/보호 replay 각 3회 digest 검증
 
 아직 다음은 후속 단계다.
 
-- AUT adapter와 Lab Agent controller/rollout
-- Lab Agent용 deterministic oracle registry와 B의 report/gate 모듈 연결
+- 추가 framework/source를 위한 exact-reviewed AUT adapter
+- 실제 provider와 더 가까운 격리·서비스 fidelity 검증
 - provenance/version graph
-- counterexample minimization
+- local payment 사례 밖의 일반 counterexample minimization
 - domain-specific finance/research pack
 
 기존 `inspect_synthetic_gym`은 첫 end-to-end 경로와 offline fallback을 위해 유지한다. 새 kernel은 외부 네트워크 없이 실제 provider 경계의 상태·재시도 semantics만 재현한다.
@@ -70,6 +79,12 @@ intent 재생성), protected(기존 intent retrieve), benign control을 각각 �
 world와 ledger에서 charge/spend/fulfillment를 세고, blanket payment block은 정상 control을
 실패시키는 것으로 판정한다. 결과에는 initial/final snapshot hash, ledger, oracle diff가
 남으며 네트워크나 실제 결제는 사용하지 않는다.
+
+로컬 AUT E2E에서는 `LocalSandboxDiagnosticLoop`가 같은 source SHA·fixture·seed·초기
+snapshot으로 baseline, faulted 3회, protected 3회, neighbor, benign, blanket block,
+minimized run을 실행한다. faulted ledger의 결제·주문 2건과 protected ledger의 1건을
+직접 비교하고, 모든 결제를 막아 mission을 실패시키는 정책은 거부한다. child crash,
+protocol 오류 또는 budget stop은 evidence/finding으로 승격하지 않는다.
 
 ## 가장 작은 시작점: Simple Life Gym
 

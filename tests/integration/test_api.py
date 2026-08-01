@@ -196,8 +196,9 @@ class _MockedDiagnosticOpenAIClient:
 
     last: _MockedDiagnosticOpenAIClient | None = None
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, *, target_ref: str | None = None, **kwargs: Any) -> None:
         self.init_kwargs = kwargs
+        self.target_ref = target_ref or f"example/cake-agent@{PINNED_SHA}"
         self.requests: list[dict[str, Any]] = []
         self.responses = self
         type(self).last = self
