@@ -68,6 +68,7 @@ class DiagnosticLoopResult:
     experiments_run: int
     cost_units_used: int
     execution_scope: str = SYNTHETIC_SCOPE
+    sandbox_evidence: object | None = None
 
 
 def unsupported_reports(
@@ -199,19 +200,15 @@ def _legacy_report(
         )
 
     verified = verification is not None and verification.accepted
-    adapter_run = scope_note != SYNTHETIC_SCOPE
+    measurement_scope = (
+        "Life-v0 synthetic archetype"
+        if scope_note == SYNTHETIC_SCOPE
+        else "allowlisted bounded execution"
+    )
     detail = (
-        (
-            "allowlisted adapter의 local replacement 측정 실패와 보호 재실행을 완료했다."
-            if adapter_run
-            else "Life-v0 synthetic archetype의 측정 실패와 보호 재실행을 완료했다."
-        )
+        f"{measurement_scope}의 측정 실패와 보호 재실행을 완료했다."
         if verified
-        else (
-            "allowlisted adapter의 제한된 local replacement 실험을 완료했다."
-            if adapter_run
-            else "Life-v0 synthetic archetype의 제한된 실험을 완료했다."
-        )
+        else f"{measurement_scope}의 제한된 실험을 완료했다."
     )
     return LabReport(
         agent=AgentCard(

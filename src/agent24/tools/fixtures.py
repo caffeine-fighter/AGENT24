@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .faults import FaultSpec
 from .world import Product, WebPage, WorldState
@@ -151,6 +151,7 @@ def load_fixture(
     seed: int | None = None,
     run_id: str = "run-001",
     fault_enabled: bool = True,
+    fault_apply_on_call: int | None = None,
 ):
     """Construct a ready-to-run :class:`SandboxGym` from a fixture ID.
 
@@ -163,9 +164,16 @@ def load_fixture(
     from .sandbox import SandboxGym
 
     spec = get_fixture(fixture_id)
+    if fault_apply_on_call is not None and (
+        isinstance(fault_apply_on_call, bool) or fault_apply_on_call < 1
+    ):
+        raise ValueError("fault_apply_on_call must be a positive integer")
+    fault = spec.fault
+    if fault is not None and fault_apply_on_call is not None:
+        fault = replace(fault, apply_on_call=fault_apply_on_call)
     return SandboxGym(
         world=build_world(fixture_id, seed=spec.default_seed if seed is None else seed),
-        fault=spec.fault if fault_enabled else None,
+        fault=fault if fault_enabled else None,
         run_id=run_id,
     )
 
