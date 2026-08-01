@@ -87,7 +87,12 @@ Lab Agent가 내보내는 아래 의미 이벤트도 같은 envelope를 사용�
 | `vaccine.proposed` | 최소 안전 패치 표시 |
 | `verification.updated` | 검증 조건 부분 갱신 |
 | `replay.completed` | 보호 후 상태와 목표 성공 여부 표시 |
+| `behavior_profile` | `profile.BehaviorProfile`의 다섯 판정과 evidence/unknown reason 표시 |
 | `lab_report` | 동결된 Python `LabReport` payload를 관찰·가설·제안·검증 칸에 분리 표시 |
+
+`behavior_profile.payload`는 `src/agent24/agent/profile.py::BehaviorProfile`의
+`model_dump(mode="json")` 결과입니다. live 이벤트의 `source_ref` 끝에 immutable hex SHA가
+있을 때만 상단 resolved SHA에 반영합니다. fixture ref는 실제 resolve 결과로 승격하지 않습니다.
 
 `lab_report.payload`는 `src/agent24/agent/models.py::LabReport`의
 `model_dump(mode="json")` 결과입니다. 웹은 표시용 projection만 만들며 envelope의
