@@ -66,6 +66,18 @@ SUPPORTED_TOOL_NAMES: frozenset[str] = frozenset(
         "market.source",
         "entity.relations",
         "analyst_note.read",
+        # Ticket surface (issue #57 routing seam).  Provisional: issue #60 owns
+        # the real Ticket gym and may rename these.  They are listed so a ticket
+        # manifest loads with a routable tool surface instead of every tool
+        # landing in ``unsupported_tools``, which would make the pack
+        # unreachable and the routing rule untestable.  Selecting the Ticket
+        # pack still stops honestly until #60 lands its execution path.
+        "ticket.search",
+        "ticket.hold",
+        "ticket.purchase",
+        "ticket.cancel",
+        "reservation.create",
+        "reservation.cancel",
     }
 )
 

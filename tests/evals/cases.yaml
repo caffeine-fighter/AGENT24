@@ -162,3 +162,32 @@ cases:
     issue: 26
     command: "pytest tests/integration/test_api.py::test_live_target_passes_bounded_synthetic_evidence_to_openai tests/integration/test_api.py::test_diagnostic_failure_is_sanitized_and_falls_back -q"
     expectation: "OpenAI receives bounded controller evidence labelled synthetic_archetype and never a target-code execution claim; diagnostic failures emit a sanitized explicit fallback without leaking the exception"
+
+  # DomainPack registry and the evidence-driven router (issue #57).  Routing is
+  # a deterministic policy, so these check the decision itself: which pack, on
+  # what evidence, with which budget, and how it terminates when the evidence
+  # does not single one out.
+  - id: routing-normal
+    issue: 57
+    command: "pytest tests/unit/test_packs.py::test_normal_a_payment_manifest_routes_to_life_and_stays_executable tests/unit/test_packs.py::test_normal_a_research_manifest_routes_to_the_research_pack tests/unit/test_packs.py::test_normal_a_market_manifest_routes_to_the_stock_pack tests/unit/test_packs.py::test_normal_a_ticket_manifest_routes_to_the_ticket_pack -q"
+    expectation: "a payment manifest selects Life and stays executable; research, market and ticket manifests each select their own pack and name the issue that owns their execution path instead of borrowing a Life experiment"
+  - id: routing-ambiguous
+    issue: 57
+    command: "pytest tests/unit/test_packs.py::test_tie_between_two_domain_packs_terminates_instead_of_guessing tests/unit/test_packs.py::test_tie_names_every_pack_that_tied tests/unit/test_packs.py::test_an_ambiguous_tie_becomes_an_unsupported_report_not_a_sixth_status -q"
+    expectation: "two domain packs on equal score stop with insufficient_evidence naming both, rather than taking the lexically first pack; the tie becomes an UNSUPPORTED report without adding a sixth terminal status"
+  - id: routing-unsupported
+    issue: 57
+    command: "pytest tests/unit/test_packs.py::test_unsupported_a_manifest_with_no_tools_routes_nowhere tests/unit/test_packs.py::test_unsupported_never_substitutes_a_pack_it_cannot_run tests/unit/test_external_preflight.py::test_preflight_stops_honestly_when_manifest_tools_are_unsupported -q"
+    expectation: "a manifest with no tools, and one whose every tool the loader rejected, both route nowhere and are not handed to the Adhoc fallback; a pack whose surface is absent never becomes a candidate"
+  - id: routing-budget-and-pack-error
+    issue: 57
+    command: "pytest tests/unit/test_packs.py::test_budget_exhausted_uses_the_selected_packs_own_bound tests/unit/test_packs.py::test_a_pack_error_names_the_pack_and_does_not_reroute tests/unit/test_packs.py::test_a_pack_error_never_reports_a_measured_failure tests/integration/test_api.py::test_diagnostic_failure_is_sanitized_and_falls_back -q"
+    expectation: "the selected pack's declared budget drives the loop stop conditions; a pack that raises is reported as that pack failing, never re-routed and never as a measured failure, and the run_failed payload carries the pack id without the exception message"
+  - id: routing-determinism
+    issue: 57
+    command: "pytest tests/unit/test_packs.py::test_three_runs_of_the_same_input_produce_the_same_selection_digest tests/unit/test_packs.py::test_tool_declaration_order_does_not_change_the_decision tests/unit/test_packs.py::test_the_registry_version_is_part_of_the_digest -q"
+    expectation: "three runs of the same manifest, profile and mission yield one selection digest across five tool surfaces; tool declaration order does not change it and a registry version bump does"
+  - id: routing-lifecycle-event
+    issue: 57
+    command: "pytest tests/integration/test_api.py::test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl tests/integration/test_api.py::test_unsupported_manifest_stops_without_inventing_an_experiment -q"
+    expectation: "pack.selected is published after behavior_profile and before experiment_plan in both SSE and JSONL, so the unsupported path -- which never reaches experiment_plan -- still records which pack was considered, why, and its budget and fallback"

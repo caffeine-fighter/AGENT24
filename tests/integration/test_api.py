@@ -319,6 +319,7 @@ def test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl(
         "phase.changed",
         "source_descriptor",
         "behavior_profile",
+        "pack.selected",
         "experiment_plan",
         "phase.changed",
         "gym.baseline.completed",
@@ -459,10 +460,15 @@ def test_diagnostic_failure_is_sanitized_and_falls_back(monkeypatch, tmp_path: P
         events = _sse_data(client.get(accepted.json()["events_url"]).text)
 
     failure = next(event for event in events if event["type"] == "run_failed")
-    assert failure["payload"] == {
-        "status": "offline_demo",
-        "code": "diagnostic_loop_failed",
-    }
+    assert failure["payload"]["status"] == "offline_demo"
+    assert failure["payload"]["code"] == "diagnostic_loop_failed"
+    # A pack failure is reported as that pack failing (#57), never re-routed to
+    # another pack whose success would then read as this run's result.
+    assert failure["payload"]["pack_id"] == "life-v0-sandbox.v1"
+    assert "life-v0-sandbox.v1" in failure["payload"]["message"]
+    assert "research-agent-pack.v1" not in failure["payload"]["message"]
+    # Only the exception class may surface, never its message.
+    assert "RuntimeError" in failure["payload"]["message"]
     rendered = json.dumps(events, ensure_ascii=False)
     assert "provider-secret-must-not-leak" not in rendered
     assert events[-1]["payload"] == {"status": "offline_demo", "mode": "offline_demo"}
@@ -490,6 +496,9 @@ def test_unsupported_manifest_stops_without_inventing_an_experiment(
         "phase.changed",
         "source_descriptor",
         "behavior_profile",
+        # Published before the stop branch: on the unsupported path this is the
+        # only record of which pack was considered and why nothing ran.
+        "pack.selected",
         "finding_report",
         "lab_report",
         "run_completed",
@@ -501,7 +510,12 @@ def test_unsupported_manifest_stops_without_inventing_an_experiment(
     assert lab_report["findings"] == []
     assert lab_report["termination"]["reason"] == "unsupported_input"
     assert events[-1]["payload"]["status"] == "unsupported"
-    assert "gym 어휘 밖" in events[-1]["payload"]["message"]
+    assert "지원 어휘 밖" in events[-1]["payload"]["message"]
+    # The routing decision is on the record even though nothing ran.
+    pack = next(event["payload"] for event in events if event["type"] == "pack.selected")
+    assert pack["selected"] is None
+    assert pack["candidates"] == []
+    assert pack["selection_digest"]
 
 
 def test_structured_target_validation_rejects_incomplete_submission(

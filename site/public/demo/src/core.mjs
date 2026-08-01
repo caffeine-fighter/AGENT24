@@ -111,6 +111,8 @@ export function createInitialState(target = DEFAULT_TARGET) {
     sourceDescriptorView: null,
     behaviorProfile: null,
     behaviorProfileView: null,
+    packSelection: null,
+    packSelectionView: null,
     experimentPlan: null,
     experimentPlanView: null,
     baselineEvidence: null,
@@ -232,6 +234,44 @@ export function projectBehaviorProfile(input) {
     riskPaths: asArray(profile.risk_paths),
     assessments,
     baselineObserved: profile.baseline_observed === true,
+  };
+}
+
+export function projectPackSelection(input) {
+  const selection = input && typeof input === "object" ? input : {};
+  const selected = selection.selected && typeof selection.selected === "object"
+    ? selection.selected
+    : null;
+  const budget = selection.budget && typeof selection.budget === "object" ? selection.budget : {};
+  const stop = selection.stop && typeof selection.stop === "object" ? selection.stop : null;
+  const candidates = asArray(selection.candidates).map((candidate) => ({
+    packId: candidate?.pack_id || "unknown pack",
+    domainKind: candidate?.domain_kind || "unknown",
+    score: Number.isFinite(candidate?.score) ? candidate.score : null,
+    isFallback: candidate?.is_fallback === true,
+    executable: candidate?.executable === true,
+  }));
+  return {
+    registryVersion: selection.registry_version || "registry 정보 없음",
+    packId: selected?.pack_id || null,
+    domainKind: selected?.domain_kind || null,
+    // A selected pack is not a running pack: everything except Life stops with
+    // the issue that owns its execution path.
+    executable: selected?.executable === true && !stop,
+    ambiguous: !selected && stop?.reason === "insufficient_evidence",
+    why: selection.why || "선택 이유가 기록되지 않았습니다.",
+    expect: selection.expect || "기대 신호가 기록되지 않았습니다.",
+    fallback: selection.fallback || "fallback이 기록되지 않았습니다.",
+    stopReason: stop?.reason || null,
+    stopDetail: stop?.detail || null,
+    budget: {
+      maxToolCalls: Number.isFinite(budget.max_tool_calls) ? budget.max_tool_calls : null,
+      maxExperiments: Number.isFinite(budget.max_experiments) ? budget.max_experiments : null,
+      maxCostUnits: Number.isFinite(budget.max_cost_units) ? budget.max_cost_units : null,
+    },
+    evidenceCount: asArray(selection.evidence).length,
+    candidates,
+    selectionDigest: selection.selection_digest || null,
   };
 }
 
@@ -506,6 +546,12 @@ export function reduceRunState(previousState, incomingEvent) {
         },
       };
     }
+    case "pack.selected":
+      return {
+        ...state,
+        packSelection: event.data,
+        packSelectionView: projectPackSelection(event.data),
+      };
     case "experiment.plan":
       return {
         ...state,

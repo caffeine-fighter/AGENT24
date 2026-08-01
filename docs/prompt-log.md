@@ -19,4 +19,6 @@
 이제 `prompts/live_explainer.md`에 있고, 헤더 문자열은 `prompts.DIAGNOSTIC_CONTEXT_LABEL`을
 runtime과 공유하므로 지시문이 존재하지 않는 블록을 설명하는 상태가 될 수 없습니다.
 
+| 2026-08-01 | v2 (변경 없음) | 어떤 domain Gym을 쓸지 모델이 고르게 하면 같은 저장소에서 실행마다 다른 pack이 나와 replay·감사가 불가능하고, "Research agent를 결제 실험으로 검사"하는 대체가 조용히 일어난다 | agent instruction 변경 없음. 이슈 #57의 pack 선택은 `packs.select_domain_pack`의 순수 결정적 정책이며, 근거는 manifest tool surface·mission family·`BehaviorProfile` 판정에서만 나온다. 동점은 임의로 풀지 않고 `insufficient_evidence`로 종료한다. 프롬프트가 인용하는 `$gym_tools`는 여전히 Life 어휘이며 라우팅과 무관 | `tests/unit/test_packs.py::test_three_runs_of_the_same_input_produce_the_same_selection_digest`, `::test_tie_between_two_domain_packs_terminates_instead_of_guessing`, `::test_unsupported_never_substitutes_a_pack_it_cannot_run`, eval `routing-normal`·`routing-ambiguous`·`routing-determinism` | 5개 tool surface에서 3회 실행 digest 동일, 도구 선언 순서와 무관, registry version 변경 시에만 digest 변동. Research/Stock/Ticket manifest가 Life 실험으로 대체되지 않음 |
+
 Store the runnable prompt beside the agent code. Use this log to explain prompt quality and iteration during judging.
