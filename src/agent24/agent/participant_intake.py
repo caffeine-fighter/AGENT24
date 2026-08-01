@@ -42,6 +42,12 @@ PARTICIPANT_CLAIM_BOUNDARY = (
     "attributed to this target, and no vulnerability or safety certification was produced."
 )
 
+ADAPTER_CLAIM_BOUNDARY = (
+    "Allowlisted adapter boundary: the pinned entrypoint was statically inspected, then "
+    "its reviewed tool contract was run through network-disabled local replacement tools. "
+    "The participant's Python dependencies and real external side effects were not executed."
+)
+
 LJH_E2P_SHA = "dd8af1a00ff9229a3d589be5db500d983e4636df"
 PAPER_PLAYGROUND_SHA = "bf6c545b6c3fd547819b76f9d3d96c5995d43eb0"
 CREATIVE_STARTER_SHA = "f5527715e6ab6ef1f0ce7b2e098a5d181b5e26cb"
@@ -95,6 +101,7 @@ _OWNER_DOMAIN_PREFIXES: tuple[tuple[TargetDomainKind, tuple[str, ...]], ...] = (
 class ProfileOrigin(StrEnum):
     OWNER_MANIFEST = "owner_manifest"
     LAB_STATIC_PROFILE = "lab_static_profile"
+    ALLOWLISTED_ADAPTER = "allowlisted_adapter"
 
 
 class CompatibilityStatus(StrEnum):
@@ -304,8 +311,15 @@ def _source_snapshot(
     source: SourceDescriptor,
     *,
     mode: Literal["bounded_download", "metadata_only"],
-    execution_scope: Literal["manifest_only", "static_metadata_only", "none"],
+    execution_scope: Literal[
+        "manifest_only",
+        "manifest_and_entrypoint",
+        "allowlisted_adapter",
+        "static_metadata_only",
+        "none",
+    ],
     files: tuple[SourceSnapshotFile, ...] = (),
+    claim_boundary: str | None = None,
 ) -> SourceSnapshot:
     ordered_files = tuple(sorted(files, key=lambda item: item.path))
     payload: dict[str, object] = {
@@ -321,6 +335,7 @@ def _source_snapshot(
         files=ordered_files,
         total_bytes=int(payload["total_bytes"]),
         execution_scope=execution_scope,
+        claim_boundary=claim_boundary or PARTICIPANT_CLAIM_BOUNDARY,
         snapshot_digest=f"sha256:{_sha256(payload)}",
     )
 
@@ -648,7 +663,13 @@ class SourceSnapshot(BaseModel):
     mode: Literal["bounded_download", "metadata_only"]
     files: tuple[SourceSnapshotFile, ...] = ()
     total_bytes: int = Field(ge=0)
-    execution_scope: Literal["manifest_only", "static_metadata_only", "none"]
+    execution_scope: Literal[
+        "manifest_only",
+        "manifest_and_entrypoint",
+        "allowlisted_adapter",
+        "static_metadata_only",
+        "none",
+    ]
     claim_boundary: str = PARTICIPANT_CLAIM_BOUNDARY
     snapshot_digest: str
 
@@ -679,7 +700,9 @@ class ParticipantTargetProfile(BaseModel):
 
     agent_name: str
     source_ref: str
-    profile_label: Literal["OWNER MANIFEST", "LAB-INFERRED STATIC PROFILE"]
+    profile_label: Literal[
+        "OWNER MANIFEST", "LAB-INFERRED STATIC PROFILE", "ALLOWLISTED ADAPTER"
+    ]
     status: CompatibilityStatus
     provenance: TargetProfileProvenance
     domain_candidates: tuple[TargetDomainCandidate, ...] = ()
@@ -728,7 +751,9 @@ class TargetCompatibilityReport(BaseModel):
 
     status: CompatibilityStatus
     source_ref: str
-    profile_label: Literal["OWNER MANIFEST", "LAB-INFERRED STATIC PROFILE"]
+    profile_label: Literal[
+        "OWNER MANIFEST", "LAB-INFERRED STATIC PROFILE", "ALLOWLISTED ADAPTER"
+    ]
     selected_domain: TargetDomainKind | None = None
     experiments_run: int = 0
     findings: tuple[str, ...] = ()
@@ -776,7 +801,9 @@ def _build_profile(
     *,
     agent_name: str,
     source: SourceDescriptor,
-    profile_label: Literal["OWNER MANIFEST", "LAB-INFERRED STATIC PROFILE"],
+    profile_label: Literal[
+        "OWNER MANIFEST", "LAB-INFERRED STATIC PROFILE", "ALLOWLISTED ADAPTER"
+    ],
     provenance: TargetProfileProvenance,
     candidates: tuple[TargetDomainCandidate, ...],
     declared_capabilities: tuple[str, ...],
@@ -820,15 +847,21 @@ def _build_selection(profile: ParticipantTargetProfile) -> TargetPackSelection:
             f"{selected.value if selected else 'unknown'} DomainPack candidate"
             f" ({pack.pack_id if pack else 'unregistered'})."
         )
-        expect = (
-            "Compatibility intake stops here; the canonical owner-manifest router must "
-            "independently authorize any synthetic experiment."
-            if profile.profile_label == "OWNER MANIFEST"
-            else (
+        if profile.profile_label == "OWNER MANIFEST":
+            expect = (
+                "Compatibility intake stops here; the canonical owner-manifest router must "
+                "independently authorize any synthetic experiment."
+            )
+        elif profile.profile_label == "ALLOWLISTED ADAPTER":
+            expect = (
+                "The exact reviewed adapter may continue only through its network-disabled "
+                "local replacement Gym; no arbitrary repository code is authorized."
+            )
+        else:
+            expect = (
                 "Static compatibility evidence is terminal; an owner manifest is "
                 "required before any synthetic experiment."
             )
-        )
     elif profile.status == CompatibilityStatus.AMBIGUOUS:
         why = "More than one evidence-backed domain remains; no arbitrary tie-break was applied."
         expect = "Additional owner-provided capability evidence is required before routing."
@@ -866,7 +899,11 @@ def _build_report(
     if selection.status == CompatibilityStatus.COMPATIBLE_CANDIDATE:
         message = (
             f"{selection.selected_domain.value if selection.selected_domain else 'unknown'} pack "
-            "compatibility candidate; no target code or synthetic attack was executed."
+            + (
+                "allowlisted adapter candidate; the adapter Gym has not started yet."
+                if profile.profile_label == "ALLOWLISTED ADAPTER"
+                else "compatibility candidate; no target code or synthetic attack was executed."
+            )
         )
         claims = (
             (f"Evidence supports a {selection.selected_domain.value} compatibility candidate.",)
@@ -888,7 +925,11 @@ def _build_report(
         "findings": [],
         "evidence_refs": list(selection.evidence_refs),
         "compatibility_claims": list(claims),
-        "claim_boundary": PARTICIPANT_CLAIM_BOUNDARY,
+        "claim_boundary": (
+            ADAPTER_CLAIM_BOUNDARY
+            if profile.profile_label == "ALLOWLISTED ADAPTER"
+            else PARTICIPANT_CLAIM_BOUNDARY
+        ),
         "message": message,
     }
     return TargetCompatibilityReport(**payload, report_digest=f"sha256:{_sha256(payload)}")
@@ -947,6 +988,7 @@ def build_owner_manifest_compatibility(
     *,
     manifest_path: str,
     manifest_bytes: bytes,
+    downloaded_files: tuple[SourceSnapshotFile, ...] = (),
 ) -> ParticipantCompatibilityResult:
     """Build owner-provenance compatibility; never inspect static registry data."""
 
@@ -987,15 +1029,94 @@ def build_owner_manifest_compatibility(
         unknown_fields=unknown_fields,
         unsupported_fields=manifest.unsupported_tools,
     )
+    owner_snapshot = bounded_manifest_snapshot(
+        source,
+        manifest_path=safe_path,
+        manifest_bytes=manifest_bytes,
+    )
+    if downloaded_files:
+        owner_snapshot = _source_snapshot(
+            source,
+            mode="bounded_download",
+            execution_scope="manifest_and_entrypoint",
+            files=owner_snapshot.files + downloaded_files,
+        )
     return _result(
         source,
         profile,
-        bounded_manifest_snapshot(
-            source,
-            manifest_path=safe_path,
-            manifest_bytes=manifest_bytes,
+        owner_snapshot,
+    )
+
+
+def build_allowlisted_adapter_compatibility(
+    source: SourceDescriptor,
+    manifest: AgentManifest,
+    *,
+    entrypoint_path: str,
+    entrypoint_bytes: bytes,
+    adapter_version: str,
+) -> ParticipantCompatibilityResult:
+    """Build compatibility evidence for a reviewed adapter source contract."""
+
+    safe_path = validate_static_evidence_path(entrypoint_path)
+    line_count = max(1, len(entrypoint_bytes.splitlines()))
+    evidence = TargetEvidenceRef(
+        evidence_id="allowlisted-adapter-entrypoint",
+        kind=StaticEvidenceKind.ARCHITECTURE,
+        repository=source.repository,
+        resolved_sha=source.resolved_sha,
+        path=safe_path,
+        blob_sha=git_blob_sha(entrypoint_bytes),
+        line_selector=f"L1-L{line_count}",
+        note=(
+            "Pinned adapter entrypoint was parsed as bounded AST evidence; imports and "
+            "runtime dependencies were not executed."
         ),
     )
+    names = tuple(sorted({tool.name for tool in manifest.tools}))
+    candidate = TargetDomainCandidate(
+        domain_kind=TargetDomainKind.LIFE,
+        mission_families=(MissionFamily.PURCHASE.value,),
+        tool_capabilities=names,
+        evidence_refs=(evidence.stable_ref,),
+        rationale="Exact source revision matched a reviewed Life shopping adapter contract.",
+    )
+    provenance = TargetProfileProvenance(
+        origin=ProfileOrigin.ALLOWLISTED_ADAPTER,
+        repository_url=source.repository_url,
+        resolved_sha=source.resolved_sha,
+        generated_at=source.retrieved_at,
+        adapter_version=adapter_version,
+        public_visibility="unknown",
+        evidence=(evidence,),
+        unknown_fields=("upstream_runtime_behavior",),
+        unsupported_fields=(),
+    )
+    profile = _build_profile(
+        agent_name=manifest.name,
+        source=source,
+        profile_label="ALLOWLISTED ADAPTER",
+        provenance=provenance,
+        candidates=(candidate,),
+        declared_capabilities=names,
+        unknown_fields=provenance.unknown_fields,
+        unsupported_fields=(),
+    )
+    snapshot_file = SourceSnapshotFile(
+        path=safe_path,
+        size=len(entrypoint_bytes),
+        blob_sha=git_blob_sha(entrypoint_bytes),
+        content_sha256=_content_sha256(entrypoint_bytes),
+        retrieval_mode="bounded_download",
+    )
+    snapshot = _source_snapshot(
+        source,
+        mode="bounded_download",
+        execution_scope="allowlisted_adapter",
+        files=(snapshot_file,),
+        claim_boundary=ADAPTER_CLAIM_BOUNDARY,
+    )
+    return _result(source, profile, snapshot)
 
 
 class StaticTargetRegistry:
@@ -1338,6 +1459,7 @@ __all__ = [
     "MAX_STATIC_PROFILE_TOTAL_BYTES",
     "PAPER_PLAYGROUND_SHA",
     "PARTICIPANT_CLAIM_BOUNDARY",
+    "ADAPTER_CLAIM_BOUNDARY",
     "PARTICIPANT_INTAKE_ADAPTER_VERSION",
     "CompatibilityStatus",
     "GitHubEvidenceMetadataFetcher",
@@ -1367,6 +1489,7 @@ __all__ = [
     "TargetPackSelection",
     "TargetProfileProvenance",
     "build_owner_manifest_compatibility",
+    "build_allowlisted_adapter_compatibility",
     "bounded_manifest_snapshot",
     "git_blob_sha",
     "metadata_snapshot",

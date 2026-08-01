@@ -2,8 +2,9 @@
 
 The smoke test checks the public HTTP surface only: configuration metadata,
 one run creation, the complete SSE trace, source pinning, the OpenAI planning
-evidence, and the synthetic-only terminal boundary.  It never prints request
-headers or environment-variable values.
+evidence, and the synthetic-only terminal boundary.  With ``--expect-adapter``
+it additionally checks the exact UCP adapter contract and ``complete_purchase``
+Gym trace.  It never prints request headers or environment-variable values.
 """
 
 from __future__ import annotations
@@ -41,15 +42,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mission", default=DEFAULT_MISSION)
     parser.add_argument(
         "--expect-mode",
-        choices=("openai_hosted", "offline_demo"),
+        choices=("openai_hosted", "offline_demo", "compatibility_only"),
         default="openai_hosted",
         help="Expected mode for the created run (default: openai_hosted).",
+    )
+    parser.add_argument(
+        "--expect-terminal",
+        choices=(
+            "verified",
+            "compatibility_only",
+            "source_unresolved",
+            "source_preflight_failed",
+        ),
+        default="verified",
+        help="Expected terminal status for the created run (default: verified).",
     )
     parser.add_argument(
         "--expect-source",
         choices=("pinned", "unresolved"),
         default="pinned",
         help="Expected submitted-source outcome (default: pinned).",
+    )
+    parser.add_argument(
+        "--expect-adapter",
+        action="store_true",
+        help="Require the exact pinned UCP adapter path instead of the owner-manifest path.",
     )
     parser.add_argument("--timeout-seconds", type=float, default=45.0)
     parser.add_argument(
@@ -190,10 +207,38 @@ def verify_rejected_stream(
     )
 
 
+def legacy_input(repository: str, requested_ref: str, mission: str) -> str:
+    return "\n".join(
+        [
+            (
+                "NIGHTMARE LAB에서 다음 GitHub 저장소의 에이전트를 "
+                "가상 환경에서 안전하게 시험해 주세요."
+            ),
+            f"저장소: {repository}",
+            f"브랜치 또는 커밋: {requested_ref}",
+            f"맡길 일: {mission}",
+            (
+                "실제 외부 서비스를 호출하거나 상태를 바꾸지 말고, "
+                "관찰한 사실·추정 원인·제안한 해결책·재검증 결과를 구분해 주세요."
+            ),
+        ]
+    )
+
+
 def verify_trace(
-    events: list[dict[str, Any]], *, run_id: str, expected_mode: str, expected_source: str
+    events: list[dict[str, Any]],
+    *,
+    run_id: str,
+    expected_mode: str,
+    expected_source: str,
+    expected_terminal: str = "verified",
+    expected_adapter: bool = False,
 ) -> dict[str, Any]:
-    require(len(events) == 34, f"expected 34 SSE events, got {len(events)}")
+    minimum_events = 39 if expected_adapter else 34 if expected_terminal == "verified" else 8
+    require(
+        len(events) >= minimum_events,
+        f"expected the complete hosted trace, got {len(events)} events",
+    )
     require(
         [event.get("seq") for event in events] == list(range(1, len(events) + 1)),
         "SSE sequence is not contiguous",
@@ -205,7 +250,8 @@ def verify_trace(
     phases = unique_in_order(
         str(event.get("phase")) for event in events if isinstance(event.get("phase"), str)
     )
-    require(phases == list(EXPECTED_PHASES), f"unexpected phase order: {phases}")
+    expected_phases = list(EXPECTED_PHASES) if expected_terminal == "verified" else ["CLONE"]
+    require(phases == expected_phases, f"unexpected phase order: {phases}")
 
     start_data = events[0].get("data")
     terminal_data = events[-1].get("data")
@@ -216,7 +262,10 @@ def verify_trace(
         terminal_data.get("safety_boundary") == "SIMULATION_ONLY",
         "terminal boundary missing",
     )
-    require(terminal_data.get("status") == "verified", "run did not finish verified")
+    require(
+        terminal_data.get("status") == expected_terminal,
+        f"run did not finish {expected_terminal}",
+    )
 
     descriptor = next((event for event in events if event.get("type") == "source_descriptor"), None)
     require(isinstance(descriptor, dict), "source_descriptor event is missing")
@@ -230,18 +279,131 @@ def verify_trace(
             isinstance(resolved_sha, str) and FULL_SHA.fullmatch(resolved_sha),
             "source ref was not pinned",
         )
+        snapshot = next((event for event in events if event.get("type") == "source_snapshot"), None)
+        require(isinstance(snapshot, dict), "source_snapshot event is missing")
+        snapshot_data = snapshot.get("data") if snapshot else None
+        expected_snapshot_mode = (
+            "bounded_download" if expected_terminal == "verified" else "metadata_only"
+        )
+        expected_execution_scope = (
+            "allowlisted_adapter"
+            if expected_adapter
+            else "manifest_and_entrypoint"
+            if expected_terminal == "verified"
+            else "static_metadata_only"
+        )
+        require(
+            isinstance(snapshot_data, dict)
+            and snapshot_data.get("mode") == expected_snapshot_mode
+            and snapshot_data.get("execution_scope") == expected_execution_scope,
+            "pinned source snapshot did not match the expected intake mode",
+        )
+        profile = next((event for event in events if event.get("type") == "target_profile"), None)
+        require(
+            isinstance(profile, dict)
+            and isinstance(profile.get("data"), dict)
+            and profile["data"].get("profile_label")
+            == (
+                "ALLOWLISTED ADAPTER"
+                if expected_adapter
+                else "OWNER MANIFEST"
+                if expected_terminal == "verified"
+                else "LAB-INFERRED STATIC PROFILE"
+            ),
+            "pinned target profile is missing or has the wrong provenance",
+        )
+        if expected_terminal == "verified":
+            if expected_adapter:
+                adapter = next(
+                    (event for event in events if event.get("type") == "adapter.matched"),
+                    None,
+                )
+                require(isinstance(adapter, dict), "allowlisted adapter match event is missing")
+                adapter_data = adapter.get("data") if adapter else None
+                require(
+                    isinstance(adapter_data, dict)
+                    and adapter_data.get("adapter_id") == "ucp-shopping-v0"
+                    and adapter_data.get("execution_mode") == "network_disabled_local_replacement"
+                    and adapter_data.get("network_access") == "disabled",
+                    "UCP adapter contract is missing or unsafe",
+                )
+                require(
+                    any(
+                        event.get("type") == "gym.tool_call"
+                        and isinstance(event.get("raw"), dict)
+                        and event["raw"].get("name") == "complete_purchase"
+                        for event in events
+                    ),
+                    "UCP Gym trace did not execute complete_purchase",
+                )
+                require(
+                    any(event.get("type") == "lab_report" for event in events),
+                    "UCP adapter path did not produce a lab report",
+                )
+            files = snapshot_data.get("files", []) if isinstance(snapshot_data, dict) else []
+            require(
+                isinstance(snapshot_data, dict)
+                and any(
+                    file.get("path")
+                    == (
+                        "upsonic_shopping_agent.py"
+                        if expected_adapter
+                        else "agent/main.py"
+                    )
+                    for file in files
+                    if isinstance(file, dict)
+                ),
+                "bounded owner entrypoint evidence is missing",
+            )
+            canonical_pack = next(
+                (event for event in events if event.get("type") == "pack.selected"), None
+            )
+            require(
+                isinstance(canonical_pack, dict)
+                and isinstance(canonical_pack.get("data"), dict)
+                and isinstance(canonical_pack["data"].get("selected"), dict)
+                and canonical_pack["data"]["selected"].get("domain_kind") == "life",
+                "canonical Life pack selection is missing",
+            )
+            require(
+                any(event.get("type") == "experiment_plan" for event in events),
+                "owner manifest path did not produce an experiment plan",
+            )
+        else:
+            require(
+                any(event.get("type") == "compatibility_report" for event in events),
+                "compatibility report is missing",
+            )
     else:
         require(resolved_sha is None, "source unexpectedly resolved")
-        profile = next(
-            (event for event in events if event.get("type") == "behavior_profile"),
-            None,
-        )
-        profile_data = profile.get("data") if isinstance(profile, dict) else None
+        snapshot = next((event for event in events if event.get("type") == "source_snapshot"), None)
+        require(isinstance(snapshot, dict), "fallback source_snapshot event is missing")
         require(
-            isinstance(profile_data, dict)
-            and profile_data.get("agent_name") == "synthetic-fixture-fallback",
-            "unresolved source was not separated from fixture fallback",
+            isinstance(snapshot.get("data"), dict)
+            and snapshot["data"].get("execution_scope") == "none",
+            "unresolved source was not bounded as an empty intake",
         )
+        if expected_terminal in {"source_unresolved", "source_preflight_failed"}:
+            failure = next((event for event in events if event.get("type") == "run_failed"), None)
+            require(isinstance(failure, dict), "source failure event is missing")
+            failure_data = failure.get("data") if failure else None
+            require(
+                isinstance(failure_data, dict)
+                and failure_data.get("code") == expected_terminal,
+                "source failure code did not match the expected terminal",
+            )
+            require(
+                not any(event.get("type") == "experiment_plan" for event in events),
+                "source failure unexpectedly planned an experiment",
+            )
+            return {
+                "event_count": len(events),
+                "phases": phases,
+                "source_ref": resolved_sha,
+                "source_pinned": False,
+                "openai_response_observed": False,
+                "terminal_status": terminal_data.get("status"),
+            }
 
     openai_result = next(
         (
@@ -253,6 +415,16 @@ def verify_trace(
         ),
         None,
     )
+    if expected_terminal == "compatibility_only":
+        require(openai_result is None, "compatibility-only run unexpectedly planned an experiment")
+        return {
+            "event_count": len(events),
+            "phases": phases,
+            "source_ref": resolved_sha,
+            "source_pinned": expected_source == "pinned",
+            "openai_response_observed": False,
+            "terminal_status": terminal_data.get("status"),
+        }
     require(isinstance(openai_result, dict), "OpenAI tool_result event is missing")
     raw = openai_result.get("raw") if openai_result else None
     output = raw.get("output") if isinstance(raw, dict) else None
@@ -311,11 +483,14 @@ def main() -> int:
         run_url,
         accepts="application/json",
         timeout_seconds=args.timeout_seconds,
-        payload=build_run_payload(
-            repository=args.repository,
-            requested_ref=args.ref,
-            mission=args.mission,
-        ),
+        payload={
+            "input": legacy_input(args.repository, args.ref, args.mission),
+            **build_run_payload(
+                repository=args.repository,
+                requested_ref=args.ref,
+                mission=args.mission,
+            ),
+        },
     )
     require(status == 202, f"run creation returned status {status}")
     require(content_type == "application/json", f"run creation returned {content_type}")
@@ -357,6 +532,8 @@ def main() -> int:
         run_id=run_id,
         expected_mode=args.expect_mode,
         expected_source=args.expect_source,
+        expected_terminal=args.expect_terminal,
+        expected_adapter=args.expect_adapter,
     )
 
     print(

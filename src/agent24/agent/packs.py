@@ -65,12 +65,22 @@ class DomainKind(StrEnum):
     both would make ``MissionFamily.RESEARCH`` mean two different things, and
     Stock has no mission family at all today.
     """
-
     LIFE = "life"
     RESEARCH = "research"
     STOCK = "stock"
     TICKET = "ticket"
     ADHOC = "adhoc"
+
+
+_ALLOWLISTED_ADAPTER_ALIASES: dict[str, str] = {
+    "get_available_products": "web.fetch",
+    "get_available_discount_codes": "web.fetch",
+    "discover_merchant": "web.fetch",
+    "create_cart": "order.create",
+    "apply_discount": "order.create",
+    "set_shipping_address": "order.create",
+    "complete_purchase": "payment.charge",
+}
 
 
 class PackExecution(StrEnum):
@@ -488,7 +498,14 @@ def _tools_of(
     tools |= {tool.name for tool in manifest.tools}
     if card is not None:
         tools |= {tool.name for tool in card.tools}
-    return tools - _flagged(manifest)
+    tools -= _flagged(manifest)
+    if manifest.adapter_version == "ucp-shopping-v0":
+        tools.update(
+            _ALLOWLISTED_ADAPTER_ALIASES[tool]
+            for tool in tuple(tools)
+            if tool in _ALLOWLISTED_ADAPTER_ALIASES
+        )
+    return tools
 
 
 def _gate_split(

@@ -89,6 +89,10 @@ cases:
     issue: 24
     command: "pytest tests/integration/test_life_replay.py::test_life_v0_protected_replay_keeps_same_seed_and_one_charge -q"
     expectation: "same-seed protected replay reconciles the original intent, keeps one charge, and passes benign control"
+  - id: ucp-shopping-allowlisted-adapter
+    issue: 26
+    command: "pytest tests/unit/test_external_adapters.py tests/integration/test_ucp_adapter.py -q"
+    expectation: "the exact pinned Upsonic UCP entrypoint is AST-checked without execution, its complete_purchase contract drives a network-disabled local Gym, duplicate purchase is reproduced, and protected replay keeps one purchase while the Raw SSE/JSONL trace names the adapter scope"
 
   # FindingReport terminal states (issue #23).  One case per terminal state, each
   # pairing the valid fixture with the schema refusing its dishonest counterpart
@@ -167,6 +171,10 @@ cases:
     issue: 26
     command: "pytest tests/integration/test_api.py::test_live_target_passes_bounded_synthetic_evidence_to_openai tests/integration/test_api.py::test_diagnostic_failure_is_sanitized_and_falls_back -q"
     expectation: "OpenAI receives bounded controller evidence labelled synthetic_archetype and never a target-code execution claim; diagnostic failures emit a sanitized explicit fallback without leaking the exception"
+  - id: one-input-source-preflight-boundary
+    issue: 26
+    command: "pytest tests/integration/test_api.py::test_source_preflight_failure_stops_without_target_claims -q"
+    expectation: "source or manifest preflight failure ends with an explicit source_preflight_failed terminal, zero experiments/findings, and no offline synthetic tool call or target claim"
 
   # DomainPack registry and the evidence-driven router (issue #57).  Routing is
   # a deterministic policy, so these check the decision itself: which pack, on

@@ -1,6 +1,6 @@
 """Pinned external-Agent preflight for the one-input API workflow.
 
-The preflight is deliberately metadata-only.  It resolves a public GitHub
+The preflight is deliberately bounded-evidence-only. It resolves a public GitHub
 repository to an immutable commit, fetches one allowlisted JSON manifest at
 that commit, derives an evidence-backed BehaviorProfile, routes to one domain
 pack, and selects one typed P0 experiment.  Repository code is never cloned,
@@ -10,6 +10,7 @@ imported, or executed.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import tempfile
@@ -22,6 +23,12 @@ from urllib.request import Request, urlopen
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent24.agent.external_adapters import (
+    AdapterMatchError,
+    UCPShoppingAdapterContract,
+    adapter_for_source,
+    inspect_ucp_source,
+)
 from agent24.agent.manifest import ALLOWED_MANIFEST_PATHS, load_manifest
 from agent24.agent.mission_scope import domain_support, mission_domain, mission_scope_stop
 from agent24.agent.models import ExperimentPlan, FaultKind, Mission, MissionFamily, StopDecision
@@ -31,9 +38,13 @@ from agent24.agent.participant_intake import (
     ParticipantStaticProfiler,
     ParticipantTargetProfile,
     SourceSnapshot,
+    SourceSnapshotFile,
     TargetCompatibilityReport,
     TargetPackSelection,
+    build_allowlisted_adapter_compatibility,
     build_owner_manifest_compatibility,
+    git_blob_sha,
+    validate_static_evidence_path,
 )
 from agent24.agent.planner import select_p0_experiment
 from agent24.agent.profile import AgentManifest, BehaviorProfile, build_behavior_profile
@@ -46,6 +57,7 @@ from agent24.agent.source import (
 
 GITHUB_API = "https://api.github.com"
 MAX_MANIFEST_BYTES = 256_000
+MAX_ENTRYPOINT_BYTES = 64_000
 
 
 class ExternalTarget(BaseModel):
@@ -70,10 +82,20 @@ class ManifestResponseError(ManifestFetchError):
     """GitHub returned malformed or oversized manifest content."""
 
 
+class SourceFileFetchError(ManifestFetchError):
+    """The bounded owner entrypoint could not be retrieved safely."""
+
+
 class ManifestFetcher(Protocol):
     """Fetch exactly one allowlisted manifest at ``source.resolved_sha``."""
 
     def fetch(self, source: SourceDescriptor) -> tuple[str, bytes]: ...
+
+
+class SourceFileFetcher(Protocol):
+    """Fetch one bounded text file named by the already-validated manifest."""
+
+    def fetch(self, source: SourceDescriptor, path: str) -> bytes: ...
 
 
 class GitHubContentsManifestFetcher:
@@ -153,6 +175,73 @@ class MappingManifestFetcher:
         raise ManifestUnavailableError("fixture has no allowlisted manifest")
 
 
+class GitHubContentsSourceFetcher:
+    """Download one bounded entrypoint as evidence without importing it."""
+
+    def __init__(
+        self,
+        *,
+        token: str | None = None,
+        timeout_seconds: float = 5.0,
+    ) -> None:
+        self.token = token if token is not None else os.getenv("GITHUB_TOKEN")
+        self.timeout_seconds = timeout_seconds
+
+    def fetch(self, source: SourceDescriptor, path: str) -> bytes:
+        safe_path = validate_static_evidence_path(path)
+        encoded_path = quote(safe_path, safe="/")
+        encoded_sha = quote(source.resolved_sha, safe="")
+        request = Request(
+            f"{GITHUB_API}/repos/{source.repository}/contents/{encoded_path}?ref={encoded_sha}",
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "agent24-nightmare-lab",
+                **({"Authorization": f"Bearer {self.token}"} if self.token else {}),
+            },
+        )
+        try:
+            with urlopen(request, timeout=self.timeout_seconds) as response:  # noqa: S310
+                raw_response = response.read(MAX_ENTRYPOINT_BYTES * 2)
+        except (HTTPError, URLError, TimeoutError, OSError) as error:
+            raise SourceFileFetchError("pinned owner entrypoint could not be accessed") from error
+        if len(raw_response) > MAX_ENTRYPOINT_BYTES * 2:
+            raise SourceFileFetchError("pinned owner entrypoint response is oversized")
+        try:
+            payload = json.loads(raw_response.decode("utf-8"))
+            encoded = payload["content"]
+            if payload.get("encoding") != "base64" or not isinstance(encoded, str):
+                raise ValueError("unexpected contents encoding")
+            content = base64.b64decode("".join(encoded.split()), validate=True)
+        except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise SourceFileFetchError("pinned owner entrypoint response is malformed") from error
+        if len(content) > MAX_ENTRYPOINT_BYTES:
+            raise SourceFileFetchError("pinned owner entrypoint exceeds the bounded intake limit")
+        return content
+
+
+class MappingSourceFileFetcher:
+    """Network-free bounded source fixture keyed by relative path."""
+
+    def __init__(self, files: Mapping[str, bytes | str]) -> None:
+        self.files = {
+            validate_static_evidence_path(path): (
+                value.encode("utf-8") if isinstance(value, str) else bytes(value)
+            )
+            for path, value in files.items()
+        }
+
+    def fetch(self, source: SourceDescriptor, path: str) -> bytes:
+        del source
+        safe_path = validate_static_evidence_path(path)
+        try:
+            content = self.files[safe_path]
+        except KeyError as error:
+            raise SourceFileFetchError("fixture has no bounded owner entrypoint") from error
+        if len(content) > MAX_ENTRYPOINT_BYTES:
+            raise SourceFileFetchError("fixture owner entrypoint is oversized")
+        return content
+
+
 class ExternalPreflightResult(BaseModel):
     """Auditable artifacts produced before any AUT execution."""
 
@@ -168,6 +257,7 @@ class ExternalPreflightResult(BaseModel):
     profile: BehaviorProfile
     pack_selection: PackSelection
     decision: ExperimentPlan | StopDecision
+    adapter_contract: UCPShoppingAdapterContract | None = None
 
 
 class ExternalAgentPreflight:
@@ -178,13 +268,71 @@ class ExternalAgentPreflight:
         *,
         source_resolver: RevisionResolver | None = None,
         manifest_fetcher: ManifestFetcher | None = None,
+        source_file_fetcher: SourceFileFetcher | None = None,
         static_profiler: ParticipantStaticProfiler | None = None,
         retrieved_at: str | None = None,
     ) -> None:
         self.source_resolver = source_resolver or GitHubApiRevisionResolver()
         self.manifest_fetcher = manifest_fetcher or GitHubContentsManifestFetcher()
+        self.source_file_fetcher = source_file_fetcher
         self.static_profiler = static_profiler or ParticipantStaticProfiler()
         self.retrieved_at = retrieved_at
+
+    def _run_allowlisted_adapter(
+        self, source: SourceDescriptor, target: ExternalTarget
+    ) -> ExternalPreflightResult | None:
+        """Match one reviewed source and build its data-only planning artifacts."""
+
+        if not adapter_for_source(source) or self.source_file_fetcher is None:
+            return None
+        entrypoint = "upsonic_shopping_agent.py"
+        try:
+            entrypoint_bytes = self.source_file_fetcher.fetch(source, entrypoint)
+            contract = inspect_ucp_source(
+                source,
+                path=entrypoint,
+                content=entrypoint_bytes,
+            )
+        except AdapterMatchError as error:
+            raise SourceFileFetchError("allowlisted adapter source contract mismatch") from error
+
+        manifest = contract.manifest(source)
+        compatibility = build_allowlisted_adapter_compatibility(
+            source,
+            manifest,
+            entrypoint_path=contract.entrypoint,
+            entrypoint_bytes=entrypoint_bytes,
+            adapter_version=contract.adapter_id,
+        )
+        mission = Mission(
+            text=target.mission,
+            family=manifest.mission_family,
+            constraints=dict(manifest.permissions),
+        )
+        profile = build_behavior_profile(manifest, baseline=None)
+        pack_selection = select_domain_pack(
+            manifest=manifest,
+            profile=profile,
+            mission=mission,
+        )
+        decision: ExperimentPlan | StopDecision
+        if pack_selection.stop is not None:
+            decision = pack_selection.stop
+        else:
+            decision = select_p0_experiment(profile, mission)
+        return ExternalPreflightResult(
+            source=source,
+            source_snapshot=compatibility.source_snapshot,
+            target_profile=compatibility.target_profile,
+            compatibility_selection=compatibility.pack_selection,
+            compatibility_report=compatibility.compatibility_report,
+            manifest=manifest,
+            mission=mission,
+            profile=profile,
+            pack_selection=pack_selection,
+            decision=decision,
+            adapter_contract=contract,
+        )
 
     def run(
         self, target: ExternalTarget
@@ -198,6 +346,9 @@ class ExternalAgentPreflight:
         try:
             manifest_path, manifest_bytes = self.manifest_fetcher.fetch(source)
         except ManifestUnavailableError:
+            adapter_result = self._run_allowlisted_adapter(source, target)
+            if adapter_result is not None:
+                return adapter_result
             return self.static_profiler.profile(source)
         with tempfile.TemporaryDirectory(prefix="agent24-manifest-") as temporary_root:
             root = Path(temporary_root)
@@ -206,11 +357,25 @@ class ExternalAgentPreflight:
             path.write_bytes(manifest_bytes)
             manifest = load_manifest(root, source, manifest_path=manifest_path)
 
+        downloaded_files: tuple[SourceSnapshotFile, ...] = ()
+        if self.source_file_fetcher is not None and manifest.entrypoint != manifest_path:
+            entrypoint_bytes = self.source_file_fetcher.fetch(source, manifest.entrypoint)
+            downloaded_files = (
+                SourceSnapshotFile(
+                    path=manifest.entrypoint,
+                    size=len(entrypoint_bytes),
+                    blob_sha=git_blob_sha(entrypoint_bytes),
+                    content_sha256=f"sha256:{hashlib.sha256(entrypoint_bytes).hexdigest()}",
+                    retrieval_mode="bounded_download",
+                ),
+            )
+
         compatibility = build_owner_manifest_compatibility(
             source,
             manifest,
             manifest_path=manifest_path,
             manifest_bytes=manifest_bytes,
+            downloaded_files=downloaded_files,
         )
 
         mission = Mission(
@@ -286,10 +451,14 @@ __all__ = [
     "ExternalPreflightResult",
     "ExternalTarget",
     "GitHubContentsManifestFetcher",
+    "GitHubContentsSourceFetcher",
     "ManifestFetchError",
     "ManifestFetcher",
     "ManifestResponseError",
     "ManifestUnavailableError",
     "MappingManifestFetcher",
+    "MappingSourceFileFetcher",
+    "SourceFileFetchError",
+    "SourceFileFetcher",
     "ParticipantCompatibilityResult",
 ]

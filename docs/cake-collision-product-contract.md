@@ -63,7 +63,8 @@ runtime structured run에서 controller oracle이 측정한 위반은 정확히 
 - `task.total_spend`
 
 동일 seed 재현은 `3/3`, 최종 `finding_status`는 `verified_mitigation`, protected
-Sandbox replay는 `accepted=true`였다. hosted SSE 경로는 `seq=1..34`의 34개 ordered
+Sandbox replay는 `accepted=true`였다. hosted SSE 경로는 pinned manifest intake와 pack routing을
+포함해 `seq=1..38`의 38개 ordered
 event이며, 브라우저의 network-failure fixture는 같은 숫자와 주장을 27개 표시 event로
 재생하므로 event 개수 자체를 제품 성능으로 홍보하지
 않는다.

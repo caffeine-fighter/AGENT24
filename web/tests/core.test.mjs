@@ -8,14 +8,17 @@ import {
   createInitialState,
   createUnsupportedFixture,
   DEFAULT_MISSION,
+  EXAMPLE_AGENT_TARGET,
   formatRunInput,
   isDocumentedUnsupportedMission,
+  getInitialTarget,
   normalizeEvent,
   projectBehaviorProfile,
   projectCompatibilitySelection,
   projectCompatibilityReport,
   projectExperimentPlan,
   projectLabReport,
+  projectAdapterContract,
   projectSourceDescriptor,
   projectSourceSnapshot,
   projectTargetProfile,
@@ -44,6 +47,9 @@ assert.equal(validateTargetInput({
   requestedRef: "main",
   mission: "test",
 }).field, "repository");
+assert.deepEqual(getInitialTarget("?demo=example-agent"), EXAMPLE_AGENT_TARGET);
+assert.equal(getInitialTarget("?demo=example-agent").requestedRef, "demo-v1");
+assert.equal(getInitialTarget("").repositoryUrl, "https://github.com/caffeine-fighter/AGENT24");
 assert.equal(validateTargetInput({
   repositoryUrl: "https://github.com/example/agent",
   requestedRef: "",
@@ -172,8 +178,37 @@ const unresolvedSourceState = reduceRunState(targetState, {
 });
 assert.equal(unresolvedSourceState.outcomes.submission.status, "failed");
 assert.equal(unresolvedSourceState.outcomes.investigation.status, "not_run");
-assert.equal(unresolvedSourceState.analysisScope, "fixture_fallback");
-assert.equal(unresolvedSourceState.terminalNotice.message, TERMINAL_COPY.source_preflight_failed);
+assert.equal(unresolvedSourceState.analysisScope, "source_unresolved");
+assert.equal(unresolvedSourceState.terminalNotice.message, TERMINAL_COPY.source_unresolved);
+
+const sourceFailureState = reduceRunState(unresolvedSourceState, {
+  run_id: "target-test",
+  seq: 2,
+  type: "run_failed",
+  source: "live",
+  payload: {
+    status: "offline_demo",
+    code: "source_preflight_failed",
+    message: "source preflight failed",
+  },
+});
+const sourceFailureTerminalState = reduceRunState(sourceFailureState, {
+  run_id: "target-test",
+  seq: 3,
+  type: "run_completed",
+  source: "live",
+  payload: {
+    status: "source_preflight_failed",
+    mode: "offline_demo",
+    experiments_run: 0,
+    findings: 0,
+  },
+});
+assert.equal(sourceFailureTerminalState.status, "failed");
+assert.equal(sourceFailureTerminalState.analysisScope, "source_preflight_failed");
+assert.equal(sourceFailureTerminalState.outcomes.investigation.status, "not_run");
+assert.equal(sourceFailureTerminalState.outcomes.operation.status, "not_run");
+assert.equal(sourceFailureTerminalState.terminalNotice.message, TERMINAL_COPY.source_preflight_failed);
 
 const unsupportedState = reduceRunState(targetState, {
   run_id: "target-test",
@@ -302,6 +337,43 @@ assert.equal(projectTargetProfile(targetProfilePayload).candidates[0].domain, "r
 assert.equal(projectSourceSnapshot(sourceSnapshotPayload).executionScope, "static_metadata_only");
 assert.equal(projectCompatibilitySelection(compatibilitySelectionPayload).maxExperiments, 0);
 assert.equal(projectCompatibilityReport(compatibilityReportPayload).findings.length, 0);
+
+const adapterContractPayload = {
+  adapter_id: "ucp-shopping-v0",
+  adapter_version: "ucp-shopping-v0.1",
+  repository: "Upsonic/UCP-Agent",
+  resolved_sha: "3f98ef03111e560afe92347333865ccac9081d93",
+  entrypoint: "upsonic_shopping_agent.py",
+  source_blob_sha: "ecb3d7cab5e36812d48241e91eeb7be86553d4fa",
+  source_content_sha256: `sha256:${"b".repeat(64)}`,
+  observed_imports: ["ucp_client.UCPAgentTools", "upsonic.Agent", "upsonic.Chat"],
+  observed_tools: ["get_available_products", "complete_purchase"],
+  system_prompt_sha256: `sha256:${"c".repeat(64)}`,
+  execution_mode: "network_disabled_local_replacement",
+  network_access: "disabled",
+  scope_note: "Pinned UCP source; local replacement only.",
+};
+const projectedAdapter = projectAdapterContract(adapterContractPayload);
+assert.equal(projectedAdapter.adapterId, "ucp-shopping-v0");
+assert.equal(projectedAdapter.entrypoint, "upsonic_shopping_agent.py");
+assert.equal(projectedAdapter.networkAccess, "disabled");
+assert.deepEqual(projectedAdapter.observedTools, ["get_available_products", "complete_purchase"]);
+
+const adapterState = [
+  { type: "adapter.matched", payload: adapterContractPayload },
+  { type: "gym.baseline.completed", payload: { execution_scope: "allowlisted_adapter" } },
+].reduce(
+  (current, item, index) => reduceRunState(current, {
+    run_id: "adapter-test",
+    seq: index + 1,
+    source: "live",
+    ...item,
+  }),
+  createInitialState(target),
+);
+assert.equal(adapterState.analysisScope, "allowlisted_adapter");
+assert.equal(adapterState.adapterContractView.adapterId, "ucp-shopping-v0");
+assert.equal(adapterState.unknownEvents.length, 0, "adapter lifecycle events are supported");
 
 const participantState = [
   { type: "source_snapshot", payload: sourceSnapshotPayload },
