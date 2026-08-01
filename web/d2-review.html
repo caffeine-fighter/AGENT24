@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="NIGHTMARE LAB D2 최소 UI 리뷰 표면" />
+    <title>NIGHTMARE LAB · D2 Review</title>
+    <link rel="stylesheet" href="./d2-review.css" />
+  </head>
+  <body>
+    <header class="review-bar">
+      <a class="review-brand" href="?surface=r1" aria-label="D2 review 첫 표면">
+        <span aria-hidden="true">N</span>
+        <strong>NIGHTMARE LAB</strong>
+        <small>D2 REVIEW DECK</small>
+      </a>
+      <p class="reality-note">REVIEW PROTOTYPE · 실제 동작 없음</p>
+      <p id="viewportNote" class="viewport-note">RESPONSIVE REVIEW</p>
+    </header>
+
+    <nav class="surface-nav" aria-label="D2 최소 리뷰 표면">
+      <a href="?surface=r1" data-surface-link="r1"><span>R1</span> ENTRY</a>
+      <a href="?surface=r2" data-surface-link="r2"><span>R2</span> RUNNING</a>
+      <a href="?surface=r3" data-surface-link="r3"><span>R3</span> RESULT</a>
+      <a href="?surface=r4" data-surface-link="r4"><span>R4</span> NON-RESULT</a>
+    </nav>
+
+    <main id="reviewSurface" tabindex="-1"></main>
+
+    <footer class="review-footer">
+      <p>Product meaning review only · exact wire, exhaustive tests, and presentation are excluded.</p>
+      <p id="surfaceCounter">SURFACE — / 04</p>
+    </footer>
+
+    <script type="module" src="./src/d2-review.mjs"></script>
+  </body>
+</html>
