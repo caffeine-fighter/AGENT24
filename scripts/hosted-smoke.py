@@ -16,8 +16,9 @@ import sys
 from collections.abc import Iterable
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
+from uuid import uuid4
 
 DEFAULT_BASE_URL = "https://nightmare-lab-agent24.conceivability.chatgpt.site"
 DEFAULT_MISSION = "엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문해줘."
@@ -45,6 +46,11 @@ def parse_args() -> argparse.Namespace:
         help="Expected submitted-source outcome (default: pinned).",
     )
     parser.add_argument("--timeout-seconds", type=float, default=45.0)
+    parser.add_argument(
+        "--allow-ephemeral-context",
+        action="store_true",
+        help="Allow a local server without a stable RUN_CONTEXT_SECRET.",
+    )
     return parser.parse_args()
 
 
@@ -62,6 +68,7 @@ def fetch(
     accepts: str,
     timeout_seconds: float,
     payload: dict[str, Any] | None = None,
+    return_http_error: bool = False,
 ) -> tuple[int, str, str]:
     headers = request_headers(accepts=accepts)
     body = None
@@ -75,9 +82,11 @@ def fetch(
         with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
             return response.status, response.headers.get_content_type(), response.read().decode()
     except HTTPError as error:
-        raise RuntimeError(f"{method} {url} returned HTTP {error.code}") from None
+        if return_http_error:
+            return error.code, error.headers.get_content_type(), error.read().decode()
+        raise RuntimeError(f"{method} request returned HTTP {error.code}") from None
     except URLError as error:
-        raise RuntimeError(f"{method} {url} failed: {error.reason}") from None
+        raise RuntimeError(f"{method} request failed: {error.reason}") from None
 
 
 def parse_json(text: str, *, label: str) -> dict[str, Any]:
@@ -117,6 +126,62 @@ def unique_in_order(values: Iterable[str]) -> list[str]:
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise RuntimeError(message)
+
+
+def build_run_payload(*, repository: str, requested_ref: str, mission: str) -> dict[str, Any]:
+    return {
+        "target": {
+            "mission": mission,
+            "repository_url": repository,
+            "requested_ref": requested_ref,
+        }
+    }
+
+
+def negative_event_urls(events_url: str, *, run_id: str) -> list[tuple[str, str, int]]:
+    parsed = urlsplit(events_url)
+    require(not parsed.scheme and not parsed.netloc, "events_url must be same-origin relative")
+    require(parsed.path == f"/api/runs/{run_id}/events", "events_url path is not bound to run_id")
+    pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    require(
+        [name for name, _ in pairs] == ["run_context"],
+        "events_url exposed mutable evidence fields",
+    )
+    token = pairs[0][1]
+    parts = token.split(".")
+    require(len(parts) == 3 and parts[0] == "v1", "run context is not an encrypted v1 token")
+
+    version, iv, ciphertext = parts
+    require(bool(ciphertext), "run context ciphertext is empty")
+    forged_ciphertext = ("B" if ciphertext[0] == "A" else "A") + ciphertext[1:]
+    tampered_token = f"{version}.{iv}.{forged_ciphertext}"
+    tampered_query = urlencode({"run_context": tampered_token})
+    injected_query = urlencode({"run_context": token, "resolved_sha": "b" * 40})
+    unknown_path = f"/api/runs/{uuid4()}/events"
+    return [
+        ("token_tamper", urlunsplit(("", "", parsed.path, tampered_query, "")), 401),
+        ("evidence_query_injection", urlunsplit(("", "", parsed.path, injected_query, "")), 400),
+        ("cross_run_reuse", urlunsplit(("", "", unknown_path, parsed.query, "")), 401),
+    ]
+
+
+def verify_rejected_stream(
+    status: int,
+    content_type: str,
+    body: str,
+    *,
+    label: str,
+    expected_status: int,
+) -> None:
+    require(
+        status == expected_status,
+        f"{label} returned status {status}, expected {expected_status}",
+    )
+    require(content_type != "text/event-stream", f"{label} unexpectedly opened an SSE stream")
+    require(
+        "run.completed" not in body and '"status":"verified"' not in body,
+        f"{label} emitted a verified outcome",
+    )
 
 
 def verify_trace(
@@ -230,20 +295,21 @@ def main() -> int:
     require(health.get("status") == "ok", "health status is not ok")
     require(health.get("safety_boundary") == "SIMULATION_ONLY", "health boundary missing")
     require("openai_api_key" not in health, "health exposed a credential field")
+    require(
+        args.allow_ephemeral_context or health.get("run_context_secret_configured") is True,
+        "hosted RUN_CONTEXT_SECRET is not configured",
+    )
 
     run_url = urljoin(base_url, "api/runs")
     status, content_type, body = fetch(
         run_url,
         accepts="application/json",
         timeout_seconds=args.timeout_seconds,
-        payload={
-            "input": args.mission,
-            "target": {
-                "mission": args.mission,
-                "repository_url": args.repository,
-                "requested_ref": args.ref,
-            },
-        },
+        payload=build_run_payload(
+            repository=args.repository,
+            requested_ref=args.ref,
+            mission=args.mission,
+        ),
     )
     require(status == 202, f"run creation returned status {status}")
     require(content_type == "application/json", f"run creation returned {content_type}")
@@ -256,6 +322,22 @@ def main() -> int:
     events_url = run.get("events_url")
     require(isinstance(run_id, str) and run_id, "run_id is missing")
     require(isinstance(events_url, str) and events_url, "events_url is missing")
+
+    negative_checks = negative_event_urls(events_url, run_id=run_id)
+    for label, relative_url, expected_status in negative_checks:
+        negative_status, negative_type, negative_body = fetch(
+            urljoin(base_url, relative_url),
+            accepts="text/event-stream",
+            timeout_seconds=args.timeout_seconds,
+            return_http_error=True,
+        )
+        verify_rejected_stream(
+            negative_status,
+            negative_type,
+            negative_body,
+            label=label,
+            expected_status=expected_status,
+        )
 
     status, content_type, body = fetch(
         urljoin(base_url, events_url),
@@ -277,6 +359,8 @@ def main() -> int:
                 "passed": True,
                 "base_url": args.base_url.rstrip("/"),
                 "health_mode": health.get("mode"),
+                "run_context_negative_checks": len(negative_checks),
+                "run_context_secret_configured": health.get("run_context_secret_configured"),
                 "run_mode": run.get("mode"),
                 "run_id": run_id,
                 **evidence,

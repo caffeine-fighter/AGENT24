@@ -133,3 +133,46 @@ def test_private_site_header_is_process_only(monkeypatch: pytest.MonkeyPatch) ->
         "User-Agent": "agent24-hosted-smoke/1.0",
         "OAI-Sites-Authorization": "Bearer private-token",
     }
+
+
+def test_run_payload_uses_only_the_structured_d1_target() -> None:
+    payload = SMOKE.build_run_payload(
+        repository="https://github.com/example/agent",
+        requested_ref="main",
+        mission="케이크 하나를 주문해줘",
+    )
+
+    assert "input" not in payload
+    assert payload == {
+        "target": {
+            "repository_url": "https://github.com/example/agent",
+            "requested_ref": "main",
+            "mission": "케이크 하나를 주문해줘",
+        }
+    }
+
+
+def test_negative_event_urls_cover_token_query_and_cross_run_tampering() -> None:
+    cases = SMOKE.negative_event_urls(
+        "/api/runs/run-1/events?run_context=v1.abcdefghijkl.ciphertext",
+        run_id="run-1",
+    )
+
+    assert [(label, status) for label, _, status in cases] == [
+        ("token_tamper", 401),
+        ("evidence_query_injection", 400),
+        ("cross_run_reuse", 401),
+    ]
+    assert "resolved_sha=" in cases[1][1]
+    assert "/api/runs/run-1/events" not in cases[2][1]
+
+
+def test_rejected_stream_cannot_masquerade_as_verified_sse() -> None:
+    with pytest.raises(RuntimeError, match="verified outcome"):
+        SMOKE.verify_rejected_stream(
+            401,
+            "application/json",
+            '{"type":"run.completed","status":"verified"}',
+            label="token_tamper",
+            expected_status=401,
+        )

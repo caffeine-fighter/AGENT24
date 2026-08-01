@@ -1,4 +1,5 @@
-import { contextToSearchParams, type HostedPlan, type HostedRunContext } from "@/lib/hosted-lab";
+import type { HostedPlan, HostedRunContext } from "@/lib/hosted-lab";
+import { sealRunContext } from "@/lib/run-context";
 
 export const runtime = "edge";
 
@@ -240,7 +241,16 @@ export async function POST(request: Request) {
     runId,
     sourceResolver: source.resolver,
   };
-  const eventsUrl = `/api/runs/${encodeURIComponent(runId)}/events?${contextToSearchParams(context).toString()}`;
+  let runContext: string;
+  try {
+    runContext = await sealRunContext(context);
+  } catch {
+    return Response.json(
+      { detail: "실행 보안 설정을 확인할 수 없습니다." },
+      { headers: { "Cache-Control": "no-store" }, status: 503 },
+    );
+  }
+  const eventsUrl = `/api/runs/${encodeURIComponent(runId)}/events?run_context=${encodeURIComponent(runContext)}`;
 
   return Response.json(
     {
@@ -249,6 +259,6 @@ export async function POST(request: Request) {
       mode: plan.usedOpenAI ? "openai_hosted" : "offline_demo",
       events_url: eventsUrl,
     },
-    { status: 202 },
+    { headers: { "Cache-Control": "no-store" }, status: 202 },
   );
 }
