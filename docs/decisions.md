@@ -17,5 +17,6 @@
 | 2026-08-01 | hosted planner는 `commit_then_timeout` 한 변수만 허용하고 OpenAI에는 선택 이유·기대 증거만 맡김 | 모델의 적응성을 노출하면서 scenario·oracle·패치·판정의 결정성을 controller가 계속 소유하게 함 | A / deployment | hosted domain pack이 Research·Stock·Adhoc까지 확장될 때 |
 | 2026-08-01 | Sites build가 삽입한 Git commit은 배포 provenance로만 표시하고 submitted-source pin에 대체 사용하지 않음 | D1의 공개 GitHub preflight와 fixture fallback을 분리하고 private self-target 우회를 제거 | A / deployment | Sites가 D1 공개 source·manifest preflight를 직접 제공할 때 |
 | 2026-08-01 | 외부-Agent P0는 public GitHub의 `agent24.manifest.v1` metadata만 읽고 submitted code나 private credential을 사용하지 않으며, legacy string은 structured target migration bridge로만 유지 | 재현 가능한 provenance와 one-submission replacement를 제공하면서 credential·임의 code 실행 위험과 실제 target 분석 과장을 차단 | D / product contract | 승인된 execution adapter 또는 private-source auth가 별도 설계되거나 D3/A4 migration이 완료될 때 |
+| 2026-08-01 | Frontend는 R1 entry, R2 autonomous running, R3 bounded result, R4 honest non-result의 네 semantic surface와 `PIN → PROFILE → CRASH → AUTOPSY → VACCINE → REPLAY` 흐름을 사용 | 한 번의 제출과 unedited Raw API Stream을 보존하면서 measured evidence, inconclusive investigation, operational fallback을 시각적으로 분리 | D / product UX | D3 wire가 상태를 표현할 수 없거나 실제 사용성 검증에서 의미 혼동이 재현될 때 |
 
 Keep entries short. Record choices that affect architecture, model/tool selection, scope, cost, privacy, or the demo path.

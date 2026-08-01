@@ -1,20 +1,23 @@
 # NIGHTMARE LAB — Agent Failure Scientist
 
-> Status: D0 product truth and D1 external-Agent contract ratified · 2026-08-01 · D2–D6 remain open or deferred.
+> Status: D0 product truth, D1 external-Agent contract, and D2 frontend journey ratified · 2026-08-01 · D3–D6 remain open or deferred.
 
 ## Ratification status
 
 This document is the canonical home for the accepted signature product truth. The
 ratified external-Agent boundary lives in
-[`external-agent-contract.md`](external-agent-contract.md). Sections outside those
+[`external-agent-contract.md`](external-agent-contract.md), and the ratified material
+frontend journey lives in
+[`frontend-journey-contract.md`](frontend-journey-contract.md). Sections outside those
 boundaries describe system capabilities or future design space; they do not silently
-decide the open D2–D6 gates.
+decide the open D3–D6 gates.
 
 | Gate | Status | Authority of this document |
 |---|---|---|
 | D0 · Signature product truth | **Ratified** | The promise, scenario, evidence language, valid-mitigation rule, P0 breadth, preliminary acceptance, and language policy below are binding |
 | D1 · External-Agent product contract | **Ratified** | Input, support, provenance, execution, outcome, evidence, experiment, fallback, and compatibility meanings are binding through the external-Agent contract |
-| D2–D4 · Journey, wire, and integration acceptance | Open | Relevant sections are context or proposals until Rekhet ratifies the corresponding gate |
+| D2 · Frontend journey | **Ratified** | R1–R4 journey, hierarchy, visible states, fallback separation, and material visual character are binding through the frontend journey contract |
+| D3–D4 · Wire and integration acceptance | Open | Relevant sections are context or proposals until Rekhet ratifies the corresponding gate |
 | D5–D6 · Detailed testing and presentation | Deferred | Exact matrices, repetitions, thresholds, and presentation artifacts are intentionally not fixed here |
 
 ## 한 문장 제품 약속
@@ -528,20 +531,25 @@ This is extension inventory for the deferred D5/D6 gates, not part of the ratifi
 
 구현하지 않은 family에는 지원하지 않는 위험을 숨기지 않고 evidence-limited 결과를 반환한다. Surprise Task를 위해 fake success를 만들지 않으며, the exact held-out families and presentation set remain D5/D6 decisions.
 
-## Frontend design space
+## Frontend journey
 
-The material UI journey remains a D2 decision. The current frontend is implementation evidence to review, not a source that can silently freeze hierarchy, copy, assets, motion, or controls.
+D2 is ratified in [`frontend-journey-contract.md`](frontend-journey-contract.md). The
+production application must reconcile to the accepted R1 entry, R2 autonomous
+running journey, R3 bounded result comparison, and R4 honest non-results without
+changing their D0/D1 meanings.
 
-| Required semantic surface | D2 choice still open |
+| Required semantic surface | Ratified presentation |
 |---|---|
-| One-submission input | D1-fixed repository/ref/mission semantics; D2 still owns labels, order, hints, and visible validation treatment |
-| Source and experiment provenance | Exact hierarchy and progressive disclosure |
-| Measured failure and first divergence | Exact visual treatment and emphasis |
-| Proposed mitigation and protected replay | Exact before/after presentation and interaction |
-| Evidence strength and terminal outcome | Exact copy, layout, and accessibility treatment |
-| Raw API Stream | Presentation may vary, but published tool payloads remain unedited |
+| One-submission input | Repository, ref, mission, one start action, visible P0 boundary, and rejected-before-run treatment |
+| Source and experiment provenance | Persistent target identity plus experiment choice, rationale, expected evidence, and budget |
+| Analysis journey | `PIN → PROFILE → CRASH → AUTOPSY → VACCINE → REPLAY` with no mid-run approval |
+| Measured result | Same-scale before/after evidence, first divergence, proposed mitigation, replay gates, and bounded terminal claim |
+| Honest non-result | Unsupported, no-failure-observed, budget-exhausted, and operational fixture fallback stay distinct |
+| Raw API Stream | Separate evidence surface with published tool payload identity and ordering unedited |
 
-The D0 language policy and measured scenario truth constrain all options. The existing unrequested schedule/calendar step must be removed during implementation reconciliation rather than preserved as a D2 alternative.
+The accepted review deck is fixture evidence, not the production wire. D3 still owns
+exact request, event, error, and terminal representation. The obsolete unrequested
+schedule/calendar step remains excluded from the signature journey.
 
 ## 팀 분담 제안
 
