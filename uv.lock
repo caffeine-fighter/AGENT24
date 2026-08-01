@@ -1452,6 +1452,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "openai-agents" },
+    { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1467,6 +1468,7 @@ dev = [
 requires-dist = [
     { name = "fastapi" },
     { name = "openai-agents" },
+    { name = "pydantic", specifier = ">=2.7" },
     { name = "pydantic-settings" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-asyncio", marker = "extra == 'dev'" },
