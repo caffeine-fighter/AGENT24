@@ -73,7 +73,7 @@ LLM이 pass/fail을 채점하지 않는다.
 
 - 서버에 OpenAI key가 없거나 설명 단계가 실패해도 `offline_demo` event 뒤 같은
   deterministic tool result와 terminal event를 제공한다.
-- API 연결 자체가 실패하면 브라우저가 `cake-timeout-v1` fixture로 전환한다. 이때
+- API 연결 자체가 실패하면 브라우저가 `life.payment_intent_timeout.v1` fixture로 전환한다. 이때
   Surprise scenario를 실행한 것처럼 말하지 않고 `AUTO / FIXTURE`와
   `SYNTHETIC WORLD ONLY`를 그대로 보여준다.
 - expected scenario가 다르거나 `external_side_effects=false` evidence가 없으면 시간을

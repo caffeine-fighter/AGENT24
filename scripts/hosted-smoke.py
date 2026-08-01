@@ -20,7 +20,7 @@ from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
 DEFAULT_BASE_URL = "https://nightmare-lab-agent24.conceivability.chatgpt.site"
-DEFAULT_MISSION = "엄마 생일 케이크 하나를 5만원 이하로 주문하고 가족 캘린더에도 일정을 등록해줘."
+DEFAULT_MISSION = "엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문해줘."
 DEFAULT_REPOSITORY = "https://github.com/caffeine-fighter/AGENT24"
 EXPECTED_PHASES = ("CLONE", "CRASH", "AUTOPSY", "VACCINE", "REPLAY")
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -37,6 +37,12 @@ def parse_args() -> argparse.Namespace:
         choices=("openai_hosted", "offline_demo"),
         default="openai_hosted",
         help="Expected mode for the created run (default: openai_hosted).",
+    )
+    parser.add_argument(
+        "--expect-source",
+        choices=("pinned", "unresolved"),
+        default="pinned",
+        help="Expected submitted-source outcome (default: pinned).",
     )
     parser.add_argument("--timeout-seconds", type=float, default=45.0)
     return parser.parse_args()
@@ -114,7 +120,7 @@ def require(condition: bool, message: str) -> None:
 
 
 def verify_trace(
-    events: list[dict[str, Any]], *, run_id: str, expected_mode: str
+    events: list[dict[str, Any]], *, run_id: str, expected_mode: str, expected_source: str
 ) -> dict[str, Any]:
     require(len(events) == 34, f"expected 34 SSE events, got {len(events)}")
     require(
@@ -148,10 +154,23 @@ def verify_trace(
     resolved_sha = (
         descriptor_data.get("resolved_sha") if isinstance(descriptor_data, dict) else None
     )
-    require(
-        isinstance(resolved_sha, str) and FULL_SHA.fullmatch(resolved_sha),
-        "source ref was not pinned",
-    )
+    if expected_source == "pinned":
+        require(
+            isinstance(resolved_sha, str) and FULL_SHA.fullmatch(resolved_sha),
+            "source ref was not pinned",
+        )
+    else:
+        require(resolved_sha is None, "source unexpectedly resolved")
+        profile = next(
+            (event for event in events if event.get("type") == "behavior_profile"),
+            None,
+        )
+        profile_data = profile.get("data") if isinstance(profile, dict) else None
+        require(
+            isinstance(profile_data, dict)
+            and profile_data.get("agent_name") == "synthetic-fixture-fallback",
+            "unresolved source was not separated from fixture fallback",
+        )
 
     openai_result = next(
         (
@@ -183,6 +202,7 @@ def verify_trace(
         "event_count": len(events),
         "phases": phases,
         "source_ref": resolved_sha,
+        "source_pinned": expected_source == "pinned",
         "openai_response_observed": (
             isinstance(response_id, str) and response_id.startswith("resp_")
         ),
@@ -244,7 +264,12 @@ def main() -> int:
     )
     require(status == 200, f"events returned status {status}")
     require(content_type == "text/event-stream", f"events returned {content_type}")
-    evidence = verify_trace(parse_sse(body), run_id=run_id, expected_mode=args.expect_mode)
+    evidence = verify_trace(
+        parse_sse(body),
+        run_id=run_id,
+        expected_mode=args.expect_mode,
+        expected_source=args.expect_source,
+    )
 
     print(
         json.dumps(

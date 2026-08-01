@@ -7,9 +7,9 @@ export async function GET() {
     status: "ok",
     mode: process.env.OPENAI_API_KEY?.trim() ? "openai_hosted" : "offline_demo",
     openai_configured: Boolean(process.env.OPENAI_API_KEY?.trim()),
-    github_configured: Boolean(process.env.GITHUB_TOKEN?.trim()),
     build_commit: BUILD_COMMIT,
-    default_source_resolver: BUILD_COMMIT ? "sites-build-provenance" : "github-api",
+    deployment_provenance: BUILD_COMMIT ? "git-build-commit" : "unavailable",
+    default_source_resolver: "github-api",
     sdk: "responses-api",
     safety_boundary: "SIMULATION_ONLY",
   });

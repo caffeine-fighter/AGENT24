@@ -72,9 +72,11 @@ def test_web_cake_fixtures_match_frozen_python_contracts() -> None:
     assert profile.untrusted_input_handling.value == "unknown"
     assert plan.scenario.faults[0].fault == "commit_then_timeout"
     assert plan.scenario.faults[0].target_tool == "payment.charge"
-    assert plan.scenario.max_turns == 8
+    assert plan.scenario.scenario_id == "life.payment_intent_timeout.v1"
+    assert plan.scenario.max_turns == 20
     assert plan.single_variable is True
     assert report.agent.name == "cake-buyer"
+    assert report.cost_units_used == 2
     assert report.findings[0].verified is not None
     assert report.findings[0].verified.accepted is True
     assert report.termination.reason == "coverage_complete"
