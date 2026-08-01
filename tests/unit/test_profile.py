@@ -19,6 +19,7 @@ from agent24.agent import (
     ToolSpec,
     benign_scenario,
 )
+from agent24.agent.models import CapabilityCategory
 from agent24.agent.profile import (
     README_FIELD,
     AgentManifest,
@@ -169,6 +170,26 @@ async def test_profile_extracts_assets_side_effects_and_permissions() -> None:
     assert profile.permissions == {"max_spend_krw": 50000}
     assert {cap.tool for cap in profile.capabilities} == {t.name for t in CAKE_BUYER_TOOLS}
     assert profile.risk_paths, "web.read -> privileged sink path should be detected"
+
+
+def test_category_hint_cannot_erase_explicit_side_effect_safety_metadata() -> None:
+    profile = build_behavior_profile(
+        manifest(
+            tools=[
+                ToolSpec(
+                    name="payment.charge",
+                    side_effect=True,
+                    irreversible=True,
+                    category_hint=CapabilityCategory.PRIVILEGED_SINK,
+                )
+            ]
+        )
+    )
+
+    assert profile.side_effect_tools == ["payment.charge"]
+    assert profile.capabilities[0].categories == frozenset(
+        {CapabilityCategory.PRIVILEGED_SINK, CapabilityCategory.SIDE_EFFECT}
+    )
 
 
 async def test_derivation_is_deterministic() -> None:

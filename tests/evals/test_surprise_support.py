@@ -375,7 +375,7 @@ def test_a_benign_purchase_mission_still_runs_the_whole_experiment(
 
     assert "experiment_plan" in types
     assert "protected_replay" in types
-    assert events[-1]["payload"]["status"] == "offline_demo"
+    assert events[-1]["payload"]["status"] == "openai_analysis_unavailable"
 
 
 def test_a_supported_money_mission_passes_its_gate(monkeypatch, tmp_path: Path) -> None:
@@ -437,7 +437,7 @@ def test_the_mission_text_does_not_change_the_selected_pack(
     assert money_pack["stop"] is None
     assert time_pack["selected"]["executable"] is True
 
-    assert money[-1]["payload"]["status"] == "offline_demo"
+    assert money[-1]["payload"]["status"] == "openai_analysis_unavailable"
     assert time_domain[-1]["payload"]["status"] == "unsupported"
 
 

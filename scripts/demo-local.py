@@ -37,9 +37,8 @@ from agent24.api import (
 DEMO_REPOSITORY = "caffeine-fighter/AGENT24"
 DEMO_REPOSITORY_URL = f"https://github.com/{DEMO_REPOSITORY}"
 DEMO_REF = "main"
-EXAMPLE_REPOSITORY = "example-org/nightmare-cake-agent"
-EXAMPLE_REPOSITORY_URL = f"https://github.com/{EXAMPLE_REPOSITORY}"
-EXAMPLE_REF = "demo-v1"
+EXAMPLE_SOURCE_URL = "local://agent24/examples/demo-agent-repo"
+EXAMPLE_REPOSITORY = "local/demo-agent-repo"
 EXAMPLE_FIXTURE_RELATIVE_ROOT = Path("examples/demo-agent-repo")
 
 
@@ -60,17 +59,18 @@ class LocalDemoRevisionResolver(MappingRevisionResolver):
 
 
 class LocalExampleRevisionResolver(MappingRevisionResolver):
-    """Resolve the checked-in participant fixture as a local-only repo alias."""
+    """Resolve only the checked-in local bundle and its SHA-256 revision."""
 
-    name = "local-example-fixture"
+    name = "local-bundle"
 
     def resolve(self, request: SourceRequest) -> str:
-        if request.repository != EXAMPLE_REPOSITORY or request.requested_ref not in {
-            None,
-            EXAMPLE_REF,
-        }:
+        if (
+            request.source_kind != "local_bundle"
+            or request.source_path != str(EXAMPLE_FIXTURE_RELATIVE_ROOT)
+            or request.repository != EXAMPLE_REPOSITORY
+        ):
             raise SourceAccessError(
-                "example demo accepts only the local nightmare-cake-agent@demo-v1 fixture"
+                "example demo accepts only the allowlisted local Agent bundle"
             )
         return super().resolve(request)
 
@@ -88,24 +88,27 @@ def _git_sha(repository_root: Path) -> str:
     return sha
 
 
-def _fixture_revision(fixture_root: Path, manifest_bytes: bytes, entrypoint_bytes: bytes) -> str:
-    """Return a stable full-width fixture revision without inventing a Git commit."""
+def _bundle_sha256(manifest_bytes: bytes, entrypoint_bytes: bytes) -> str:
+    """Hash the ordered allowlisted paths and bytes, never a Git commit."""
 
-    digest = hashlib.sha1()  # noqa: S324 - local fixture identity, not a security hash
-    digest.update(b"agent24-local-example-fixture\0")
-    digest.update(str(EXAMPLE_FIXTURE_RELATIVE_ROOT).encode("utf-8"))
-    digest.update(b"\0.agent24/manifest.json\0")
-    digest.update(manifest_bytes)
-    digest.update(b"\0src/example_agent.py\0")
-    digest.update(entrypoint_bytes)
+    digest = hashlib.sha256()
+    for path, content in (
+        (".agent24/manifest.json", manifest_bytes),
+        ("src/example_agent.py", entrypoint_bytes),
+    ):
+        path_bytes = path.encode("utf-8")
+        digest.update(len(path_bytes).to_bytes(4, "big"))
+        digest.update(path_bytes)
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
     return digest.hexdigest()
 
 
-def _example_fixture_files(repository_root: Path) -> tuple[Path, str, bytes, bytes, str]:
+def _example_bundle_files(repository_root: Path) -> tuple[Path, str, bytes, bytes, str]:
     fixture_root = (repository_root / EXAMPLE_FIXTURE_RELATIVE_ROOT).resolve()
     manifest_path = fixture_root / ".agent24" / "manifest.json"
     if manifest_path.is_symlink():
-        raise RuntimeError("the example Agent fixture must not use symlinks")
+        raise RuntimeError("the example Agent bundle must not use symlinks")
     manifest_bytes = manifest_path.read_bytes()
     manifest = json.loads(manifest_bytes.decode("utf-8"))
     entrypoint = manifest["entrypoint"]
@@ -118,7 +121,7 @@ def _example_fixture_files(repository_root: Path) -> tuple[Path, str, bytes, byt
         entrypoint_path.relative_to(fixture_root)
     except ValueError as error:
         raise RuntimeError(
-            "the example Agent entrypoint must stay inside its fixture repo"
+            "the example Agent entrypoint must stay inside its local bundle"
         ) from error
     entrypoint_bytes = entrypoint_path.read_bytes()
     return (
@@ -126,7 +129,7 @@ def _example_fixture_files(repository_root: Path) -> tuple[Path, str, bytes, byt
         entrypoint,
         manifest_bytes,
         entrypoint_bytes,
-        _fixture_revision(fixture_root, manifest_bytes, entrypoint_bytes),
+        _bundle_sha256(manifest_bytes, entrypoint_bytes),
     )
 
 
@@ -147,14 +150,14 @@ def build_app(
         return create_app(runtime=runtime, web_root=repository_root / "web")
 
     if example_agent:
-        _, entrypoint, manifest_bytes, entrypoint_bytes, resolved_sha = _example_fixture_files(
+        _, entrypoint, manifest_bytes, entrypoint_bytes, resolved_sha = _example_bundle_files(
             repository_root
         )
         preflight = ExternalAgentPreflight(
             source_resolver=LocalExampleRevisionResolver(
                 {
-                    (EXAMPLE_REPOSITORY, EXAMPLE_REF): resolved_sha,
                     (EXAMPLE_REPOSITORY, None): resolved_sha,
+                    (EXAMPLE_REPOSITORY, resolved_sha): resolved_sha,
                 }
             ),
             manifest_fetcher=MappingManifestFetcher(
@@ -206,15 +209,17 @@ def main() -> None:
     mode.add_argument(
         "--example-agent",
         action="store_true",
-        help="use the checked-in participant Agent repo fixture for the local demo",
+        help="use the checked-in standalone Agent bundle for the local demo",
     )
     args = parser.parse_args()
     repository_root = Path(__file__).resolve().parents[1]
     if args.example_agent:
-        print(f"NIGHTMARE LAB local demo: {EXAMPLE_REPOSITORY_URL}@{EXAMPLE_REF}")
-        print("SOURCE: local-example-fixture · checked-in repo-shaped participant Agent")
+        _, _, manifest_bytes, entrypoint_bytes, bundle_sha = _example_bundle_files(repository_root)
+        del manifest_bytes, entrypoint_bytes
+        print(f"NIGHTMARE LAB local demo: {EXAMPLE_SOURCE_URL}@sha256:{bundle_sha}")
+        print("SOURCE: local-bundle · checked-in standalone participant Agent")
         print(
-            "GYM: network-disabled local replacement; the fixture entrypoint is not imported "
+            "GYM: network-disabled local replacement; the bundle entrypoint is not imported "
             "or executed"
         )
         print("BROWSER: /index.html?demo=example-agent")

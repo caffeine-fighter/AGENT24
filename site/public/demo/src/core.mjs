@@ -22,10 +22,11 @@ export function isDocumentedUnsupportedMission(mission) {
 }
 
 export const EXAMPLE_AGENT_TARGET = Object.freeze({
-  repositoryUrl: "https://github.com/example-org/nightmare-cake-agent",
-  requestedRef: "demo-v1",
+  repositoryUrl: "local://agent24/examples/demo-agent-repo",
+  requestedRef: "b3de7f5fbc1722da7e46ad6cbd302622557b5ae619c3809f7cefec586a25ef35",
   resolvedSha: null,
-  mission: "엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문해줘.",
+  mission:
+    "엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문하고 가족 캘린더에도 일정을 등록해줘.",
 });
 
 export function getInitialTarget(search = "") {
@@ -45,9 +46,17 @@ export const TERMINAL_COPY = Object.freeze({
   budget_exhausted:
     "정해 둔 횟수만큼 실험해 분석을 마쳤어요. 아직 확인하지 못한 위험이 있어 이 결과만으로는 안전을 보장할 수 없어요.",
   offline_demo:
-    "OpenAI 설명 기능을 사용할 수 없어 미리 준비한 설명으로 계속할게요. 측정 결과와 원본 기록은 그대로 보여드려요.",
+    "실제 OpenAI 분석을 완료하지 못해 offline_demo fallback으로 전환했습니다. 아래 결과는 모델이 생성한 분석이 아니라 준비된 설명과 합성 측정 결과입니다.",
+  openai_key_missing:
+    "OPENAI_API_KEY가 없어 OpenAI 설명을 실행하지 않았습니다. 측정한 controller 진단과 원본 기록만 보존합니다.",
   diagnostic_loop_failed:
-    "분석을 끝까지 마치지 못했어요. 제출한 에이전트의 결과를 임의로 만들지 않고 내장 예시를 보여드릴게요. 자세한 원인은 원본 기록에서 확인할 수 있어요.",
+    "controller 진단을 끝까지 마치지 못했어요. 제출한 에이전트의 결과를 다른 fixture로 바꾸지 않았습니다.",
+  runtime_failed:
+    "실행 중 오류로 결과를 확정하지 못했어요. 완료로 표시하지 않고 확인된 단계까지만 보존합니다.",
+  openai_analysis_unavailable:
+    "controller 진단은 완료했지만 OpenAI 설명을 사용할 수 없습니다. 측정 결과와 controller report만 보존합니다.",
+  openai_analysis_failed:
+    "controller 진단은 완료했지만 OpenAI 설명에 실패했습니다. 측정 결과와 controller report만 보존합니다.",
   timeout:
     "OpenAI 설명을 불러오는 데 시간이 오래 걸려 미리 준비한 설명으로 계속할게요. 이미 측정한 결과는 그대로 유지해요.",
   no_failure_observed:
@@ -72,24 +81,27 @@ export function validateTargetInput(target) {
   try {
     const url = new URL(repositoryUrl);
     const parts = url.pathname.split("/").filter(Boolean);
-    const validPath = parts.length === 2
+    const validGithubPath = parts.length === 2
       && /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(parts[0])
       && /^[A-Za-z0-9._-]+(?:\.git)?$/.test(parts[1]);
-    if (
-      url.protocol !== "https:"
-      || url.hostname.toLowerCase() !== "github.com"
-      || url.username
-      || url.password
-      || url.search
-      || url.hash
-      || !validPath
-    ) {
+    const validLocalBundle = url.protocol === "local:"
+      && url.hostname.toLowerCase() === "agent24"
+      && parts.join("/") === "examples/demo-agent-repo"
+      && !url.username
+      && !url.password
+      && !url.search
+      && !url.hash;
+    if ((!validGithubPath || url.protocol !== "https:" || url.hostname.toLowerCase() !== "github.com"
+      || url.username || url.password || url.search || url.hash) && !validLocalBundle) {
       throw new Error("unsupported repository URL");
+    }
+    if (validLocalBundle && !/^[0-9a-f]{64}$/i.test(requestedRef)) {
+      throw new Error("local bundle requires a full SHA-256 revision");
     }
   } catch {
     return {
       field: "repository",
-      message: "주소를 확인해 주세요. 지금은 공개된 GitHub 저장소만 확인할 수 있으며, 저장소 코드를 직접 실행하지는 않아요.",
+      message: "주소와 SHA를 확인해 주세요. 공개 GitHub 또는 AGENT24 local bundle만 bounded intake합니다.",
     };
   }
   if (!requestedRef || requestedRef.length > 200 || /[\u0000-\u001f\u007f]/.test(requestedRef)) {
@@ -118,6 +130,11 @@ export function createInitialState(target = DEFAULT_TARGET) {
     runId: null,
     source: "fixture",
     mode: "fixture",
+    hasExternalTarget: false,
+    sourceResolved: false,
+    diagnosticCompleted: false,
+    openaiAnalysisCompleted: false,
+    executionScope: "none",
     before: { ...INITIAL_WORLD },
     after: { ...INITIAL_WORLD },
     beforeVerdict: "neutral",
@@ -129,7 +146,10 @@ export function createInitialState(target = DEFAULT_TARGET) {
     },
     patch: null,
     finalOutput: null,
+    finalOutputSource: null,
     terminalNotice: null,
+    stageFailure: null,
+    offlineReason: null,
     outcomes: createOutcomeState(),
     analysisScope: "synthetic_archetype",
     sourceDescriptor: null,
@@ -182,7 +202,9 @@ function mergeWorld(current, incoming) {
 const TYPE_ALIASES = Object.freeze({
   run_started: "run.started",
   run_completed: "run.completed",
-  run_failed: "run.failed",
+  stage_failed: "stage.failed",
+  run_failed: "stage.failed",
+  "run.failed": "stage.failed",
   source_descriptor: "source.descriptor",
   source_snapshot: "source.snapshot",
   target_profile: "target.profile",
@@ -235,7 +257,11 @@ export function projectSourceDescriptor(input) {
     resolvedSha,
     retrievedAt: descriptor.retrieved_at || null,
     resolver: descriptor.resolver || "unknown resolver",
-    sourceRef: resolvedSha ? `${repository}@${resolvedSha}` : repository,
+    sourceKind: descriptor.source_kind || "github",
+    sourcePath: descriptor.source_path || null,
+    revisionKind: descriptor.revision_kind || "commit",
+    bundleSha256: descriptor.bundle_sha256 || null,
+    sourceRef: descriptor.source_ref || (resolvedSha ? `${repository}@${resolvedSha}` : repository),
   };
 }
 
@@ -461,6 +487,26 @@ function immutableSha(value) {
   return /^[0-9a-f]{40}$/.test(normalized) ? normalized : null;
 }
 
+function immutableSourceRevision(descriptor) {
+  if (descriptor.sourceKind === "local_bundle") {
+    const revision = typeof descriptor.resolvedSha === "string"
+      ? descriptor.resolvedSha.trim().toLowerCase()
+      : "";
+    const bundleSha = typeof descriptor.bundleSha256 === "string"
+      ? descriptor.bundleSha256.trim().toLowerCase()
+      : "";
+    const trustedIdentity = descriptor.revisionKind === "bundle_sha256"
+      && descriptor.sourcePath === "examples/demo-agent-repo"
+      && descriptor.repositoryUrl === "local://agent24/examples/demo-agent-repo";
+    return trustedIdentity && /^[0-9a-f]{64}$/.test(revision) && bundleSha === revision
+      ? revision
+      : null;
+  }
+  return descriptor.sourceKind === "github" && descriptor.revisionKind === "commit"
+    ? immutableSha(descriptor.resolvedSha)
+    : null;
+}
+
 function isTrustedLiveSource(source) {
   return source === "live" || source === "hosted";
 }
@@ -550,6 +596,98 @@ export function normalizeEvent(event) {
   };
 }
 
+const API_CALL_EVENT_TYPES = new Set(["tool_call", "gym.tool_call"]);
+const API_RESULT_EVENT_TYPES = new Set(["tool_result", "gym.tool_result"]);
+
+function apiEventCallId(event) {
+  const value = event?.data?.call_id
+    ?? event?.raw?.call_id
+    ?? event?.data?.callId
+    ?? event?.raw?.callId;
+  return value === undefined || value === null || value === "" ? null : String(value);
+}
+
+function apiEventTool(event) {
+  const value = event?.data?.tool
+    ?? event?.data?.name
+    ?? event?.raw?.name
+    ?? event?.raw?.tool;
+  return value === undefined || value === null || value === "" ? null : String(value);
+}
+
+export function pairApiInteractions(events) {
+  const pairs = [];
+  const pending = new Set();
+  const byCallId = new Map();
+  const byTool = new Map();
+
+  const enqueue = (index, key, pair) => {
+    if (!key) return;
+    const queue = index.get(key) || [];
+    queue.push(pair);
+    index.set(key, queue);
+  };
+  const take = (index, key) => {
+    if (!key) return null;
+    const queue = index.get(key);
+    if (!queue) return null;
+    while (queue.length) {
+      const pair = queue.shift();
+      if (pending.has(pair)) return pair;
+    }
+    index.delete(key);
+    return null;
+  };
+  const finish = (pair, result, matchedBy) => {
+    pair.result = result;
+    pair.matchedBy = matchedBy;
+    pair.unmatched = false;
+    pending.delete(pair);
+  };
+
+  asArray(events).forEach((event) => {
+    if (API_CALL_EVENT_TYPES.has(event?.type)) {
+      const pair = {
+        request: event,
+        result: null,
+        matchedBy: null,
+        unmatched: false,
+      };
+      pairs.push(pair);
+      pending.add(pair);
+      enqueue(byCallId, apiEventCallId(event), pair);
+      enqueue(byTool, apiEventTool(event), pair);
+      return;
+    }
+    if (!API_RESULT_EVENT_TYPES.has(event?.type)) return;
+
+    const callId = apiEventCallId(event);
+    const tool = apiEventTool(event);
+    let pair = take(byCallId, callId);
+    let matchedBy = pair ? "call_id" : null;
+    if (!pair) {
+      pair = take(byTool, tool);
+      matchedBy = pair ? "tool" : null;
+    }
+    if (!pair && !callId && !tool && pending.size === 1) {
+      pair = pending.values().next().value;
+      matchedBy = "sole_pending";
+    }
+    if (pair) {
+      finish(pair, event, matchedBy);
+      return;
+    }
+    pairs.push({
+      request: null,
+      result: event,
+      matchedBy: null,
+      unmatched: true,
+    });
+  });
+
+  return pairs;
+}
+
 export function reduceRunState(previousState, incomingEvent) {
   const event = normalizeEvent(incomingEvent);
   const state = {
@@ -561,6 +699,13 @@ export function reduceRunState(previousState, incomingEvent) {
 
   switch (event.type) {
     case "run.started":
+      {
+        const hasExternalTarget = event.source !== "fixture"
+          && (event.data.external_target === true || Boolean(event.data.target));
+        const executionScope = event.data.execution_scope || (hasExternalTarget ? "none" : "none");
+        const sourceResolved = event.data.source_resolved === true;
+        const diagnosticCompleted = event.data.diagnostic_completed === true;
+        const openaiAnalysisCompleted = event.data.openai_analysis_completed === true;
       return {
         ...createInitialState(event.data.target || previousState.target),
         status: "running",
@@ -574,6 +719,11 @@ export function reduceRunState(previousState, incomingEvent) {
         runId: event.run_id,
         source: event.source,
         mode: event.data.mode || previousState.mode,
+        hasExternalTarget,
+        sourceResolved,
+        diagnosticCompleted,
+        openaiAnalysisCompleted,
+        executionScope,
         outcomes: event.source === "fixture"
           ? {
               submission: { status: "not_analyzed", message: "제출한 저장소는 확인하지 않았어요" },
@@ -594,6 +744,7 @@ export function reduceRunState(previousState, incomingEvent) {
           : null,
         events: [event],
       };
+      }
     case "phase.changed": {
       const completed = previousState.phase
         ? [...new Set([...previousState.completedPhases, previousState.phase])]
@@ -638,44 +789,64 @@ export function reduceRunState(previousState, incomingEvent) {
       return {
         ...state,
         finalOutput: event.data.text || null,
+        finalOutputSource: event.data.analysis_source || (event.data.text ? "openai" : null),
         autopsy: previousState.autopsy.length || !event.data.text
           ? previousState.autopsy
           : [{ kind: "observed", text: event.data.text }],
       };
-    case "offline_demo":
+    case "offline_demo": {
+      const reason = String(event.data.reason || "");
+      const missingKey = reason.includes("OPENAI_API_KEY");
+      const externalTarget = previousState.hasExternalTarget;
       return {
         ...state,
         mode: "offline_demo",
+        offlineReason: reason || null,
+        executionScope: event.data.execution_scope || previousState.executionScope,
         outcomes: {
           ...previousState.outcomes,
-          operation: { status: "fallback", message: "준비된 설명으로 계속해요 · 측정값과 원본 기록은 그대로예요" },
+          operation: {
+            status: externalTarget ? "unavailable" : "fallback",
+            message: externalTarget
+              ? "controller 진단 결과 보존 · OpenAI 설명은 사용할 수 없음"
+              : missingKey
+                ? "OPENAI_API_KEY 없음 · 실제 모델 분석을 실행하지 않음"
+                : "no-target offline_demo · deterministic synthetic 결과",
+          },
         },
-        terminalNotice: previousState.terminalNotice || {
-          kind: "offline_demo",
-          message: TERMINAL_COPY.offline_demo,
-        },
+        terminalNotice: previousState.terminalNotice || (externalTarget
+          ? { kind: "openai_analysis_unavailable", message: TERMINAL_COPY.openai_analysis_unavailable }
+          : {
+              kind: missingKey ? "openai_key_missing" : "offline_demo",
+              message: missingKey ? TERMINAL_COPY.openai_key_missing : TERMINAL_COPY.offline_demo,
+            }),
       };
+    }
     case "source.descriptor": {
       const sourceDescriptorView = projectSourceDescriptor(event.data);
-      const resolvedSha = isTrustedLiveSource(event.source)
-        ? immutableSha(sourceDescriptorView.resolvedSha)
+      const resolvedRevision = isTrustedLiveSource(event.source)
+        ? immutableSourceRevision(sourceDescriptorView)
         : null;
+      const revisionLabel = sourceDescriptorView.sourceKind === "local_bundle"
+        ? `로컬 bundle SHA-256 확인 완료 · ${resolvedRevision}`
+        : `커밋 확인 완료 · ${resolvedRevision}`;
       return {
         ...state,
         sourceDescriptor: event.data,
         sourceDescriptorView,
-        outcomes: resolvedSha
+        sourceResolved: Boolean(resolvedRevision),
+        outcomes: resolvedRevision
           ? {
               ...previousState.outcomes,
-              submission: { status: "pinned", message: `커밋 확인 완료 · ${resolvedSha}` },
+              submission: { status: "pinned", message: revisionLabel },
             }
           : previousState.outcomes,
-        target: resolvedSha
+        target: resolvedRevision
           ? {
               ...previousState.target,
               repositoryUrl: sourceDescriptorView.repositoryUrl || previousState.target.repositoryUrl,
               requestedRef: sourceDescriptorView.requestedRef || previousState.target.requestedRef,
-              resolvedSha,
+              resolvedSha: resolvedRevision,
             }
           : previousState.target,
       };
@@ -690,6 +861,7 @@ export function reduceRunState(previousState, incomingEvent) {
       return {
         ...state,
         analysisScope: "allowlisted_adapter",
+        executionScope: "allowlisted_adapter",
         adapterContract: event.data,
         adapterContractView: projectAdapterContract(event.data),
         outcomes: {
@@ -714,6 +886,8 @@ export function reduceRunState(previousState, incomingEvent) {
       return {
         ...state,
         analysisScope: "compatibility_only",
+        sourceResolved: true,
+        executionScope: "compatibility_only",
         compatibilityReport: event.data,
         compatibilityReportView,
         outcomes: {
@@ -770,6 +944,8 @@ export function reduceRunState(previousState, incomingEvent) {
       return {
         ...state,
         baselineEvidence: event.data,
+        diagnosticCompleted: previousState.hasExternalTarget || previousState.source === "hosted",
+        executionScope: event.data.execution_scope || previousState.executionScope,
         analysisScope: event.data.execution_scope === "allowlisted_adapter"
           ? "allowlisted_adapter"
           : previousState.analysisScope,
@@ -792,6 +968,10 @@ export function reduceRunState(previousState, incomingEvent) {
         ...state,
         labReport: event.data,
         reportView,
+        diagnosticCompleted: previousState.hasExternalTarget || previousState.source === "hosted",
+        executionScope: previousState.executionScope === "none"
+          ? (previousState.hasExternalTarget ? "synthetic_archetype" : previousState.executionScope)
+          : previousState.executionScope,
         outcomes: previousState.outcomes.submission.status === "failed"
           ? previousState.outcomes
           : {
@@ -814,63 +994,27 @@ export function reduceRunState(previousState, incomingEvent) {
           : previousState.terminalNotice,
       };
     }
-    case "run.completed": {
-      const sourceFailure = isSourceFailureScope(event.data.status)
-        || isSourceFailureScope(previousState.analysisScope);
-      const sourceFailureScope = isSourceFailureScope(event.data.status)
-        ? event.data.status
-        : previousState.analysisScope;
+    case "stage.failed": {
+      const stage = String(event.data.stage || "runtime");
+      const code = String(event.data.code || "stage_failed");
+      const sourceFailure = stage === "source" || isSourceFailureScope(code);
+      const diagnosticFailure = stage === "diagnostic";
+      const openaiFailure = stage === "openai_analysis";
+      const message = String(
+        event.data.message
+          || TERMINAL_COPY[code]
+          || "실행 단계가 완료되지 않았습니다. 원본 기록에서 안전한 범위를 확인해 주세요.",
+      );
       return {
         ...state,
-        status: sourceFailure ? "failed" : "complete",
-        analysisScope: sourceFailure ? sourceFailureScope : previousState.analysisScope,
-        mode: event.data.mode || previousState.mode,
-        outcomes: {
-          ...previousState.outcomes,
-          investigation: sourceFailure
-            ? { status: "not_run", message: "제출한 에이전트 분석을 시작하지 않음" }
-            : previousState.analysisScope === "compatibility_only"
-            ? previousState.outcomes.investigation
-            : ["unsupported", "budget_exhausted", "no_failure_observed"].includes(event.data.status)
-            ? {
-                status: event.data.status,
-                message: TERMINAL_COPY[event.data.status],
-              }
-            : previousState.outcomes.investigation,
-          operation: sourceFailure
-            ? { status: "not_run", message: "실험 실행 안 함 · source 확인 필요" }
-            : previousState.analysisScope === "compatibility_only"
-            ? previousState.outcomes.operation
-            : {
-                status: (event.data.mode || previousState.mode) === "offline_demo" ? "fallback_complete" : "complete",
-                message: (event.data.mode || previousState.mode) === "offline_demo"
-                  ? "준비된 설명으로 실행 완료 · 원본 이벤트 보존"
-                  : "모든 실행 기록을 남기고 완료",
-              },
-        },
-        terminalNotice: event.data.message
-          ? { kind: event.data.status || "completed", message: event.data.message }
-          : sourceFailure
-          ? {
-              kind: sourceFailureScope,
-              message: TERMINAL_COPY[sourceFailureScope],
-            }
-          : ["unsupported", "budget_exhausted"].includes(event.data.status)
-          ? {
-              kind: event.data.status,
-              message: TERMINAL_COPY[event.data.status],
-            }
-          : previousState.terminalNotice,
-        completedPhases: [...new Set([...previousState.completedPhases, ...(previousState.phase ? [previousState.phase] : [])])],
-      };
-    }
-    case "run.failed": {
-      const sourceFailure = event.data.code === "source_preflight_failed"
-        || event.data.code === "source_unresolved";
-      return {
-        ...state,
-        status: "failed",
-        analysisScope: sourceFailure ? event.data.code : previousState.analysisScope,
+        stageFailure: event.data,
+        sourceResolved: sourceFailure ? false : previousState.sourceResolved,
+        diagnosticCompleted: sourceFailure || diagnosticFailure
+          ? false
+          : previousState.diagnosticCompleted,
+        openaiAnalysisCompleted: openaiFailure ? false : previousState.openaiAnalysisCompleted,
+        executionScope: sourceFailure || diagnosticFailure ? "none" : previousState.executionScope,
+        analysisScope: sourceFailure ? code : previousState.analysisScope,
         outcomes: {
           ...previousState.outcomes,
           submission: sourceFailure
@@ -878,15 +1022,99 @@ export function reduceRunState(previousState, incomingEvent) {
             : previousState.outcomes.submission,
           investigation: sourceFailure
             ? { status: "not_run", message: "제출한 에이전트 분석을 시작하지 않음" }
-            : { status: "failed", message: "분석을 끝까지 진행하지 못함" },
-          operation: { status: "failed", message: "실험 실행 안 함 · source 확인 필요" },
+            : diagnosticFailure
+              ? { status: "failed", message: "controller 진단을 끝까지 완료하지 못함" }
+              : previousState.outcomes.investigation,
+          operation: sourceFailure || diagnosticFailure
+            ? { status: "not_run", message: "실험 실행 안 함 · 앞 단계 확인 필요" }
+            : openaiFailure
+              ? { status: "unavailable", message: "controller 진단 완료 · OpenAI 설명은 사용할 수 없음" }
+              : previousState.outcomes.operation,
         },
-        terminalNotice: {
-          kind: event.data.status || event.data.code || "failed",
-          message: TERMINAL_COPY[event.data.code]
-            || TERMINAL_COPY[event.data.status]
-            || "실험을 중단했어요. 자세한 원인은 원본 기록에서 확인할 수 있어요.",
-        },
+        terminalNotice: { kind: code, message },
+      };
+    }
+    case "run.completed": {
+      const terminalStatus = String(event.data.status || "completed");
+      const mode = event.data.mode || previousState.mode;
+      const sourceResolved = typeof event.data.source_resolved === "boolean"
+        ? event.data.source_resolved
+        : previousState.sourceResolved;
+      const diagnosticCompleted = typeof event.data.diagnostic_completed === "boolean"
+        ? event.data.diagnostic_completed
+        : previousState.diagnosticCompleted;
+      const openaiAnalysisCompleted = typeof event.data.openai_analysis_completed === "boolean"
+        ? event.data.openai_analysis_completed
+        : previousState.openaiAnalysisCompleted;
+      const executionScope = event.data.execution_scope || previousState.executionScope;
+      const sourceFailure = isSourceFailureScope(terminalStatus)
+        || isSourceFailureScope(previousState.analysisScope);
+      const diagnosticFailure = terminalStatus === "diagnostic_loop_failed";
+      const runtimeFailure = terminalStatus === "runtime_failed";
+      const partialOpenAI = diagnosticCompleted
+        && !openaiAnalysisCompleted
+        && ["synthetic_archetype", "allowlisted_adapter"].includes(executionScope)
+        && !runtimeFailure;
+      const offlineFixture = executionScope === "no_target_offline_demo"
+        || (!previousState.hasExternalTarget && mode === "offline_demo" && terminalStatus === "offline_demo");
+      const failed = sourceFailure || diagnosticFailure || runtimeFailure;
+      const investigation = sourceFailure || diagnosticFailure
+        ? {
+            status: sourceFailure ? "not_run" : "failed",
+            message: sourceFailure
+              ? "제출한 에이전트 분석을 시작하지 않음"
+              : "controller 진단을 끝까지 완료하지 못함",
+          }
+        : runtimeFailure && !diagnosticCompleted
+          ? { status: "failed", message: "런타임 오류로 controller 진단을 완료하지 못함" }
+        : previousState.analysisScope === "compatibility_only" || executionScope === "compatibility_only"
+          ? previousState.outcomes.investigation
+          : ["unsupported", "budget_exhausted", "no_failure_observed"].includes(terminalStatus)
+            ? { status: terminalStatus, message: TERMINAL_COPY[terminalStatus] }
+            : previousState.outcomes.investigation;
+      const operation = sourceFailure || diagnosticFailure
+        ? { status: "not_run", message: "실험 실행 안 함 · 앞 단계 확인 필요" }
+        : runtimeFailure
+          ? { status: "failed", message: "런타임 오류로 결과를 확정하지 못함" }
+        : previousState.analysisScope === "compatibility_only" || executionScope === "compatibility_only"
+          ? previousState.outcomes.operation
+          : partialOpenAI
+            ? { status: "unavailable", message: "controller 진단 완료 · OpenAI 설명은 사용할 수 없음 · controller report 보존" }
+            : offlineFixture
+              ? {
+                  status: "fallback_complete",
+                  message: String(previousState.offlineReason || "").includes("OPENAI_API_KEY")
+                    ? "OPENAI_API_KEY 없음 · 실제 모델 분석 없이 no-target offline_demo 완료 · deterministic synthetic 결과와 원본 이벤트 보존"
+                    : "no-target offline_demo 완료 · deterministic synthetic 결과와 원본 이벤트 보존",
+                }
+              : terminalStatus === "unsupported"
+                ? { status: "not_run", message: "이번 범위에서는 실험을 실행하지 않음" }
+                : { status: "complete", message: "모든 공개 실행 기록을 남기고 완료" };
+      const terminalNotice = event.data.message
+        ? { kind: terminalStatus, message: event.data.message }
+        : sourceFailure
+          ? { kind: terminalStatus, message: TERMINAL_COPY[terminalStatus] || TERMINAL_COPY.source_preflight_failed }
+          : diagnosticFailure
+            ? { kind: terminalStatus, message: TERMINAL_COPY.diagnostic_loop_failed }
+            : runtimeFailure
+              ? { kind: terminalStatus, message: TERMINAL_COPY.runtime_failed }
+            : partialOpenAI
+              ? { kind: terminalStatus, message: TERMINAL_COPY[terminalStatus] }
+              : ["unsupported", "budget_exhausted"].includes(terminalStatus)
+                ? { kind: terminalStatus, message: TERMINAL_COPY[terminalStatus] }
+                : previousState.terminalNotice;
+      return {
+        ...state,
+        status: failed ? "failed" : partialOpenAI ? "partial" : "complete",
+        sourceResolved,
+        diagnosticCompleted,
+        openaiAnalysisCompleted,
+        executionScope,
+        analysisScope: sourceFailure ? terminalStatus : executionScope === "none" ? previousState.analysisScope : executionScope,
+        mode,
+        outcomes: { ...previousState.outcomes, investigation, operation },
+        terminalNotice,
+        completedPhases: [...new Set([...previousState.completedPhases, ...(previousState.phase ? [previousState.phase] : [])])],
       };
     }
     case "tool_result":

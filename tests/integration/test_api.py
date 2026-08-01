@@ -24,6 +24,7 @@ from agent24.agent import (
 from agent24.agent.source import MappingRevisionResolver
 from agent24.api import (
     ExternalAgentPreflight,
+    ManifestFetchError,
     MappingManifestFetcher,
     OpenAIWhiteBoxAdapter,
     RuntimeSettings,
@@ -248,14 +249,29 @@ def test_missing_key_is_explicit_offline_demo(monkeypatch, tmp_path: Path) -> No
         assert accepted.json()["mode"] == "offline_demo"
         events = _sse_data(client.get(accepted.json()["events_url"]).text)
 
-    assert any(event["type"] == "offline_demo" for event in events)
+    offline_events = [event for event in events if event["type"] == "offline_demo"]
+    assert len(offline_events) == 1
+    assert offline_events[0]["payload"]["reason"] == "OPENAI_API_KEY is not configured"
     assert events[-1]["type"] == "run_completed"
-    assert events[-1]["payload"] == {"status": "offline_demo", "mode": "offline_demo"}
+    assert events[-1]["payload"] == {
+        "status": "offline_demo",
+        "mode": "offline_demo",
+        "source_resolved": False,
+        "diagnostic_completed": False,
+        "openai_analysis_completed": False,
+        "execution_scope": "no_target_offline_demo",
+        "safety_boundary": "SIMULATION_ONLY",
+    }
 
 
 class _TimeoutAdapter(OpenAIWhiteBoxAdapter):
     async def _run_live(self, query: str, channel) -> str:
         raise TimeoutError
+
+
+class _FailingOpenAIAdapter(OpenAIWhiteBoxAdapter):
+    async def _run_live(self, query: str, channel) -> str:
+        raise RuntimeError("provider-secret-must-not-leak")
 
 
 def test_timeout_emits_failure_then_offline_fallback(monkeypatch, tmp_path: Path) -> None:
@@ -266,10 +282,146 @@ def test_timeout_emits_failure_then_offline_fallback(monkeypatch, tmp_path: Path
         accepted = client.post("/api/runs", json={"input": "loop"})
         events = _sse_data(client.get(accepted.json()["events_url"]).text)
 
-    failure = next(event for event in events if event["type"] == "run_failed")
-    assert failure["payload"] == {"status": "offline_demo", "code": "timeout"}
+    failure = next(event for event in events if event["type"] == "stage_failed")
+    assert failure["payload"] == {
+        "stage": "openai_analysis",
+        "code": "openai_timeout",
+        "message": "OpenAI 설명 요청이 시간 초과되어 no-target offline_demo로 전환했습니다.",
+        "pack_id": None,
+    }
     assert any(event["type"] == "offline_demo" for event in events)
     assert events[-1]["type"] == "run_completed"
+    assert events[-1]["payload"]["status"] == "offline_demo"
+    assert events[-1]["payload"]["execution_scope"] == "no_target_offline_demo"
+    assert events[-1]["payload"]["openai_analysis_completed"] is False
+
+
+def test_external_timeout_preserves_controller_evidence_without_fixture_events(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-only-key")
+    runtime = _TimeoutAdapter(
+        preflight=_external_preflight(),
+        timeout_seconds=1,
+    )
+    app = create_app(runtime=runtime, artifact_root=tmp_path)
+
+    with TestClient(app) as client:
+        accepted = client.post(
+            "/api/runs",
+            json={"input": "one input", "target": _target_payload()},
+        )
+        events = _sse_data(client.get(accepted.json()["events_url"]).text)
+
+    assert events[-1]["payload"] == {
+        "status": "openai_analysis_failed",
+        "mode": "live",
+        "source_resolved": True,
+        "diagnostic_completed": True,
+        "openai_analysis_completed": False,
+        "execution_scope": "synthetic_archetype",
+        "message": (
+            "결정적 controller 진단은 완료했지만 OpenAI 설명 요청이 시간 초과되어 "
+            "controller report만 보존합니다."
+        ),
+        "experiments_run": 10,
+        "findings": 1,
+        "safety_boundary": "SIMULATION_ONLY",
+    }
+    assert [event["type"] for event in events[-3:]] == [
+        "stage_failed",
+        "final_output",
+        "run_completed",
+    ]
+    assert events[-2]["payload"]["analysis_source"] == "controller"
+    assert not any(event["type"] == "offline_demo" for event in events)
+    assert not any(
+        event["type"] == "tool_call"
+        and event.get("payload", {}).get("name") == "inspect_synthetic_gym"
+        for event in events
+    )
+    assert "test-only-key" not in json.dumps(events, ensure_ascii=False)
+
+
+def test_external_provider_failure_is_typed_and_does_not_leak_provider_detail(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-only-key")
+    runtime = _FailingOpenAIAdapter(preflight=_external_preflight())
+    app = create_app(runtime=runtime, artifact_root=tmp_path)
+
+    with TestClient(app) as client:
+        accepted = client.post(
+            "/api/runs",
+            json={"input": "one input", "target": _target_payload()},
+        )
+        events = _sse_data(client.get(accepted.json()["events_url"]).text)
+
+    failure = next(event for event in events if event["type"] == "stage_failed")
+    assert failure["payload"]["code"] == "openai_provider_failed"
+    assert "provider-secret-must-not-leak" not in json.dumps(events, ensure_ascii=False)
+    assert events[-1]["payload"]["status"] == "openai_analysis_failed"
+    assert events[-1]["payload"]["diagnostic_completed"] is True
+    assert events[-1]["payload"]["openai_analysis_completed"] is False
+    assert not any(event["type"] == "offline_demo" for event in events)
+
+
+class _FailingManifestFetcher:
+    def fetch(self, _source):
+        raise ManifestFetchError("github-token-and-response-must-not-leak")
+
+
+def test_manifest_fetch_failure_is_source_stage_and_has_one_terminal(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    runtime = OpenAIWhiteBoxAdapter(
+        preflight=ExternalAgentPreflight(
+            source_resolver=MappingRevisionResolver(
+                {("example/cake-agent", "main"): PINNED_SHA}
+            ),
+            manifest_fetcher=_FailingManifestFetcher(),
+            retrieved_at="2026-08-01T17:45:00+09:00",
+        ),
+        settings=RuntimeSettings(openai_api_key=None),
+    )
+    app = create_app(runtime=runtime, artifact_root=tmp_path)
+
+    with TestClient(app) as client:
+        accepted = client.post(
+            "/api/runs",
+            json={"input": "one input", "target": _target_payload()},
+        )
+        events = _sse_data(client.get(accepted.json()["events_url"]).text)
+
+    assert [event["type"] for event in events] == [
+        "run_started",
+        "phase.changed",
+        "stage_failed",
+        "run_completed",
+    ]
+    assert events[-2]["payload"] == {
+        "stage": "source",
+        "code": "source_preflight_failed",
+        "message": (
+            "외부 Agent source preflight를 완료하지 못해 제출 Agent 분석과 synthetic "
+            "target 실험을 실행하지 않았습니다."
+        ),
+        "pack_id": None,
+    }
+    assert events[-1]["payload"] == {
+        "status": "source_preflight_failed",
+        "mode": "offline_demo",
+        "source_resolved": True,
+        "diagnostic_completed": False,
+        "openai_analysis_completed": False,
+        "execution_scope": "none",
+        "experiments_run": 0,
+        "findings": 0,
+        "message": events[-2]["payload"]["message"],
+        "safety_boundary": "SIMULATION_ONLY",
+    }
+    assert "github-token-and-response-must-not-leak" not in json.dumps(events, ensure_ascii=False)
 
 
 def test_single_origin_serves_demo_assets_before_static_catch_all(
@@ -366,9 +518,7 @@ def test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl(
         "protected_replay",
         "finding_report",
         "lab_report",
-        "offline_demo",
-        "tool_call",
-        "tool_result",
+        "stage_failed",
         "final_output",
         "run_completed",
     ]
@@ -416,7 +566,40 @@ def test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl(
     assert sandbox_replay["perturbed"]["charge_count"] == 2
     assert sandbox_replay["protected"]["charge_count"] == 1
     assert "Buy one cake under budget." not in json.dumps(events, ensure_ascii=False)
-    assert events[-1]["payload"]["mode"] == "offline_demo"
+    assert not any(event["type"] == "offline_demo" for event in events)
+    assert not any(
+        event["type"] == "tool_call"
+        and event.get("payload", {}).get("name") == "inspect_synthetic_gym"
+        for event in events
+    )
+    stage_failure = next(event for event in events if event["type"] == "stage_failed")
+    assert stage_failure["payload"] == {
+        "stage": "openai_analysis",
+        "code": "openai_key_missing",
+        "message": (
+            "결정적 controller 진단은 완료했지만 OPENAI_API_KEY가 없어 OpenAI 설명을 "
+            "실행하지 않았습니다. controller report만 보존합니다."
+        ),
+        "pack_id": None,
+    }
+    controller_summary = next(event for event in events if event["type"] == "final_output")
+    assert controller_summary["payload"]["analysis_source"] == "controller"
+    assert controller_summary["payload"]["openai_analysis_completed"] is False
+    assert events[-1]["payload"] == {
+        "status": "openai_analysis_unavailable",
+        "mode": "offline_demo",
+        "source_resolved": True,
+        "diagnostic_completed": True,
+        "openai_analysis_completed": False,
+        "execution_scope": "synthetic_archetype",
+        "message": (
+            "결정적 controller 진단은 완료했지만 OPENAI_API_KEY가 없어 OpenAI 설명을 "
+            "실행하지 않았습니다. controller report만 보존합니다."
+        ),
+        "experiments_run": 10,
+        "findings": 1,
+        "safety_boundary": "SIMULATION_ONLY",
+    }
 
 
 def test_manifestless_participant_terminates_with_ordered_compatibility_report(
@@ -486,7 +669,18 @@ def test_manifestless_participant_terminates_with_ordered_compatibility_report(
         for event in events
     )
     assert events[-1]["payload"]["status"] == "compatible_candidate"
-    assert events[-1]["payload"]["mode"] == "compatibility_only"
+    assert events[-1]["payload"] == {
+        "status": "compatible_candidate",
+        "mode": "compatibility_only",
+        "source_resolved": True,
+        "diagnostic_completed": False,
+        "openai_analysis_completed": False,
+        "execution_scope": "compatibility_only",
+        "message": report["message"],
+        "experiments_run": 0,
+        "findings": 0,
+        "safety_boundary": "SIMULATION_ONLY",
+    }
 
 
 def test_live_target_passes_bounded_synthetic_evidence_to_openai(
@@ -506,7 +700,17 @@ def test_live_target_passes_bounded_synthetic_evidence_to_openai(
         )
         events = _sse_data(client.get(accepted.json()["events_url"]).text)
 
-    assert events[-1]["payload"] == {"status": "completed", "mode": "live"}
+    assert events[-1]["payload"] == {
+        "status": "completed",
+        "mode": "live",
+        "source_resolved": True,
+        "diagnostic_completed": True,
+        "openai_analysis_completed": True,
+        "execution_scope": "synthetic_archetype",
+        "experiments_run": 10,
+        "findings": 1,
+        "safety_boundary": "SIMULATION_ONLY",
+    }
     assert _MockedOpenAIClient.last is not None
     first_request = _MockedOpenAIClient.last.requests[0]
     model_input = first_request["input"][0]["content"]
@@ -538,7 +742,7 @@ def test_source_preflight_failure_stops_without_target_claims(
         events = _sse_data(client.get(accepted.json()["events_url"]).text)
 
     event_types = [event["type"] for event in events]
-    assert event_types == ["run_started", "phase.changed", "run_failed", "run_completed"]
+    assert event_types == ["run_started", "phase.changed", "stage_failed", "run_completed"]
     assert "source_descriptor" not in event_types
     assert "behavior_profile" not in event_types
     assert "experiment_plan" not in event_types
@@ -546,18 +750,23 @@ def test_source_preflight_failure_stops_without_target_claims(
     assert "tool_call" not in event_types
     assert "tool_result" not in event_types
     source_failure_message = (
-        "외부 Agent source preflight를 완료하지 못해 제출한 Agent 분석과 "
-        "synthetic target 실험을 실행하지 않았습니다."
+        "GitHub source를 immutable SHA로 고정하지 못해 제출 Agent 분석과 실험을 "
+        "실행하지 않았습니다."
     )
-    failure = next(event for event in events if event["type"] == "run_failed")
+    failure = next(event for event in events if event["type"] == "stage_failed")
     assert failure["payload"] == {
-        "status": "offline_demo",
-        "code": "source_preflight_failed",
+        "stage": "source",
+        "code": "source_unresolved",
         "message": source_failure_message,
+        "pack_id": None,
     }
     assert events[-1]["payload"] == {
-        "status": "source_preflight_failed",
+        "status": "source_unresolved",
         "mode": "offline_demo",
+        "source_resolved": False,
+        "diagnostic_completed": False,
+        "openai_analysis_completed": False,
+        "execution_scope": "none",
         "experiments_run": 0,
         "findings": 0,
         "message": source_failure_message,
@@ -570,7 +779,9 @@ class _FailingLabLoop:
         raise RuntimeError("provider-secret-must-not-leak")
 
 
-def test_diagnostic_failure_is_sanitized_and_falls_back(monkeypatch, tmp_path: Path) -> None:
+def test_diagnostic_failure_is_sanitized_and_ends_without_fixture_fallback(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     runtime = OpenAIWhiteBoxAdapter(
         preflight=_external_preflight(),
@@ -586,8 +797,8 @@ def test_diagnostic_failure_is_sanitized_and_falls_back(monkeypatch, tmp_path: P
         )
         events = _sse_data(client.get(accepted.json()["events_url"]).text)
 
-    failure = next(event for event in events if event["type"] == "run_failed")
-    assert failure["payload"]["status"] == "offline_demo"
+    failure = next(event for event in events if event["type"] == "stage_failed")
+    assert failure["payload"]["stage"] == "diagnostic"
     assert failure["payload"]["code"] == "diagnostic_loop_failed"
     # A pack failure is reported as that pack failing (#57), never re-routed to
     # another pack whose success would then read as this run's result.
@@ -598,7 +809,22 @@ def test_diagnostic_failure_is_sanitized_and_falls_back(monkeypatch, tmp_path: P
     assert "RuntimeError" in failure["payload"]["message"]
     rendered = json.dumps(events, ensure_ascii=False)
     assert "provider-secret-must-not-leak" not in rendered
-    assert events[-1]["payload"] == {"status": "offline_demo", "mode": "offline_demo"}
+    assert not any(event["type"] == "offline_demo" for event in events)
+    assert not any(event["type"] == "final_output" for event in events)
+    assert not any(event["type"] == "tool_call" for event in events)
+    assert not any(event["type"] == "tool_result" for event in events)
+    assert events[-1]["payload"] == {
+        "status": "diagnostic_loop_failed",
+        "mode": "offline_demo",
+        "source_resolved": True,
+        "diagnostic_completed": False,
+        "openai_analysis_completed": False,
+        "execution_scope": "none",
+        "message": failure["payload"]["message"],
+        "experiments_run": 0,
+        "findings": 0,
+        "safety_boundary": "SIMULATION_ONLY",
+    }
 
 
 def test_unsupported_manifest_stops_without_inventing_an_experiment(

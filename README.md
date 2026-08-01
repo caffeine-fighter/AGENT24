@@ -19,11 +19,11 @@ YAI × OpenAI AGENT:24 해커톤 Creative 트랙 4인 팀용 모노레포입니�
 
 - [NIGHTMARE LAB 데모](https://caffeine-fighter.github.io/nightmare-lab-demo/) — GitHub Pages에서 바로 여는 공개 정적 데모
 - [공개 배포 소스](https://github.com/caffeine-fighter/nightmare-lab-demo)에는 `web/` 정적 snapshot만 있고 API key나 원본 비공개 저장소 이력은 포함하지 않음
-- Pages에서는 같은 origin API 연결을 먼저 시도하고, 서버가 없으면 `내장 예시`와 “제출한 저장소를 분석한 결과가 아님”을 표시한 뒤 결정적 fixture로 완주
-- OpenAI API를 사용하는 실제 agent/API 경로는 아래 로컬 실행 또는 별도 서버 배포에서 사용하며, 브라우저 정적 파일에는 key를 넣지 않음
+- Pages에서는 같은 origin API 연결을 먼저 시도하고, 서버가 없으면 `내장 예시`와 “제출한 저장소를 분석한 결과가 아님”을 명시한 뒤 결정적 fixture로 완주
+- OpenAI API를 사용하는 실제 agent/API 경로는 아래 로컬 실행 또는 별도 서버 배포에서 사용하며, 브라우저 정적 파일에는 key를 넣지 않음. API 연결 불가 상태도 실제 분석처럼 보이지 않도록 상태 배너와 scope notice에 드러냄
 - [NIGHTMARE LAB production](https://nightmare-lab-agent24.conceivability.chatgpt.site) — pinned owner manifest와 검토된 UCP adapter를 지원하는 Sites 링크
 - 한 입력으로 GitHub ref 확인 → OpenAI 실험 근거 생성 → `CLONE → CRASH → AUTOPSY → VACCINE → REPLAY`를 SSE Raw Stream으로 표시
-- OpenAI 설명 경로가 없거나 실패하면 화면에 `offline_demo`를 명시하고 동일한 합성 fallback으로 완주하며, source preflight 실패는 제출 Agent 분석을 주장하지 않고 중단
+- External target의 controller 진단 뒤 OpenAI 설명 경로가 없거나 실패하면 measured controller report만 보존하고 `openai_analysis_completed=false`를 명시한다. source/diagnostic 실패도 관련 없는 합성 데모로 우회하지 않는다. deterministic `offline_demo` fixture는 target 없는 실행에서만 허용한다
 - 운영 체크리스트: [#50 A/배포: NIGHTMARE LAB 웹 데모 링크 운영](https://github.com/caffeine-fighter/AGENT24/issues/50)
 
 ## Product concept
@@ -66,7 +66,7 @@ uv sync --extra dev
 .\scripts\demo.ps1
 ```
 
-<http://127.0.0.1:8000>을 열면 됩니다. 로컬 `.env`에 `OPENAI_API_KEY`가 있으면 live mode, 없으면 화면과 Raw Stream에 명시된 deterministic `offline_demo` mode로 실행됩니다.
+<http://127.0.0.1:8000>을 열면 됩니다. 로컬 `.env`에 `OPENAI_API_KEY`가 있으면 상단 상태 배너에 live 경로 사용 가능이라고 표시되고, 없으면 시작 전부터 “OPENAI_API_KEY 없음 · offline_demo 예정”, 실행 후에는 실제 모델 분석을 실행하지 않았다는 문구와 Raw Stream reason이 표시됩니다.
 
 macOS/Linux에서 비공개 GitHub origin을 토큰 없이 리허설하려면 현재 checkout을
 `local-demo` source로 명시해 전체 preflight → Gym → report 경로를 실행합니다.
@@ -85,10 +85,9 @@ uv run python scripts/demo-local.py --example-agent --port 8769
 ```
 
 브라우저에서 <http://127.0.0.1:8769/index.html?demo=example-agent>를 열면
-`examples/demo-agent-repo`를 `example-org/nightmare-cake-agent@demo-v1`라는
-local fixture repo alias로 입력한 상태가 준비됩니다. 이 alias는 아직 공개 GitHub에
-push된 저장소가 아니라 parent repo 안의 재현 가능한 fixture임을 화면과 문서에서
-구분합니다.
+`examples/demo-agent-repo`가 `local://agent24/examples/demo-agent-repo`와 64자
+bundle SHA-256 revision으로 입력됩니다. 이 값은 Git commit이 아니며, 별도 공개
+GitHub repository를 만들거나 배포하지 않습니다.
 
 실제 공개 GitHub 입력을 브라우저에서 검증하려면 `--live-github`를 사용합니다.
 
@@ -99,6 +98,15 @@ uv run python scripts/demo-local.py --live-github --port 8769
 이 모드에서 `Upsonic/UCP-Agent@3f98ef0`의 exact reviewed source는
 `ALLOWLISTED ADAPTER`로 표시되고 `complete_purchase`를 network-disabled local
 replacement Gym에서만 측정합니다.
+
+검토된 local bundle을 실제로 bounded child runner에서 시현하려면 다음 명령을
+사용합니다. API/OpenAI orchestration과 분리된 #100 vertical slice이며, 실행 결과는
+stdout JSON으로만 반환하고 run log를 파일에 쓰지 않습니다. 이 예시 Agent는 단일
+mission 계약이므로 기본 “케이크 1개 주문 + 가족 캘린더 등록” 입력만 실행합니다.
+
+```bash
+uv run python scripts/run-local-agent.py
+```
 
 브라우저까지 자동으로 열려면 다음 옵션을 사용합니다.
 

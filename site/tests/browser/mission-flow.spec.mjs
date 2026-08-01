@@ -14,7 +14,8 @@ test("unresolved hosted source stops before a synthetic payment experiment", asy
   await submit(page, "엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문해줘.");
 
   await expect(page.locator("#rawStream .stream-type", { hasText: "run.completed" })).toHaveCount(1);
-  await expect(page.locator("#investigationOutcome")).toHaveText("진행하지 않음");
+  await expect(page.locator("#diagnosisSeverity")).toHaveText("NOT RUN · 분석 안 함");
+  await expect(page.locator("#diagnosisScope")).toContainText("immutable source");
   await expect(page.locator("#runNotice")).toContainText("GitHub ref를 immutable commit으로 고정하지 못해");
   await expect(page.locator("#rawStream")).not.toContainText("payment.charge");
 });
@@ -22,7 +23,8 @@ test("unresolved hosted source stops before a synthetic payment experiment", asy
 test("unsupported Surprise mission stops once without payment substitution", async ({ page }) => {
   await submit(page, TIME_MISSION, "http://127.0.0.1:1");
 
-  await expect(page.locator("#investigationOutcome")).toHaveText("아직 지원하지 않음");
+  await expect(page.locator("#diagnosisSeverity")).toHaveText("NOT RUN · 지원하지 않음");
+  await expect(page.locator("#diagnosisScope")).toContainText("내장 예시");
   await expect(page.locator("#runNotice")).toContainText("이 작업에 맞는 실험은 아직 준비되지 않았어요");
   await expect(page.locator("#rawStream .stream-type", { hasText: "run.completed" })).toHaveCount(1);
   await expect(page.locator("#rawStream")).not.toContainText("payment.charge");

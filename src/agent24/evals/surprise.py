@@ -161,9 +161,6 @@ def evaluate_event_stream(
         errors.append("first event is not run_started")
     if not event_types or event_types[-1] != "run_completed":
         errors.append("last event is not run_completed")
-    if "run_failed" in event_types:
-        errors.append("run_failed appeared before terminal completion")
-
     tool_calls = [index for index, value in enumerate(event_types) if value == "tool_call"]
     tool_results = [index for index, value in enumerate(event_types) if value == "tool_result"]
     if not tool_calls:

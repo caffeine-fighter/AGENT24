@@ -13,12 +13,12 @@ import json
 import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Literal, Protocol, Self
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, computed_field, field_validator, model_validator
 
 GITHUB_HOST = "github.com"
 GITHUB_API = "https://api.github.com"
@@ -52,6 +52,8 @@ class SourceRequest(BaseModel):
     source_url: str
     requested_ref: str | None = None
     revision_kind: str = "default"
+    source_kind: Literal["github", "local_bundle"] = "github"
+    source_path: str | None = None
 
     @field_validator("repository")
     @classmethod
@@ -74,6 +76,10 @@ class SourceDescriptor(BaseModel):
     resolved_sha: str
     retrieved_at: str
     resolver: str = "github"
+    source_kind: Literal["github", "local_bundle"] = "github"
+    source_path: str | None = None
+    revision_kind: Literal["commit", "bundle_sha256"] = "commit"
+    bundle_sha256: str | None = None
 
     @field_validator("repository")
     @classmethod
@@ -88,7 +94,7 @@ class SourceDescriptor(BaseModel):
     def _full_sha(cls, value: str) -> str:
         normalized = value.lower()
         if not re.fullmatch(r"[0-9a-f]{40,64}", normalized):
-            raise ValueError("resolved_sha must be a full hexadecimal commit SHA")
+            raise ValueError("resolved_sha must be a full hexadecimal source revision")
         return normalized
 
     @field_validator("retrieved_at")
@@ -102,10 +108,35 @@ class SourceDescriptor(BaseModel):
             raise ValueError("retrieved_at must include a timezone")
         return value
 
+    @model_validator(mode="after")
+    def _revision_matches_source_kind(self) -> Self:
+        if self.source_kind == "local_bundle":
+            if self.revision_kind != "bundle_sha256":
+                raise ValueError("local_bundle sources must use revision_kind=bundle_sha256")
+            if not self.source_path:
+                raise ValueError("local_bundle sources require source_path")
+            if not re.fullmatch(r"[0-9a-f]{64}", self.resolved_sha):
+                raise ValueError("local_bundle resolved_sha must be a SHA-256 digest")
+            if self.bundle_sha256 != self.resolved_sha:
+                raise ValueError("bundle_sha256 must match the local bundle revision")
+        elif (
+            self.revision_kind != "commit"
+            or self.bundle_sha256 is not None
+            or not re.fullmatch(r"[0-9a-f]{40}", self.resolved_sha)
+        ):
+            raise ValueError(
+                "GitHub sources must use a full 40-character commit revision "
+                "without bundle_sha256"
+            )
+        return self
+
+    @computed_field
     @property
     def source_ref(self) -> str:
         """Stable source key used by the manifest and run provenance."""
 
+        if self.source_kind == "local_bundle":
+            return f"{self.source_url}@sha256:{self.bundle_sha256}"
         return f"{self.repository}@{self.resolved_sha}"
 
     def canonical_json(self) -> str:
@@ -206,10 +237,63 @@ def parse_github_url(url: str, *, ref: str | None = None) -> SourceRequest:
     )
 
 
+def parse_local_bundle_url(url: str, *, ref: str | None = None) -> SourceRequest:
+    """Parse the one checked-in local participant bundle.
+
+    This is intentionally not a general filesystem URL.  Keeping the path
+    allowlisted prevents a browser request from turning the local demo into an
+    arbitrary source reader, and the explicit ``local_bundle`` kind prevents a
+    content identity from being presented as a public GitHub repository.
+    """
+
+    if not isinstance(url, str) or not url.strip():
+        raise InvalidSourceURLError("local bundle URL is required")
+    raw = url.strip()
+    parsed = urlsplit(raw)
+    path = parsed.path.strip("/")
+    if (
+        parsed.scheme != "local"
+        or (parsed.hostname or "").lower() != "agent24"
+        or path != "examples/demo-agent-repo"
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise InvalidSourceURLError(
+            "the supported local bundle is local://agent24/examples/demo-agent-repo"
+        )
+    requested_ref = _clean_ref(ref)
+    if requested_ref and not re.fullmatch(r"[0-9a-fA-F]{64}", requested_ref):
+        raise InvalidSourceURLError("local bundle ref must be a full SHA-256 bundle digest")
+    return SourceRequest(
+        repository="local/demo-agent-repo",
+        repository_url=raw,
+        source_url=raw,
+        requested_ref=requested_ref,
+        revision_kind="local_bundle",
+        source_kind="local_bundle",
+        source_path=path,
+    )
+
+
+def parse_source_url(url: str, *, ref: str | None = None) -> SourceRequest:
+    """Parse a supported GitHub URL or the explicit local demo bundle URL."""
+
+    if isinstance(url, str) and url.strip().lower().startswith("local://"):
+        return parse_local_bundle_url(url, ref=ref)
+    return parse_github_url(url, ref=ref)
+
+
 def _validate_resolved_sha(value: str) -> str:
     normalized = value.strip().lower()
-    if not re.fullmatch(r"[0-9a-f]{40,64}", normalized):
-        raise SourceAccessError("resolver returned a non-immutable commit SHA")
+    if not re.fullmatch(r"[0-9a-f]{40}", normalized):
+        raise SourceAccessError("resolver returned a non-immutable 40-character commit SHA")
+    return normalized
+
+
+def _validate_bundle_sha(value: str) -> str:
+    normalized = value.strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", normalized):
+        raise SourceAccessError("local bundle resolver returned an invalid SHA-256 digest")
     return normalized
 
 
@@ -229,12 +313,15 @@ class MappingRevisionResolver:
             return _validate_resolved_sha(request.requested_ref)
         key = (request.repository, request.requested_ref)
         try:
-            return _validate_resolved_sha(self._revisions[key])
+            resolved = self._revisions[key]
         except KeyError as error:
             requested = request.requested_ref or "default"
             raise SourceAccessError(
                 f"fixture has no revision for {request.repository}@{requested}"
             ) from error
+        if request.source_kind == "local_bundle":
+            return _validate_bundle_sha(resolved)
+        return _validate_resolved_sha(resolved)
 
 
 class GitHubApiRevisionResolver:
@@ -300,9 +387,13 @@ def resolve_source(
 ) -> SourceDescriptor:
     """Return immutable source provenance for a GitHub URL/ref pair."""
 
-    request = parse_github_url(url, ref=ref)
+    request = parse_source_url(url, ref=ref)
     active_resolver = resolver or GitHubApiRevisionResolver()
-    sha = _validate_resolved_sha(active_resolver.resolve(request))
+    sha = (
+        _validate_bundle_sha(active_resolver.resolve(request))
+        if request.source_kind == "local_bundle"
+        else _validate_resolved_sha(active_resolver.resolve(request))
+    )
     timestamp = retrieved_at or datetime.now(UTC).isoformat()
     try:
         return SourceDescriptor(
@@ -313,6 +404,10 @@ def resolve_source(
             resolved_sha=sha,
             retrieved_at=timestamp,
             resolver=getattr(active_resolver, "name", "custom"),
+            source_kind=request.source_kind,
+            source_path=request.source_path,
+            revision_kind=("bundle_sha256" if request.source_kind == "local_bundle" else "commit"),
+            bundle_sha256=(sha if request.source_kind == "local_bundle" else None),
         )
     except ValueError as error:
         raise SourceAccessError(f"resolved source descriptor is invalid: {error}") from error
@@ -330,5 +425,7 @@ __all__ = [
     "SourceResolutionError",
     "UnsupportedSourceHostError",
     "parse_github_url",
+    "parse_local_bundle_url",
+    "parse_source_url",
     "resolve_source",
 ]
