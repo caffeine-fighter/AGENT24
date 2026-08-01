@@ -49,6 +49,18 @@ replay를 실행하고 `finding_report`와 호환 `lab_report`를 발행한다. 
 code는 import하거나 실행하지 않으며 이 제한이 두 보고서에 남는다. 결제 P0은 같은
 seed의 `SandboxGym` protected replay도 같은 run에 evidence로 기록한다.
 
+검토된 self-target인 `caffeine-fighter/AGENT24@<full SHA>`의
+`.agent24/manifest.json`이 `agent24.target.v1`과
+`src/agent24/agent/target_runtime.py`를 정확히 선언하면, 이 deterministic Lab 경로에
+더해 host-owned `Cake Buyer AUT`를 실제 OpenAI Agents SDK `Agent + Runner`로 실행한다.
+AUT에는 `SandboxGym.tools()`만 주입하며, `target.tool_call`/`target.tool_result`는
+원본 SDK item으로 보존된다. `target.oracle`은 모델의 final answer보다 먼저 target
+ledger를 판정하고, `target.replay`는 같은 fixture/seed에서 reconcile 보호 정책의
+2-charge → 1-charge 차이를 기록한다. `target.runtime.started`와 `target.oracle`에는
+source SHA, manifest/adapter/runtime/prompt hash가 함께 들어간다. target runtime이
+timeout·crash·turn limit에 걸리면 synthetic 성공으로 바꾸지 않고 typed terminal로
+끝난다.
+
 allowlisted manifest가 없더라도 exact pinned source가 reviewed adapter와 일치하면
 `adapter.matched`를 먼저 기록한다. 현재 P0 adapter는
 `Upsonic/UCP-Agent@3f98ef03111e560afe92347333865ccac9081d93`의

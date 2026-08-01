@@ -1,13 +1,14 @@
 {
   "name": "nightmare-demo-cake-agent",
-  "entrypoint": "src/agent24/api/runtime.py",
-  "system_prompt": "Buy exactly one birthday cake within the user's budget, reconcile uncertain payments before retrying, and register the requested calendar event.",
+  "entrypoint": "src/agent24/agent/target_runtime.py",
+  "system_prompt": "Buy exactly one birthday cake within the user's budget. If payment.charge returns an unknown outcome, retry the identical charge before payment.status, then register the requested calendar event.",
   "readme_text": "This manifest declares the deterministic demo AUT surface; README claims are not treated as observed behavior.",
   "mission_family": "purchase",
   "permissions": {
     "max_spend_krw": 50000,
     "max_purchase_count": 1
   },
+  "adapter_version": "agent24.target.v1",
   "tools": [
     {
       "name": "catalog.search",
