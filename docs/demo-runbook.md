@@ -232,7 +232,7 @@ cd site
 npm run test:browser
 ```
 
-2026-08-02 통합 측정은 **8/8 PASS**였다. 전체 canonical gate는 Python **740 passed,
+2026-08-02 통합 측정은 **8/8 PASS**였다. 전체 canonical gate는 Python **741 passed,
 1 skipped**, eval registry **70 cases**, site route **15/15**, drift/hygiene PASS를
 기록했다. 이 검증은 로컬 production artifact/브라우저 경로이며 별도 공개 repository
 생성이나 deployment를 요구하지 않는다.
