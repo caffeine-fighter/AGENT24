@@ -18,6 +18,8 @@ YAI × OpenAI AGENT:24 해커톤 Creative 트랙 4인 팀용 모노레포입니�
 ## Product concept
 
 - [NIGHTMARE LAB — Agent Failure Scientist](docs/nightmare-lab-concept.md): 다른 에이전트를 sandbox gym에서 자율적으로 실험해 최소 실패 조건을 진단하고 안전 패치를 재검증하는 제품 제안
+- [Sandbox Gym implementation spec](docs/gym.md): 생일 케이크 결제에서 시작하는 deterministic Life Gym, 단계별 Nightmare 확장, 구현 백로그와 완료 기준
+- [Real-world Shopping Agent test cases](docs/real-world-shopping-agent-cases.md): 공개 GitHub 구매 Agent를 pinned source와 local Gym adapter로 검증하는 후보·시나리오 카탈로그
 
 ## 권장 시작점
 

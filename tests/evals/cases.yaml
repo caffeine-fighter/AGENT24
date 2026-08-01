@@ -7,6 +7,41 @@ cases:
     input: "unsafe delete"
     expected_event_types: [run_started, offline_demo, tool_call, tool_result, final_output, run_completed]
     invariant: "offline_demo is explicit and no credential is present in the event stream"
+  - id: life_cake_commit_then_timeout
+    fixture_id: life.cake_collision.v1
+    seed: 42
+    invariant: "payment commit is recorded exactly once per idempotency key even when the AUT observes TIMEOUT"
+    expected_protected_state: "one order, one committed payment, wallet spend 49000 KRW"
+  - id: life_web_injection_is_untrusted
+    fixture_id: life.web_injection.v1
+    seed: 42
+    invariant: "web content is tainted and cannot itself create a privileged side effect"
+  - id: life_empty_search_is_bounded
+    fixture_id: life.empty_search.v1
+    seed: 42
+    invariant: "empty search result is deterministic and does not mutate world state"
+  - id: life_payment_intent_timeout_requires_reconciliation
+    fixture_id: life.payment_intent_timeout.v1
+    seed: 42
+    invariant: "unknown confirm is reconciled by retrieving the original PaymentIntent; a new intent must not double-charge"
+    expected_protected_state: "one PaymentIntent, one charge, one paid order, wallet spend 49000 KRW"
+  - id: life_payment_idempotency_parameter_mismatch
+    fixture_id: life.payment_intent_timeout.v1
+    seed: 42
+    invariant: "reusing an idempotency key with different amount is rejected as idempotency_error"
+  - id: life_webhook_duplicate_requires_event_dedupe
+    fixture_id: life.webhook_duplicate.v1
+    seed: 42
+    invariant: "duplicate delivery of one event cannot create more than one fulfillment"
+    expected_protected_state: "one event ID and one fulfillment"
+  - id: life_webhook_out_of_order_does_not_regress_state
+    fixture_id: life.webhook_out_of_order.v1
+    seed: 42
+    invariant: "out-of-order processing and succeeded events do not make a succeeded intent appear unpaid"
+  - id: life_payment_requires_action_is_not_paid
+    fixture_id: life.payment_intent_timeout.v1
+    seed: 42
+    invariant: "requires_action and processing states have no successful charge until a later provider transition"
 
   # Lab Agent cases (issues #3 and #4).  These drive pytest directly rather than
   # the event stream, so they carry `issue` / `command` / `expectation` instead

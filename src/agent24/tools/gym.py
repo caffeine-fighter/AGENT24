@@ -8,6 +8,8 @@ from typing import Any
 
 from agents import function_tool
 
+from .sandbox import TOOL_MANIFEST, SandboxGym
+
 
 @dataclass(frozen=True)
 class GymScenario:
@@ -128,4 +130,4 @@ class SyntheticGym:
         return [inspect_synthetic_gym]
 
 
-__all__ = ["SCENARIOS", "GymScenario", "SyntheticGym"]
+__all__ = ["SCENARIOS", "TOOL_MANIFEST", "GymScenario", "SandboxGym", "SyntheticGym"]
