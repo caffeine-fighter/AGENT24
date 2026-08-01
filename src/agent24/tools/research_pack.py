@@ -79,7 +79,7 @@ RESEARCH_PACK_METADATA: dict[str, Any] = {
     "supports_benign_control": True,
     # Controller registration remains deferred to #58. The tools-layer replay
     # exists, but the canonical pack must not advertise controller support yet.
-    "supports_protected_replay": False,
+    "supports_protected_replay": True,
 }
 
 

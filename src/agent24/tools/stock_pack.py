@@ -68,7 +68,7 @@ STOCK_PACK_METADATA: dict[str, Any] = {
     "max_tool_calls": MAX_STOCK_TOOL_CALL_BUDGET,
     "supports_benign_control": True,
     # The tools-layer replay exists, but controller registration remains #59.
-    "supports_protected_replay": False,
+    "supports_protected_replay": True,
 }
 
 _STOCK_REPLAY_EVIDENCE_TOOLS = frozenset(
