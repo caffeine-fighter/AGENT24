@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from agent24.events import EventManager, JsonlEventLog, encode_sse, iter_sse_events
 
 from .config import RuntimeSettings
+from .preflight import ExternalTarget
 from .runtime import OpenAIWhiteBoxAdapter
 
 
@@ -24,6 +25,7 @@ class RunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     input: str = Field(min_length=1, max_length=4_000)
+    target: ExternalTarget | None = None
 
 
 class RunAccepted(BaseModel):
@@ -88,6 +90,7 @@ def create_app(
             "status": "ok",
             "mode": runtime.mode,
             "openai_configured": runtime.openai_configured,
+            "github_configured": bool((runtime.settings.github_token or "").strip()),
             "sdk": "openai-agents",
         }
 
@@ -99,7 +102,7 @@ def create_app(
     async def start_run(request: RunRequest) -> RunAccepted:
         run_id = uuid.uuid4().hex
         channel = event_manager.create(run_id)
-        task = asyncio.create_task(runtime.execute(request.input, channel))
+        task = asyncio.create_task(runtime.execute(request.input, channel, target=request.target))
         app.state.tasks.add(task)
         task.add_done_callback(app.state.tasks.discard)
         return RunAccepted(

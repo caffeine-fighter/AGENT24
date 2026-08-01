@@ -12,10 +12,19 @@ from agents import Agent, OpenAIProvider, RunConfig, Runner
 from agents.items import ToolCallItem, ToolCallOutputItem
 from agents.stream_events import RunItemStreamEvent
 
+from agent24.agent.manifest import ManifestLoadError
+from agent24.agent.models import ExperimentPlan, StopDecision
+from agent24.agent.source import GitHubApiRevisionResolver, SourceResolutionError
 from agent24.events import RunChannel
 from agent24.tools import SyntheticGym
 
 from .config import RuntimeSettings
+from .preflight import (
+    ExternalAgentPreflight,
+    ExternalTarget,
+    GitHubContentsManifestFetcher,
+    ManifestFetchError,
+)
 
 DEFAULT_MAX_TURNS = 8
 DEFAULT_TIMEOUT_SECONDS = 45.0
@@ -55,6 +64,7 @@ class OpenAIWhiteBoxAdapter:
         model_name: str | None = None,
         timeout_seconds: float | None = None,
         max_turns: int = DEFAULT_MAX_TURNS,
+        preflight: ExternalAgentPreflight | None = None,
         settings: RuntimeSettings | None = None,
     ) -> None:
         self.gym = gym or SyntheticGym()
@@ -72,6 +82,10 @@ class OpenAIWhiteBoxAdapter:
         )
         self.timeout_seconds = _read_timeout(configured_timeout)
         self.max_turns = max(1, max_turns)
+        self.preflight = preflight or ExternalAgentPreflight(
+            source_resolver=GitHubApiRevisionResolver(token=self.settings.github_token),
+            manifest_fetcher=GitHubContentsManifestFetcher(token=self.settings.github_token),
+        )
 
     def _api_key(self) -> str | None:
         # An explicitly exported process variable wins over .env settings.  No
@@ -169,11 +183,90 @@ class OpenAIWhiteBoxAdapter:
         channel.publish("final_output", {"text": final_text})
         return final_text
 
-    async def execute(self, query: str, channel: RunChannel) -> None:
+    async def _run_external_preflight(
+        self,
+        query: str,
+        target: ExternalTarget,
+        channel: RunChannel,
+    ) -> bool:
+        """Publish pinned planning artifacts, or finish with an honest fallback."""
+
+        channel.publish("phase.changed", {"phase": "CLONE"}, summary="external preflight")
+        try:
+            result = await asyncio.to_thread(self.preflight.run, target)
+        except (SourceResolutionError, ManifestLoadError, ManifestFetchError):
+            channel.publish(
+                "run_failed",
+                {"status": "offline_demo", "code": "source_preflight_failed"},
+                summary="External Agent source or manifest unavailable",
+            )
+            await self._run_offline(
+                query,
+                channel,
+                reason="External Agent source or manifest unavailable",
+            )
+            channel.publish(
+                "run_completed",
+                {"status": "offline_demo", "mode": "offline_demo"},
+            )
+            return False
+
+        channel.publish("source_descriptor", result.source, summary=result.source.source_ref)
+        channel.publish("behavior_profile", result.profile, summary=result.profile.agent_name)
+        if isinstance(result.decision, StopDecision):
+            channel.publish(
+                "run_completed",
+                {
+                    "status": "unsupported",
+                    "mode": self.mode,
+                    "message": result.decision.detail,
+                },
+                summary=result.decision.reason,
+            )
+            return False
+        if not isinstance(result.decision, ExperimentPlan):
+            raise TypeError("preflight returned an unknown decision type")
+        channel.publish(
+            "experiment_plan",
+            result.decision,
+            summary=result.decision.plan_id,
+        )
+        return True
+
+    async def execute(
+        self,
+        query: str,
+        channel: RunChannel,
+        *,
+        target: ExternalTarget | None = None,
+    ) -> None:
         """Execute a run and always close the channel after its final event."""
 
         try:
-            channel.publish("run_started", {"mode": self.mode, "input_received": True})
+            channel.publish(
+                "run_started",
+                {
+                    "mode": self.mode,
+                    "input_received": True,
+                    **(
+                        {
+                            "target": {
+                                "repositoryUrl": target.repository_url,
+                                "requestedRef": target.requested_ref,
+                                "resolvedSha": None,
+                                "mission": target.mission,
+                            },
+                            "mission": target.mission,
+                        }
+                        if target is not None
+                        else {}
+                    ),
+                },
+            )
+            if target is not None and not await self._run_external_preflight(
+                query, target, channel
+            ):
+                return
             if not self.openai_configured:
                 await self._run_offline(query, channel, reason="OPENAI_API_KEY is not configured")
                 channel.publish("run_completed", {"status": "offline_demo", "mode": "offline_demo"})
