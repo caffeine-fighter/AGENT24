@@ -13,6 +13,7 @@ import hashlib
 from dataclasses import dataclass
 
 from .divergence import first_divergence
+from .external_adapters import UCPShoppingAdapterContract, UCPShoppingGym
 from .fakes import FakeGym, benign_scenario
 from .gates import make_neighbors, verify_patch
 from .invariants import DEFAULT_MAX_SPEND_KRW, life_v0_invariants
@@ -66,6 +67,7 @@ class DiagnosticLoopResult:
     lab_report: LabReport
     experiments_run: int
     cost_units_used: int
+    execution_scope: str = SYNTHETIC_SCOPE
 
 
 def unsupported_reports(
@@ -111,7 +113,13 @@ def _max_spend(manifest: AgentManifest, mission: Mission) -> int:
     return DEFAULT_MAX_SPEND_KRW
 
 
-def _patch_for(category: FailureCategory, *, max_spend_krw: int) -> AntibodyPatch | None:
+def _patch_for(
+    category: FailureCategory,
+    *,
+    max_spend_krw: int,
+    side_effect_tool: str = "payment.charge",
+    reconcile_with: str = "payment.status",
+) -> AntibodyPatch | None:
     if category is FailureCategory.DUPLICATE_SIDE_EFFECT:
         return AntibodyPatch(
             patch_id="pt-duplicate-payment",
@@ -119,10 +127,10 @@ def _patch_for(category: FailureCategory, *, max_spend_krw: int) -> AntibodyPatc
             max_purchase_count=1,
             side_effect_rules=[
                 SideEffectRule(
-                    tool="payment.charge",
+                    tool=side_effect_tool,
                     require_idempotency_key=True,
                     timeout_means_unknown=True,
-                    reconcile_with="payment.status",
+                    reconcile_with=reconcile_with,
                 )
             ],
             rationale="비가역 결제에 idempotency key와 timeout 후 상태 조회를 강제한다.",
@@ -172,6 +180,7 @@ def _legacy_report(
     minimized,
     experiments_run: int,
     cost_units_used: int,
+    scope_note: str,
 ) -> LabReport:
     findings: list[Finding] = []
     if finding_report.observed is not None and finding_report.observed.violations:
@@ -190,10 +199,19 @@ def _legacy_report(
         )
 
     verified = verification is not None and verification.accepted
+    adapter_run = scope_note != SYNTHETIC_SCOPE
     detail = (
-        "Life-v0 synthetic archetype의 측정 실패와 보호 재실행을 완료했다."
+        (
+            "allowlisted adapter의 local replacement 측정 실패와 보호 재실행을 완료했다."
+            if adapter_run
+            else "Life-v0 synthetic archetype의 측정 실패와 보호 재실행을 완료했다."
+        )
         if verified
-        else "Life-v0 synthetic archetype의 제한된 실험을 완료했다."
+        else (
+            "allowlisted adapter의 제한된 local replacement 실험을 완료했다."
+            if adapter_run
+            else "Life-v0 synthetic archetype의 제한된 실험을 완료했다."
+        )
     )
     return LabReport(
         agent=AgentCard(
@@ -209,7 +227,7 @@ def _legacy_report(
         cost_units_used=cost_units_used,
         findings=findings,
         termination=StopDecision(stop=True, reason="coverage_complete", detail=detail),
-        unsupported_scope=[SYNTHETIC_SCOPE, *manifest.unsupported_tools],
+        unsupported_scope=[scope_note, *manifest.unsupported_tools],
         no_failure_statement=(
             finding_report.bounded_summary
             if finding_report.observed is None or not finding_report.observed.violations
@@ -231,17 +249,27 @@ class DeterministicLabLoop:
         profile: BehaviorProfile,
         mission: Mission,
         plan: ExperimentPlan,
+        adapter_contract: UCPShoppingAdapterContract | None = None,
     ) -> DiagnosticLoopResult:
+        gym = UCPShoppingGym(adapter_contract) if adapter_contract is not None else self.gym
+        scope_note = (
+            adapter_contract.scope_note if adapter_contract is not None else SYNTHETIC_SCOPE
+        )
+        side_effect_tool = "complete_purchase" if adapter_contract is not None else "payment.charge"
+        reconcile_tool = "get_order_status" if adapter_contract is not None else "payment.status"
         max_spend = _max_spend(manifest, mission)
-        invariants = life_v0_invariants(max_spend_krw=max_spend)
-        baseline = await self.gym.run(_without_faults(plan))
-        perturbed = await self.gym.run(plan.scenario)
+        invariants = life_v0_invariants(
+            max_spend_krw=max_spend,
+            side_effect_tool=side_effect_tool,
+        )
+        baseline = await gym.run(_without_faults(plan))
+        perturbed = await gym.run(plan.scenario)
         observed = evaluate(invariants, perturbed)
         divergence = first_divergence(baseline.trace, perturbed.trace)
 
         reproduction_count = 1
         for _ in range(REPRODUCTION_TOTAL - 1):
-            replay = await self.gym.run(plan.scenario)
+            replay = await gym.run(plan.scenario)
             replay_oracle = evaluate(invariants, replay)
             if (
                 run_digest(replay) == run_digest(perturbed)
@@ -255,7 +283,7 @@ class DeterministicLabLoop:
             violated_ids = observed.violated_ids()
 
             async def reproduces(candidate) -> bool:
-                candidate_report = evaluate(invariants, await self.gym.run(candidate))
+                candidate_report = evaluate(invariants, await gym.run(candidate))
                 return bool(violated_ids & candidate_report.violated_ids())
 
             minimized = await minimize(plan.scenario, reproduces)
@@ -263,7 +291,12 @@ class DeterministicLabLoop:
 
         hypothesis = hypothesis_for(plan, profile, mission)
         patch = (
-            _patch_for(hypothesis.category, max_spend_krw=max_spend)
+            _patch_for(
+                hypothesis.category,
+                max_spend_krw=max_spend,
+                side_effect_tool=side_effect_tool,
+                reconcile_with=reconcile_tool,
+            )
             if hypothesis is not None and observed.violations
             else None
         )
@@ -275,18 +308,18 @@ class DeterministicLabLoop:
             verification = await verify_patch(
                 patch,
                 plan.scenario,
-                self.gym,
+                gym,
                 invariants,
                 benign=controls,
                 neighbors=neighbors,
                 unpatched=observed,
             )
-            protected = await self.gym.run(plan.scenario, patch)
+            protected = await gym.run(plan.scenario, patch)
             experiments_run += 1 + len(neighbors) + len(controls) + 1
 
         cost_per_experiment = hypothesis.est_cost_units if hypothesis is not None else 1
         cost_units_used = experiments_run * cost_per_experiment
-        residual_risk = [SYNTHETIC_SCOPE, *manifest.unsupported_tools]
+        residual_risk = [scope_note, *manifest.unsupported_tools]
         finding_report = build_report(
             f"f-{plan.plan_id}",
             observed=observed,
@@ -301,12 +334,20 @@ class DeterministicLabLoop:
                 ArtifactRef(
                     kind="run_digest",
                     ref=f"sha256:{run_digest(perturbed)}",
-                    detail="Life-v0 perturbed synthetic run",
+                    detail=(
+                        "Life-v0 allowlisted adapter run"
+                        if adapter_contract is not None
+                        else "Life-v0 perturbed synthetic run"
+                    ),
                 ),
                 ArtifactRef(
                     kind="snapshot",
                     ref=f"sha256:{_world_digest(perturbed)}",
-                    detail="Life-v0 final synthetic world",
+                    detail=(
+                        "Life-v0 local replacement world"
+                        if adapter_contract is not None
+                        else "Life-v0 final synthetic world"
+                    ),
                 ),
             ),
             residual_risk=residual_risk,
@@ -328,6 +369,7 @@ class DeterministicLabLoop:
             minimized=minimized,
             experiments_run=experiments_run,
             cost_units_used=cost_units_used,
+            scope_note=scope_note,
         )
         return DiagnosticLoopResult(
             baseline=baseline,
@@ -342,6 +384,7 @@ class DeterministicLabLoop:
             lab_report=lab_report,
             experiments_run=experiments_run,
             cost_units_used=cost_units_used,
+            execution_scope=scope_note,
         )
 
 

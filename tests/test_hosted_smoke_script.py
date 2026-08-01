@@ -23,7 +23,7 @@ PINNED_SHA = "a" * 40
 
 
 def trace(*, hosted: bool, source_pinned: bool = True) -> list[dict[str, object]]:
-    phases = ["CLONE"] * 12 + ["CRASH"] * 7 + ["AUTOPSY"] * 3
+    phases = ["CLONE"] * 16 + ["CRASH"] * 7 + ["AUTOPSY"] * 3
     phases += ["VACCINE"] * 3 + ["REPLAY"] * 9
     events: list[dict[str, object]] = [
         {
@@ -44,7 +44,23 @@ def trace(*, hosted: bool, source_pinned: bool = True) -> list[dict[str, object]
         type="source_descriptor",
         data={"resolved_sha": PINNED_SHA if source_pinned else None},
     )
-    events[8].update(
+    events[5].update(
+        type="source_snapshot",
+        data={
+            "mode": "bounded_download" if source_pinned else "metadata_only",
+            "execution_scope": "manifest_and_entrypoint" if source_pinned else "none",
+            "files": [{"path": "agent/main.py"}] if source_pinned else [],
+        },
+    )
+    events[6].update(
+        type="target_profile",
+        data={"profile_label": "OWNER MANIFEST"} if source_pinned else {},
+    )
+    events[7].update(
+        type="pack_selection",
+        data={"status": "compatible_candidate"} if source_pinned else {},
+    )
+    events[11].update(
         type="behavior_profile",
         data={
             "agent_name": "submitted-github-agent"
@@ -52,7 +68,11 @@ def trace(*, hosted: bool, source_pinned: bool = True) -> list[dict[str, object]
             else "synthetic-fixture-fallback"
         },
     )
-    events[10].update(
+    events[12].update(
+        type="pack.selected",
+        data={"selected": {"domain_kind": "life"}} if source_pinned else {},
+    )
+    events[14].update(
         type="tool_result",
         raw={
             "name": "openai.responses.plan_experiment",
@@ -62,6 +82,7 @@ def trace(*, hosted: bool, source_pinned: bool = True) -> list[dict[str, object]
             },
         },
     )
+    events[15].update(type="experiment_plan")
     events[-1].update(
         type="run.completed",
         data={"status": "verified", "safety_boundary": "SIMULATION_ONLY"},
@@ -84,13 +105,58 @@ def test_verify_trace_accepts_both_explicit_modes(
     )
 
     assert result == {
-        "event_count": 34,
+        "event_count": 38,
         "phases": ["CLONE", "CRASH", "AUTOPSY", "VACCINE", "REPLAY"],
         "source_ref": PINNED_SHA,
         "source_pinned": True,
         "openai_response_observed": response_observed,
         "terminal_status": "verified",
     }
+
+
+def test_verify_trace_accepts_allowlisted_adapter_path() -> None:
+    events = trace(hosted=False)
+    events.insert(
+        6,
+        {
+            "run_id": RUN_ID,
+            "seq": 0,
+            "type": "adapter.matched",
+            "phase": "CLONE",
+            "data": {
+                "adapter_id": "ucp-shopping-v0",
+                "execution_mode": "network_disabled_local_replacement",
+                "network_access": "disabled",
+            },
+            "raw": {},
+        },
+    )
+    events[5]["data"] = {
+        "mode": "bounded_download",
+        "execution_scope": "allowlisted_adapter",
+        "files": [{"path": "upsonic_shopping_agent.py"}],
+    }
+    events[7]["type"] = "target_profile"
+    events[7]["data"] = {"profile_label": "ALLOWLISTED ADAPTER"}
+    events[20].update(
+        type="gym.tool_call",
+        phase="CRASH",
+        raw={"name": "complete_purchase"},
+    )
+    events[-2].update(type="lab_report")
+    for index, event in enumerate(events, start=1):
+        event["seq"] = index
+
+    result = SMOKE.verify_trace(
+        events,
+        run_id=RUN_ID,
+        expected_mode="offline_demo",
+        expected_source="pinned",
+        expected_adapter=True,
+    )
+
+    assert result["event_count"] == 39
+    assert result["terminal_status"] == "verified"
 
 
 def test_verify_trace_rejects_non_contiguous_sequence() -> None:
@@ -106,12 +172,37 @@ def test_verify_trace_rejects_non_contiguous_sequence() -> None:
         )
 
 
-def test_verify_trace_accepts_explicit_unresolved_fixture_fallback() -> None:
+def source_failure_trace(code: str = "source_unresolved") -> list[dict[str, object]]:
+    entries = [
+        ("run.started", {"safety_boundary": "SIMULATION_ONLY"}),
+        ("phase.changed", {"phase": "CLONE"}),
+        ("tool_call", {}),
+        ("tool_result", {}),
+        ("source_descriptor", {"resolved_sha": None}),
+        ("source_snapshot", {"mode": "metadata_only", "execution_scope": "none"}),
+        ("run_failed", {"status": "offline_demo", "code": code}),
+        ("run.completed", {"status": code, "safety_boundary": "SIMULATION_ONLY"}),
+    ]
+    return [
+        {
+            "run_id": RUN_ID,
+            "seq": index,
+            "type": event_type,
+            "phase": "CLONE",
+            "data": data,
+            "raw": {},
+        }
+        for index, (event_type, data) in enumerate(entries, start=1)
+    ]
+
+
+def test_verify_trace_accepts_explicit_source_failure() -> None:
     result = SMOKE.verify_trace(
-        trace(hosted=False, source_pinned=False),
+        source_failure_trace(),
         run_id=RUN_ID,
         expected_mode="offline_demo",
         expected_source="unresolved",
+        expected_terminal="source_unresolved",
     )
 
     assert result["source_ref"] is None

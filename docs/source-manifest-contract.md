@@ -2,7 +2,8 @@
 
 이 문서는 외부 Agent를 Gym에 넣기 전의 P0 입력 경계를 고정한다. 입력은
 **GitHub 공개 저장소 URL + 선택적 ref**이며, source 내용은 실행하지 않는다.
-owner manifest를 우선 읽고, manifest가 없을 때만 별도 검토된 static metadata
+owner manifest를 우선 읽고, manifest가 선언한 entrypoint는 최대 64 KB까지
+bounded evidence로 다운로드한다. manifest가 없을 때만 별도 검토된 static metadata
 profile을 사용할 수 있다.
 
 ## 1. SourceDescriptor
@@ -57,8 +58,9 @@ typed error로 반환하며, source를 clone/import/실행하지 않는다. 테�
 ```
 
 `load_manifest()`은 full SHA를 가진 `SourceDescriptor` 없이는 동작하지 않는다.
-entrypoint는 상대 경로 metadata로만 검증하며 import하거나 setup hook을 실행하지
-않는다. manifest bytes의 SHA-256은 `manifest_hash`로 기록되고 adapter version은
+entrypoint는 안전한 상대 경로인지 검증한 뒤 최대 64 KB를 읽어
+`SourceSnapshot`의 path·size·Git blob SHA·content SHA-256으로만 기록한다. 파일을
+import하거나 setup hook을 실행하지 않는다. manifest bytes의 SHA-256은 `manifest_hash`로 기록되고 adapter version은
 `agent24.manifest.v1`로 고정된다.
 
 현재 Life Gym에서 지원하는 tool 외의 이름은 `unsupported_tools`에 남긴다.
