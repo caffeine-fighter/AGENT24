@@ -224,6 +224,24 @@ cases:
     command: "pytest tests/evals/test_surprise_support.py::test_the_same_fixture_and_seed_reproduce_the_same_terminal_digest tests/evals/test_surprise_support.py::test_an_unsupported_route_has_its_own_stable_digest tests/evals/test_surprise_support.py::test_the_digest_ignores_run_id_and_timestamps -q"
     expectation: "two runs of the same fixture and seed produce one terminal digest while their run ids differ; the unsupported route has its own stable digest that a silently substituted run does not share"
 
+  # Metadata-only K-Skill declaration intake (issue #61).
+  - id: k-skill-pinned-catalog
+    issue: 61
+    command: "pytest tests/unit/test_k_skill_intake.py::test_checked_in_catalog_covers_the_p0_shortlist_with_exact_provenance -q"
+    expectation: "all 13 P0 skills are sorted and pinned to one exact commit/tree with only skill.json and instruction.md path/blob/size provenance; generated instructions and environment names are absent"
+  - id: k-skill-no-execution
+    issue: 61
+    command: "pytest tests/unit/test_k_skill_intake.py::test_adapter_returns_declared_surface_without_authorizing_execution tests/unit/test_k_skill_intake.py::test_changed_commit_stops_before_any_metadata_lookup tests/unit/test_k_skill_intake.py::test_claim_boundaries_cannot_be_weakened_even_with_an_existing_digest -q"
+    expectation: "a registered declaration remains metadata-only with max_experiments=0 and no failure claims; a changed commit stops before metadata access, and exact claim boundaries cannot be weakened into a safety verdict"
+  - id: k-skill-drift-missing-unknown
+    issue: 61
+    command: "pytest tests/unit/test_k_skill_intake.py::test_catalog_drift_returns_typed_unsupported_without_a_finding tests/unit/test_k_skill_intake.py::test_snapshot_builder_binds_catalog_bytes_to_the_tree_blob tests/unit/test_k_skill_intake.py::test_missing_catalog_path_returns_typed_unsupported tests/unit/test_k_skill_intake.py::test_unknown_skill_never_defaults_to_a_safe_or_executable_profile tests/unit/test_k_skill_intake.py::test_invalid_skill_id_is_sanitized_before_it_reaches_a_result -q"
+    expectation: "catalog blob drift, a missing reviewed path, an unknown skill, and an invalid control-bearing ID return closed typed reasons with zero experiments and zero findings; catalog bytes must hash to the tree blob"
+  - id: k-skill-read-only-and-snapshot
+    issue: 61
+    command: "pytest tests/unit/test_k_skill_intake.py::test_no_side_effect_skill_does_not_gain_a_mutation_fault_hypothesis tests/unit/test_k_skill_intake.py::test_local_archive_sync_is_reversible_and_never_claims_credentials tests/unit/test_k_skill_intake.py::test_snapshot_builder_is_byte_stable_for_the_same_tree tests/unit/test_k_skill_intake.py::test_snapshot_builder_rejects_truncated_or_missing_tree_metadata tests/unit/test_k_skill_intake.py::test_snapshot_builder_rejects_an_unrelated_commit_and_tree tests/unit/test_k_skill_intake.py::test_snapshot_builder_never_carries_classifications_to_a_new_commit -q"
+    expectation: "read-only lookup never gains mutation fault families, local archive sync remains an explicit reversible filesystem effect, and the reviewed evidence set reproduces deterministically while truncated, missing, unrelated, or new-source snapshots are rejected"
+
   # Pinned participant-repository intake (issue #62).
   - id: participant-pinned-static-profiles
     issue: 62
