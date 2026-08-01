@@ -20,5 +20,6 @@
 | 2026-08-01 | domain은 `MissionFamily`가 아니라 별도 `DomainKind`로 분리하고, pack 판별의 1차 기준은 tool surface | Stock에는 대응하는 mission family가 없고, frozen `MissionFamily`에 값을 추가하면 "사용자가 요청한 것"과 "어떤 gym이 재현할 수 있는가"라는 두 의미가 한 enum에 겹침 | B / agent | Ticket·K-Skill이 mission family까지 필요로 할 때 |
 | 2026-08-01 | pack 점수 동점은 `insufficient_evidence`로 종료하고 보고서에서는 기존 `UNSUPPORTED`로 매핑 | 사전순으로 하나를 고르면 동전 던지기가 판단으로 보임. 다만 web #25가 소비하는 5개 terminal status 계약을 깨면서까지 6번째 상태를 만들 이유는 없음 | B / agent | ambiguous를 UI에서 unsupported와 다르게 보여줘야 할 때 |
 | 2026-08-01 | Ticket pack은 잠정 tool 어휘와 함께 등록하되 fixture·fault family는 비워 둠 | 라우팅 규칙을 지금 테스트할 수 있게 하면서, 없는 fixture를 선언해 "fixture가 존재한다"와 "실패를 측정했다"를 섞지 않기 위함 | B / agent | #60이 실제 Ticket Gym과 확정 어휘를 제공할 때 |
+| 2026-08-01 | Hosted SSE 실행 문맥은 개별 query 값 대신 만료형 AES-GCM 토큰으로 `run_id`에 결속 | 별도 저장소 없이 Edge isolate 간 일관성을 유지하면서 source SHA·OpenAI response ID·mode 변조·다른 run 재사용을 차단하고 mission을 URL에서 숨김 | A / deployment | 다회용 장기 run이나 서버 측 취소·감사 보관이 필요할 때 D1 registry로 전환 |
 
 Keep entries short. Record choices that affect architecture, model/tool selection, scope, cost, privacy, or the demo path.

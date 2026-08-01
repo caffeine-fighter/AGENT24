@@ -191,3 +191,9 @@ cases:
     issue: 57
     command: "pytest tests/integration/test_api.py::test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl tests/integration/test_api.py::test_unsupported_manifest_stops_without_inventing_an_experiment -q"
     expectation: "pack.selected is published after behavior_profile and before experiment_plan in both SSE and JSONL, so the unsupported path -- which never reaches experiment_plan -- still records which pack was considered, why, and its budget and fallback"
+
+  # Hosted run evidence integrity (issue #68).
+  - id: hosted-run-context-integrity
+    issue: 68
+    command: "cd site && npm test"
+    expectation: "the event route accepts only a short-lived server-encrypted context bound to its run_id; source SHA, OpenAI response ID and mode query injection, token tampering, cross-run reuse, unknown and expired runs terminate before any SSE or verified outcome, and mission data is absent from the URL"
