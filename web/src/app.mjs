@@ -445,12 +445,21 @@ function render() {
   notice.textContent = state.terminalNotice?.message || "";
   setText("#runId", state.runId ? `실행 ID ${state.runId}` : "실행 ID —");
   const liveMode = state.mode === "offline_demo"
-    ? "OpenAI 설명 없이 실행"
+    ? "준비된 설명으로 진행 중"
     : state.mode === "compatibility_only"
-      ? "호환성만 판정"
-      : "실시간 API 실행";
-  setText("#modeBadge", state.status === "idle" ? "데모 준비 완료" : state.source === "live" ? liveMode : "내장 예시 실행");
-  setText("#connectionStatus", state.status === "idle" ? "가상 환경 준비 완료" : state.source === "live" ? "이벤트 연결됨" : "가상 환경만 사용");
+      ? "호환성만 판정 중"
+      : "실시간 분석 중";
+  setText(
+    "#modeBadge",
+    state.status === "idle"
+      ? "시작할 준비가 됐어요"
+      : state.source === "live"
+        ? liveMode
+        : state.status === "complete"
+          ? "내장 예시 확인 완료"
+          : "내장 예시 확인 중",
+  );
+  setText("#connectionStatus", state.status === "idle" ? "실험을 시작해 주세요" : state.source === "live" ? "실시간 기록을 받고 있어요" : "가상 환경에서 진행 중");
   $("#runButton").disabled = state.status === "running";
   $("#replayButton").disabled = state.status !== "complete";
 }
