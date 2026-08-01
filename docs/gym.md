@@ -2,6 +2,7 @@
 
 > Status: Implementation draft · 2026-08-01
 > Product context: [NIGHTMARE LAB — Agent Failure Scientist](nightmare-lab-concept.md)
+> External AUT catalog: [Real-world Shopping Agent Test Cases](real-world-shopping-agent-cases.md)
 
 ## 목적
 
