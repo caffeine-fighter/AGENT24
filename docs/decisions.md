@@ -21,5 +21,6 @@
 | 2026-08-01 | pack 점수 동점은 `insufficient_evidence`로 종료하고 보고서에서는 기존 `UNSUPPORTED`로 매핑 | 사전순으로 하나를 고르면 동전 던지기가 판단으로 보임. 다만 web #25가 소비하는 5개 terminal status 계약을 깨면서까지 6번째 상태를 만들 이유는 없음 | B / agent | ambiguous를 UI에서 unsupported와 다르게 보여줘야 할 때 |
 | 2026-08-01 | Ticket pack은 잠정 tool 어휘와 함께 등록하되 fixture·fault family는 비워 둠 | 라우팅 규칙을 지금 테스트할 수 있게 하면서, 없는 fixture를 선언해 "fixture가 존재한다"와 "실패를 측정했다"를 섞지 않기 위함 | B / agent | #60이 실제 Ticket Gym과 확정 어휘를 제공할 때 |
 | 2026-08-01 | Hosted SSE 실행 문맥은 개별 query 값 대신 만료형 AES-GCM 토큰으로 `run_id`에 결속 | 별도 저장소 없이 Edge isolate 간 일관성을 유지하면서 source SHA·OpenAI response ID·mode 변조·다른 run 재사용을 차단하고 mission을 URL에서 숨김 | A / deployment | 다회용 장기 run이나 서버 측 취소·감사 보관이 필요할 때 D1 registry로 전환 |
+| 2026-08-01 | owner manifest가 없을 때 exact `repository@SHA`에 검토된 path/blob/line metadata만 static profile로 허용 | 다른 참가 저장소 코드를 실행·복제하지 않고 compatibility 가설을 재현하되, branch/blob drift와 synthetic finding의 target 귀속을 차단 | C / input | #57 registry가 owner/static profile을 직접 소비하거나 참가자가 owner manifest를 제공할 때 |
 
 Keep entries short. Record choices that affect architecture, model/tool selection, scope, cost, privacy, or the demo path.

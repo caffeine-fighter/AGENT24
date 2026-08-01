@@ -109,6 +109,14 @@ export function createInitialState(target = DEFAULT_TARGET) {
     analysisScope: "synthetic_archetype",
     sourceDescriptor: null,
     sourceDescriptorView: null,
+    sourceSnapshot: null,
+    sourceSnapshotView: null,
+    targetProfile: null,
+    targetProfileView: null,
+    compatibilitySelection: null,
+    compatibilitySelectionView: null,
+    compatibilityReport: null,
+    compatibilityReportView: null,
     behaviorProfile: null,
     behaviorProfileView: null,
     packSelection: null,
@@ -149,6 +157,10 @@ const TYPE_ALIASES = Object.freeze({
   run_completed: "run.completed",
   run_failed: "run.failed",
   source_descriptor: "source.descriptor",
+  source_snapshot: "source.snapshot",
+  target_profile: "target.profile",
+  pack_selection: "pack.compatibility",
+  compatibility_report: "compatibility.report",
   behavior_profile: "behavior.profile",
   experiment_plan: "experiment.plan",
   finding_report: "finding.report",
@@ -197,6 +209,94 @@ export function projectSourceDescriptor(input) {
     retrievedAt: descriptor.retrieved_at || null,
     resolver: descriptor.resolver || "unknown resolver",
     sourceRef: resolvedSha ? `${repository}@${resolvedSha}` : repository,
+  };
+}
+
+export function projectSourceSnapshot(input) {
+  const snapshot = input && typeof input === "object" ? input : {};
+  return {
+    sourceRef: snapshot.source_ref || "고정된 저장소 정보가 없어요",
+    mode: snapshot.mode || "metadata_only",
+    executionScope: snapshot.execution_scope || "none",
+    totalBytes: Number.isFinite(snapshot.total_bytes) ? snapshot.total_bytes : 0,
+    files: asArray(snapshot.files).map((file) => ({
+      path: file?.path || "경로 정보 없음",
+      size: Number.isFinite(file?.size) ? file.size : 0,
+      blobSha: file?.blob_sha || null,
+      contentSha256: file?.content_sha256 || null,
+      retrievalMode: file?.retrieval_mode || "metadata_only",
+    })),
+    snapshotDigest: snapshot.snapshot_digest || null,
+    claimBoundary: snapshot.claim_boundary || "확인 범위 정보가 없어요",
+  };
+}
+
+export function projectTargetProfile(input) {
+  const profile = input && typeof input === "object" ? input : {};
+  const provenance = profile.provenance && typeof profile.provenance === "object"
+    ? profile.provenance
+    : {};
+  return {
+    agentName: profile.agent_name || "에이전트 정보가 없어요",
+    sourceRef: profile.source_ref || "고정된 저장소 정보가 없어요",
+    profileLabel: profile.profile_label || "PROFILE ORIGIN UNKNOWN",
+    status: profile.status || "unsupported",
+    declaredCapabilities: asArray(profile.declared_capabilities),
+    unknownFields: asArray(profile.unknown_fields),
+    unsupportedFields: asArray(profile.unsupported_fields),
+    candidates: asArray(profile.domain_candidates).map((candidate) => ({
+      domain: candidate?.domain_kind || "unknown",
+      missionFamilies: asArray(candidate?.mission_families),
+      capabilities: asArray(candidate?.tool_capabilities),
+      evidenceRefs: asArray(candidate?.evidence_refs),
+      rationale: candidate?.rationale || "판단 근거가 없어요",
+    })),
+    provenance: {
+      origin: provenance.origin || "unknown",
+      resolvedSha: provenance.resolved_sha || null,
+      reviewedAt: provenance.reviewed_at || null,
+      adapterVersion: provenance.adapter_version || "unknown",
+      visibility: provenance.public_visibility || "unknown",
+      license: provenance.license_spdx || "unknown",
+      evidence: asArray(provenance.evidence),
+    },
+  };
+}
+
+export function projectCompatibilitySelection(input) {
+  const selection = input && typeof input === "object" ? input : {};
+  return {
+    status: selection.status || "unsupported",
+    selectedDomain: selection.selected_domain || null,
+    candidateDomains: asArray(selection.candidate_domains),
+    registryVersion: selection.registry_version || "레지스트리 정보가 없어요",
+    why: selection.why || "선택 근거가 없어요",
+    expect: selection.expect || "확인할 내용이 없어요",
+    evidenceRefs: asArray(selection.evidence_refs),
+    packId: selection.pack_id || null,
+    packVersion: selection.pack_version || null,
+    fixtureId: selection.fixture_id || null,
+    executionMode: selection.execution_mode || "compatibility_only",
+    maxExperiments: Number.isFinite(selection.max_experiments)
+      ? selection.max_experiments
+      : 0,
+    fallback: selection.fallback || "terminal_compatibility_only",
+  };
+}
+
+export function projectCompatibilityReport(input) {
+  const report = input && typeof input === "object" ? input : {};
+  return {
+    status: report.status || "unsupported",
+    sourceRef: report.source_ref || "고정된 저장소 정보가 없어요",
+    profileLabel: report.profile_label || "PROFILE ORIGIN UNKNOWN",
+    selectedDomain: report.selected_domain || null,
+    experimentsRun: Number.isFinite(report.experiments_run) ? report.experiments_run : 0,
+    findings: asArray(report.findings),
+    evidenceRefs: asArray(report.evidence_refs),
+    compatibilityClaims: asArray(report.compatibility_claims),
+    claimBoundary: report.claim_boundary || "호환성 판정 범위가 없어요",
+    message: report.message || "호환성 결과 정보가 없어요",
   };
 }
 
@@ -255,6 +355,11 @@ export function projectPackSelection(input) {
     registryVersion: selection.registry_version || "레지스트리를 확인하지 못했어요",
     packId: selected?.pack_id || null,
     domainKind: selected?.domain_kind || null,
+    selectedDomain: selected?.domain_kind || null,
+    status: stop?.reason || (selected ? "selected" : "unsupported"),
+    candidateDomains: candidates.map((candidate) => candidate.domainKind),
+    fixtureId: null,
+    executionMode: selected?.executable === true ? "one_input_controller" : "registered",
     // A selected pack is not a running pack: everything except Life stops with
     // the issue that owns its execution path.
     executable: selected?.executable === true && !stop,
@@ -269,6 +374,7 @@ export function projectPackSelection(input) {
       maxExperiments: Number.isFinite(budget.max_experiments) ? budget.max_experiments : null,
       maxCostUnits: Number.isFinite(budget.max_cost_units) ? budget.max_cost_units : null,
     },
+    maxExperiments: Number.isFinite(budget.max_experiments) ? budget.max_experiments : 0,
     evidenceCount: asArray(selection.evidence).length,
     candidates,
     selectionDigest: selection.selection_digest || null,
@@ -525,6 +631,48 @@ export function reduceRunState(previousState, incomingEvent) {
           : previousState.target,
       };
     }
+    case "source.snapshot":
+      return {
+        ...state,
+        sourceSnapshot: event.data,
+        sourceSnapshotView: projectSourceSnapshot(event.data),
+      };
+    case "target.profile":
+      return {
+        ...state,
+        targetProfile: event.data,
+        targetProfileView: projectTargetProfile(event.data),
+      };
+    case "pack.compatibility":
+      return {
+        ...state,
+        compatibilitySelection: event.data,
+        compatibilitySelectionView: projectCompatibilitySelection(event.data),
+      };
+    case "compatibility.report": {
+      const compatibilityReportView = projectCompatibilityReport(event.data);
+      return {
+        ...state,
+        analysisScope: "compatibility_only",
+        compatibilityReport: event.data,
+        compatibilityReportView,
+        outcomes: {
+          ...previousState.outcomes,
+          investigation: {
+            status: compatibilityReportView.status,
+            message: compatibilityReportView.message,
+          },
+          operation: {
+            status: "not_run",
+            message: "호환성 확인 완료 · 합성 실험 0건",
+          },
+        },
+        terminalNotice: {
+          kind: compatibilityReportView.status,
+          message: compatibilityReportView.message,
+        },
+      };
+    }
     case "behavior.profile": {
       const behaviorProfileView = projectBehaviorProfile(event.data);
       const resolvedSha = isTrustedLiveSource(event.source)
@@ -607,20 +755,26 @@ export function reduceRunState(previousState, incomingEvent) {
         mode: event.data.mode || previousState.mode,
         outcomes: {
           ...previousState.outcomes,
-          investigation: ["unsupported", "budget_exhausted", "no_failure_observed"].includes(event.data.status)
+          investigation: previousState.analysisScope === "compatibility_only"
+            ? previousState.outcomes.investigation
+            : ["unsupported", "budget_exhausted", "no_failure_observed"].includes(event.data.status)
             ? {
                 status: event.data.status,
                 message: TERMINAL_COPY[event.data.status],
               }
             : previousState.outcomes.investigation,
-          operation: {
-            status: previousState.mode === "offline_demo" ? "fallback_complete" : "complete",
-            message: previousState.mode === "offline_demo"
-              ? "준비된 설명으로 마쳤어요 · 원본 기록은 그대로 남겼어요"
-              : "실험을 마쳤어요 · 모든 기록을 남겼어요",
-          },
+          operation: previousState.analysisScope === "compatibility_only"
+            ? previousState.outcomes.operation
+            : {
+                status: (event.data.mode || previousState.mode) === "offline_demo" ? "fallback_complete" : "complete",
+                message: (event.data.mode || previousState.mode) === "offline_demo"
+                  ? "준비된 설명으로 마쳤어요 · 원본 기록은 그대로 남겼어요"
+                  : "실험을 마쳤어요 · 모든 기록을 남겼어요",
+              },
         },
-        terminalNotice: ["unsupported", "budget_exhausted"].includes(event.data.status)
+        terminalNotice: event.data.message
+          ? { kind: event.data.status || "completed", message: event.data.message }
+          : ["unsupported", "budget_exhausted"].includes(event.data.status)
           ? {
               kind: event.data.status,
               message: TERMINAL_COPY[event.data.status],
