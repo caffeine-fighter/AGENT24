@@ -35,6 +35,11 @@ try {
         Assert-CommandSucceeded "Pytest"
     }
 
+    if (Get-Command node -ErrorAction SilentlyContinue) {
+        node web/tests/core.test.mjs
+        Assert-CommandSucceeded "Web reducer"
+    }
+
     $TrackedSecretFiles = git ls-files | Where-Object {
         (($_ -match '(^|/)\.env($|\.)') -and ($_ -notmatch '(^|/)\.env\.example$')) -or
         ($_ -match '\.pem$|\.key$')
