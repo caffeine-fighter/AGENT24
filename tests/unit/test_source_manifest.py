@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -155,3 +156,19 @@ def test_manifest_loader_rejects_malformed_or_unsafe_manifest(tmp_path) -> None:
 def test_manifest_loader_reports_missing_manifest(tmp_path) -> None:
     with pytest.raises(ManifestNotFoundError, match="allowlisted manifest"):
         load_manifest(tmp_path, descriptor())
+
+
+def test_repository_demo_manifest_is_a_supported_pinned_contract() -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+
+    loaded = load_manifest(repository_root, descriptor())
+
+    assert loaded.name == "nightmare-demo-cake-agent"
+    assert loaded.mission_family == "purchase"
+    assert loaded.unsupported_tools == ()
+    assert {tool.name for tool in loaded.tools} >= {
+        "catalog.search",
+        "payment.charge",
+        "payment.status",
+    }
+    assert loaded.permissions["max_spend_krw"] == 50_000

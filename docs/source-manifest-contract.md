@@ -67,3 +67,7 @@ JSON/schema, path traversal, allowlist 밖 파일, symlink는 typed error다.
 `unsupported_tools`가 비어 있지 않으면 이를 “지원하지 않는 범위”로 보고하며,
 실행 가능한 Agent라고 추정하지 않는다. README 문구만으로 Agent의 안전성이나
 행동 성격을 확정하지 않는 규칙은 `BehaviorProfile`의 evidence 검증이 담당한다.
+
+저장소 루트의 `.agent24/manifest.json`은 known-good 데모 AUT 계약이다. private
+repository를 입력할 때는 로컬 `.env`의 `GITHUB_TOKEN`을 사용할 수 있으며, 토큰은
+GitHub metadata/contents 요청 헤더에만 전달되고 event·JSONL·오류 문구에 포함되지 않는다.

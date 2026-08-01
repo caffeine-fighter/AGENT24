@@ -15,7 +15,52 @@ from openai.types.responses import (
     ResponseOutputText,
 )
 
-from agent24.api import OpenAIWhiteBoxAdapter, create_app
+from agent24.agent.source import MappingRevisionResolver
+from agent24.api import (
+    ExternalAgentPreflight,
+    MappingManifestFetcher,
+    OpenAIWhiteBoxAdapter,
+    RuntimeSettings,
+    create_app,
+)
+
+PINNED_SHA = "0123456789abcdef0123456789abcdef01234567"
+
+
+def _external_preflight(*, supported: bool = True) -> ExternalAgentPreflight:
+    tools = (
+        [
+            {"name": "payment.charge", "side_effect": True, "irreversible": True},
+            {"name": "payment.status"},
+        ]
+        if supported
+        else [{"name": "vendor.transfer", "side_effect": True, "irreversible": True}]
+    )
+    manifest = json.dumps(
+        {
+            "name": "cake-agent",
+            "entrypoint": "agent/main.py",
+            "system_prompt": "Buy one cake under budget.",
+            "mission_family": "purchase",
+            "permissions": {"max_spend_krw": 50_000},
+            "tools": tools,
+        }
+    )
+    return ExternalAgentPreflight(
+        source_resolver=MappingRevisionResolver(
+            {("example/cake-agent", "main"): PINNED_SHA}
+        ),
+        manifest_fetcher=MappingManifestFetcher({".agent24/manifest.json": manifest}),
+        retrieved_at="2026-08-01T17:45:00+09:00",
+    )
+
+
+def _target_payload(*, repository_url: str = "https://github.com/example/cake-agent"):
+    return {
+        "repository_url": repository_url,
+        "requested_ref": "main",
+        "mission": "5만원 이하 케이크 하나를 주문해줘.",
+    }
 
 
 def _response(*, response_id: str, output: list[Any]) -> Response:
@@ -245,3 +290,158 @@ def test_missing_web_directory_keeps_api_available(monkeypatch, tmp_path: Path) 
     assert root.status_code == 200
     assert root.json()["web_status"] == "missing"
     assert health.json()["status"] == "ok"
+
+
+def test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    runtime = OpenAIWhiteBoxAdapter(
+        preflight=_external_preflight(),
+        settings=RuntimeSettings(openai_api_key=None),
+    )
+    app = create_app(runtime=runtime, artifact_root=tmp_path)
+
+    with TestClient(app) as client:
+        accepted = client.post(
+            "/api/runs",
+            json={"input": "one input", "target": _target_payload()},
+        )
+        assert accepted.status_code == 202
+        metadata = accepted.json()
+        events = _sse_data(client.get(metadata["events_url"]).text)
+
+    assert events == _jsonl_events(tmp_path, metadata["run_id"])
+    assert [event["seq"] for event in events] == list(range(len(events)))
+    assert [event["type"] for event in events] == [
+        "run_started",
+        "phase.changed",
+        "source_descriptor",
+        "behavior_profile",
+        "experiment_plan",
+        "offline_demo",
+        "tool_call",
+        "tool_result",
+        "final_output",
+        "run_completed",
+    ]
+    source = events[2]["payload"]
+    profile = events[3]["payload"]
+    plan = events[4]["payload"]
+    assert source["resolved_sha"] == PINNED_SHA
+    assert source["requested_ref"] == "main"
+    assert profile["source_ref"] == f"example/cake-agent@{PINNED_SHA}"
+    assert profile["baseline_observed"] is False
+    assert plan["scenario"]["faults"][0]["fault"] == "commit_then_timeout"
+    assert plan["scenario"]["faults"][0]["target_tool"] == "payment.charge"
+    assert events[-1]["payload"]["mode"] == "offline_demo"
+
+
+def test_source_preflight_failure_falls_back_without_target_claims(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    runtime = OpenAIWhiteBoxAdapter(
+        preflight=_external_preflight(),
+        settings=RuntimeSettings(openai_api_key=None),
+    )
+    app = create_app(runtime=runtime, artifact_root=tmp_path)
+
+    with TestClient(app) as client:
+        accepted = client.post(
+            "/api/runs",
+            json={
+                "input": "one input",
+                "target": _target_payload(repository_url="https://gitlab.com/example/agent"),
+            },
+        )
+        events = _sse_data(client.get(accepted.json()["events_url"]).text)
+
+    event_types = [event["type"] for event in events]
+    assert "run_failed" in event_types
+    assert "offline_demo" in event_types
+    assert "source_descriptor" not in event_types
+    assert "behavior_profile" not in event_types
+    assert "experiment_plan" not in event_types
+    failure = next(event for event in events if event["type"] == "run_failed")
+    assert failure["payload"] == {
+        "status": "offline_demo",
+        "code": "source_preflight_failed",
+    }
+    assert events[-1]["payload"] == {"status": "offline_demo", "mode": "offline_demo"}
+
+
+def test_unsupported_manifest_stops_without_inventing_an_experiment(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    runtime = OpenAIWhiteBoxAdapter(
+        preflight=_external_preflight(supported=False),
+        settings=RuntimeSettings(openai_api_key=None),
+    )
+    app = create_app(runtime=runtime, artifact_root=tmp_path)
+
+    with TestClient(app) as client:
+        accepted = client.post(
+            "/api/runs",
+            json={"input": "one input", "target": _target_payload()},
+        )
+        events = _sse_data(client.get(accepted.json()["events_url"]).text)
+
+    assert [event["type"] for event in events] == [
+        "run_started",
+        "phase.changed",
+        "source_descriptor",
+        "behavior_profile",
+        "run_completed",
+    ]
+    assert events[-1]["payload"]["status"] == "unsupported"
+    assert "gym 어휘 밖" in events[-1]["payload"]["message"]
+
+
+def test_structured_target_validation_rejects_incomplete_submission(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = create_app(artifact_root=tmp_path)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/runs",
+            json={
+                "input": "one input",
+                "target": {
+                    "repository_url": "https://github.com/example/cake-agent",
+                    "requested_ref": "main",
+                },
+            },
+        )
+
+    assert response.status_code == 422
+
+
+def test_github_token_is_only_reported_as_configuration_state(
+    monkeypatch, tmp_path: Path
+) -> None:
+    secret = "github-test-token-must-not-leak"
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("GITHUB_TOKEN", secret)
+    app = create_app(artifact_root=tmp_path)
+
+    with TestClient(app) as client:
+        health = client.get("/health")
+        accepted = client.post(
+            "/api/runs",
+            json={
+                "input": "one input",
+                "target": _target_payload(repository_url="https://gitlab.com/example/agent"),
+            },
+        )
+        events = client.get(accepted.json()["events_url"])
+
+    assert health.json()["github_configured"] is True
+    assert secret not in health.text
+    assert secret not in events.text
+    assert secret not in (tmp_path / f"{accepted.json()['run_id']}.jsonl").read_text(
+        encoding="utf-8"
+    )
