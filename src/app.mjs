@@ -111,7 +111,7 @@ let receivedLiveEvent = false;
 
 function setText(selector, value) {
   const element = $(selector);
-  if (element) element.textContent = value;
+  if (element && element.textContent !== String(value)) element.textContent = value;
 }
 
 function readableIdentifier(value, fallback = "정보 없음") {
@@ -468,7 +468,12 @@ function renderStream() {
     node.querySelector(".stream-seq").textContent = `#${String(event.seq).padStart(2, "0")}`;
     node.querySelector(".stream-type").textContent = event.wire_type || event.type;
     node.querySelector("time").textContent = new Date(event.timestamp).toLocaleTimeString("ko-KR", { hour12: false });
-    node.querySelector("pre").textContent = JSON.stringify(event.raw, null, 2);
+    const rawPayload = node.querySelector("pre");
+    rawPayload.textContent = JSON.stringify(event.raw, null, 2);
+    if (["source.descriptor", "behavior.profile", "experiment.plan", "lab.report"].includes(event.type)) {
+      rawPayload.tabIndex = 0;
+      rawPayload.setAttribute("aria-label", `${event.wire_type || event.type} 원본 JSON`);
+    }
     fragment.appendChild(node);
   });
   stream.replaceChildren(fragment);
@@ -478,6 +483,16 @@ function renderStream() {
 
 function render() {
   document.body.dataset.running = String(state.status === "running");
+  $("#resultSurface").hidden = state.status === "idle" && state.events.length === 0;
+  const hasExperimentEvidence = Boolean(
+    state.experimentPlanView
+    || state.baselineEvidence
+    || state.oracleReport
+    || state.protectedReplay
+    || (state.findingReport && Number(state.findingReport.experiments_run) > 0),
+  );
+  $("#worldGrid").hidden = !hasExperimentEvidence;
+  $("#evidenceGrid").hidden = !state.autopsy.length && !Object.values(state.checks).some((value) => value !== null);
   renderPhases();
   renderAssets();
   renderAutopsy();
@@ -495,9 +510,12 @@ function render() {
       : "—"),
   );
   const notice = $("#runNotice");
-  notice.hidden = !state.terminalNotice;
-  notice.dataset.kind = state.terminalNotice?.kind || "";
-  notice.textContent = state.terminalNotice?.message || "";
+  const noticeMessage = state.terminalNotice?.message
+    || (state.status === "running" ? state.outcomes.operation.message : "")
+    || (["complete", "failed"].includes(state.status) ? state.outcomes.operation.message : "");
+  notice.hidden = !noticeMessage;
+  notice.dataset.kind = state.terminalNotice?.kind || state.status;
+  setText("#runNotice", noticeMessage);
   setText("#runId", state.runId ? `실행 ID ${state.runId}` : "실행 ID —");
   const liveMode = state.mode === "offline_demo" ? "내장 설명 사용 중" : "실시간으로 분석 중";
   setText(
@@ -514,7 +532,9 @@ function render() {
   const runButton = $("#runButton");
   runButton.disabled = state.status === "running";
   runButton.setAttribute("aria-busy", String(state.status === "running"));
-  runButton.querySelector("span").textContent = state.status === "running" ? "실험 중" : "안전 실험 시작";
+  runButton.querySelector("span").textContent = state.status === "running" ? "실험 중" : "실험 시작하기";
+  $("#resetButton").hidden = !["complete", "failed"].includes(state.status);
+  $("#replayButton").hidden = state.status !== "complete";
   $("#replayButton").disabled = state.status !== "complete";
 }
 
@@ -579,6 +599,15 @@ function playFixture(target, { speed = 360 } = {}) {
 async function startLiveRun(target) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1600);
+  clearRun();
+  state = createInitialState(target);
+  state.status = "running";
+  state.source = "live";
+  state.outcomes.operation = { status: "running", message: "저장소 연결을 확인하고 있어요" };
+  lastTarget = { ...target };
+  receivedLiveEvent = false;
+  render();
+  startClock();
   try {
     const response = await fetch(apiUrl("/api/runs"), {
       method: "POST",
@@ -594,6 +623,9 @@ async function startLiveRun(target) {
     });
     if (response.status === 422) {
       clearTimeout(timeout);
+      clearRun();
+      state = createInitialState(target);
+      render();
       showInputError("빈칸을 모두 채워 주세요. GitHub 저장소, 확인할 버전, 에이전트에게 맡길 일이 필요해요.");
       return "rejected";
     }
@@ -602,14 +634,9 @@ async function startLiveRun(target) {
     const runId = payload.run_id;
     if (!runId) throw new Error("Run API response has no run_id");
     clearTimeout(timeout);
-    clearRun();
-    state = createInitialState(target);
-    state.source = "live";
     state.mode = payload.mode || "live";
-    lastTarget = { ...target };
-    receivedLiveEvent = false;
+    state.runId = runId;
     render();
-    startClock();
     const eventsPath = payload.events_url || `/api/runs/${encodeURIComponent(runId)}/events`;
     eventSource = new EventSource(apiUrl(eventsPath));
     eventSource.onmessage = ({ data }) => {
@@ -634,10 +661,24 @@ async function runMission(target) {
   if (result === "unavailable") playFixture(target);
 }
 
-function showInputError(message = "") {
+function showInputError(message = "", field = null) {
   const error = $("#inputError");
+  for (const input of $$("#missionForm input, #missionForm textarea")) {
+    input.removeAttribute("aria-invalid");
+    const describedBy = (input.getAttribute("aria-describedby") || "")
+      .split(/\s+/)
+      .filter((id) => id && id !== "inputError");
+    if (describedBy.length) input.setAttribute("aria-describedby", describedBy.join(" "));
+    else input.removeAttribute("aria-describedby");
+  }
   error.hidden = !message;
-  error.textContent = message;
+  setText("#inputError", message);
+  if (message && field) {
+    field.setAttribute("aria-invalid", "true");
+    const describedBy = new Set((field.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean));
+    describedBy.add("inputError");
+    field.setAttribute("aria-describedby", [...describedBy].join(" "));
+  }
 }
 
 function escapeHtml(value) {
@@ -653,13 +694,14 @@ $("#missionForm").addEventListener("submit", (event) => {
     mission: $("#missionInput").value.trim(),
   };
   const validation = validateTargetInput(target);
-  showInputError(validation?.message || "");
+  showInputError();
   if (validation) {
     const field = validation.field === "repository"
       ? $("#repositoryInput")
       : validation.field === "ref"
         ? $("#refInput")
         : $("#missionInput");
+    showInputError(validation.message, field);
     field?.focus();
     return;
   }
