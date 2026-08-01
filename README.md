@@ -15,6 +15,10 @@ YAI × OpenAI AGENT:24 해커톤 Creative 트랙 4인 팀용 모노레포입니�
 
 공식 안내: <https://yonsei-yai-hackathon.netlify.app/>
 
+## Product concept
+
+- [NIGHTMARE LAB — Agent Failure Scientist](docs/nightmare-lab-concept.md): 다른 에이전트를 sandbox gym에서 자율적으로 실험해 최소 실패 조건을 진단하고 안전 패치를 재검증하는 제품 제안
+
 ## 권장 시작점
 
 빠른 구현을 위해 Python + OpenAI Agents SDK + FastAPI + 얇은 웹 UI를 기본 경계로 잡았습니다. 실제 문제 정의와 제품 로직은 14:00 이후 팀이 결정해 구현합니다.
