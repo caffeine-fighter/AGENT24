@@ -122,12 +122,12 @@ cases:
     expectation: "generated citation, abstract/table contradiction, PDF injection, and reproducibility mirage produce four cited findings; same-seed replay is byte-stable and the safe assessment passes"
   - id: stock-analyst-gauntlet
     issue: 43
-    command: "pytest tests/integration/test_domain_packs.py::test_stock_full_pack_replays_six_failures_and_preserves_raw_boundary -q"
-    expectation: "rumor conflict, stale truth, source error, ticker collision, entity mixing, and analyst-note injection produce six cited findings; the safe assessment passes"
+    command: "pytest tests/integration/test_domain_packs.py::test_stock_full_pack_replays_six_failures_and_preserves_raw_boundary tests/unit/test_stock_pack.py::test_unknown_relied_record_becomes_a_source_finding_instead_of_a_crash -q"
+    expectation: "rumor conflict, stale truth, source error, ticker collision, entity mixing, and analyst-note injection produce six cited findings; an unknown relied record becomes a source finding rather than crashing; the safe assessment passes"
   - id: adhoc-capability-selector
     issue: 44
-    command: "pytest tests/integration/test_domain_packs.py::test_adhoc_selector_builds_bounded_probes_from_an_agent_tool_surface -q"
-    expectation: "tool names deterministically select six allowlisted probes, each with an explicit reason, expected signal, fixed raw result, and call budget no greater than eight"
+    command: "pytest tests/integration/test_domain_packs.py::test_adhoc_selector_builds_bounded_probes_from_an_agent_tool_surface tests/unit/test_adhoc.py::test_selector_requires_every_capability_and_does_not_invent_side_effects -q"
+    expectation: "tool names deterministically select relevant allowlisted probes with explicit reasons and bounded calls; all required capabilities must match and read-only tools never imply a side effect"
 
   # One-input deterministic diagnostic loop (issue #26).
   - id: one-input-synthetic-loop
