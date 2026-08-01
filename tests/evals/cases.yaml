@@ -75,6 +75,8 @@ cases:
     issue: 4
     command: "pytest tests/integration/test_oracle_pipeline.py::test_bounded_retry_violation_cites_every_repeated_call tests/unit/test_gates.py::test_same_seed_passes_when_only_the_targeted_invariant_is_fixed tests/unit/test_gates.py::test_the_generated_neighbors_of_the_retry_loop_all_pass -q"
     expectation: "repeat-bound violation cites every repeated read; the patch fixes bounded_repeat without introducing a new violation, and is accepted even though a pure retry loop never completes the mission"
+
+  # External Agent source and protected replay cases (issues #16, #18, #24).
   - id: source-branch-resolves-to-immutable-sha
     issue: 16
     command: "pytest tests/unit/test_source_manifest.py::test_resolve_source_records_immutable_sha_and_is_byte_stable -q"
