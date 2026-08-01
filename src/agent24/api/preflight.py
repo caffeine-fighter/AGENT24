@@ -23,7 +23,7 @@ from urllib.request import Request, urlopen
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent24.agent.manifest import ALLOWED_MANIFEST_PATHS, load_manifest
-from agent24.agent.mission_support import classify_support, documented_mission
+from agent24.agent.mission_scope import domain_support, mission_domain, mission_scope_stop
 from agent24.agent.models import ExperimentPlan, FaultKind, Mission, MissionFamily, StopDecision
 from agent24.agent.packs import PackSelection, select_domain_pack
 from agent24.agent.participant_intake import (
@@ -228,46 +228,42 @@ class ExternalAgentPreflight:
         pack_selection = select_domain_pack(
             manifest=manifest, profile=profile, mission=mission
         )
+        # Which gym, then whether the submitted mission is inside that gym's
+        # scope, then which fault.  The scope check runs after routing and never
+        # rewrites the selection: the pack really is executable, and folding
+        # this into the router would make ``selection_digest`` depend on prose.
+        # A routing stop that already fired keeps its own reason.
+        scope_stop = mission_scope_stop(mission, pack_selection)
         decision: ExperimentPlan | StopDecision
         if pack_selection.stop is not None:
             decision = pack_selection.stop
+        elif scope_stop is not None:
+            decision = scope_stop
         else:
-            surprise = documented_mission(target.mission)
-            support = (
-                classify_support(
-                    surprise,
-                    tools={capability.tool for capability in profile.capabilities},
-                )
-                if surprise is not None
-                else None
-            )
-            if support is not None and not support.supported:
-                decision = StopDecision(
-                    stop=True,
-                    reason=support.reason,
-                    detail=support.detail,
-                )
-            else:
-                # The pack decision above remains manifest-driven and therefore
-                # auditable.  For a documented supported mission, constrain the
-                # planner to the one fault family that earned that verdict so a
-                # communication request cannot silently become a payment test.
-                planning_mission = mission
-                allowed_faults = None
-                if support is not None:
-                    family = (
-                        MissionFamily.EMAIL
-                        if support.domain.value == "communication"
-                        else MissionFamily.PURCHASE
-                    )
-                    planning_mission = mission.model_copy(update={"family": family})
+            # Once the scope gate says a documented failure domain is
+            # stageable, run only the fault family that earned that verdict.
+            # The router and its digest stay untouched; this prevents a
+            # supported communication request from silently becoming the
+            # pack's higher-priority payment experiment.
+            planning_mission = mission
+            allowed_faults = None
+            domain = mission_domain(mission.text)
+            selected = pack_selection.selected
+            if domain is not None and selected is not None:
+                observed = (*selected.matched_anchors, *selected.matched_optional)
+                support = domain_support(domain, tools=observed)
+                if support.supported and support.fault_family:
+                    if domain.value == "communication":
+                        planning_mission = mission.model_copy(
+                            update={"family": MissionFamily.EMAIL}
+                        )
                     allowed_faults = frozenset({FaultKind(support.fault_family)})
-                decision = select_p0_experiment(
-                    profile,
-                    planning_mission,
-                    allowed_faults=allowed_faults,
-                )
-                mission = planning_mission
+            decision = select_p0_experiment(
+                profile,
+                planning_mission,
+                allowed_faults=allowed_faults,
+            )
+            mission = planning_mission
 
         return ExternalPreflightResult(
             source=source,

@@ -35,7 +35,13 @@ async def run_once(target: ExternalTarget) -> dict[str, object]:
     )
     preflight = await asyncio.to_thread(runner.run, target)
     if not isinstance(preflight.decision, ExperimentPlan):
-        raise RuntimeError(f"known-good target stopped: {preflight.decision.reason}")
+        # Carry the detail, not just the reason.  A mission-scope stop and an
+        # unroutable manifest both report ``unsupported_input``, and the reason
+        # alone cannot tell a smoke-test reader which one happened.
+        raise RuntimeError(
+            f"known-good target stopped: {preflight.decision.reason} — "
+            f"{preflight.decision.detail}"
+        )
     diagnostic = await DeterministicLabLoop().run(
         manifest=preflight.manifest,
         profile=preflight.profile,
