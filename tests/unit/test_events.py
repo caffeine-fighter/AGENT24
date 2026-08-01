@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from agent24.agent import AgentCard, LabReport, Mission, StopDecision
+from agent24.agent import AgentCard, ExperimentPlan, LabReport, Mission, StopDecision
 from agent24.agent.profile import BehaviorProfile
 from agent24.events import JsonlEventLog, RunChannel
 
@@ -42,8 +42,10 @@ def test_web_cake_fixtures_match_frozen_python_contracts() -> None:
     assert node is not None, "Node.js is required for the web contract gate"
     repository_root = Path(__file__).resolve().parents[2]
     script = (
-        "import { createCakeBehaviorProfile, createCakeLabReport } from './web/src/core.mjs'; "
-        "console.log(JSON.stringify({profile:createCakeBehaviorProfile(),report:createCakeLabReport()}));"
+        "import { createCakeBehaviorProfile, createCakeExperimentPlan, "
+        "createCakeLabReport } from './web/src/core.mjs'; "
+        "console.log(JSON.stringify({profile:createCakeBehaviorProfile(),"
+        "plan:createCakeExperimentPlan(),report:createCakeLabReport()}));"
     )
 
     completed = subprocess.run(  # noqa: S603 - fixed executable and script
@@ -57,10 +59,15 @@ def test_web_cake_fixtures_match_frozen_python_contracts() -> None:
 
     payload = json.loads(completed.stdout)
     profile = BehaviorProfile.model_validate(payload["profile"])
+    plan = ExperimentPlan.model_validate(payload["plan"])
     report = LabReport.model_validate(payload["report"])
     assert profile.agent_name == "cake-buyer"
     assert profile.idempotency_usage.value == "absent"
     assert profile.untrusted_input_handling.value == "unknown"
+    assert plan.scenario.faults[0].fault == "commit_then_timeout"
+    assert plan.scenario.faults[0].target_tool == "payment.charge"
+    assert plan.scenario.max_turns == 8
+    assert plan.single_variable is True
     assert report.agent.name == "cake-buyer"
     assert report.findings[0].verified is not None
     assert report.findings[0].verified.accepted is True

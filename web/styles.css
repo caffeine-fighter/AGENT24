@@ -144,13 +144,17 @@ h1 em { color: var(--red); font-style: normal; }
 
 .report-panel { padding: 22px; }
 .report-profile, .assessment-grid, .claim-grid { display: grid; gap: 10px; margin-top: 16px; }
-.report-profile { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.report-profile { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 .assessment-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .claim-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .report-profile article, .assessment-grid article, .claim-grid article { min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: rgba(255,255,255,.025); }
 .report-profile small, .claim-grid small { display: block; margin-bottom: 8px; color: var(--muted); font: 8px var(--mono); letter-spacing: .08em; }
 .report-profile strong, .claim-grid strong { display: block; font-size: 13px; }
 .report-profile p, .claim-grid p, .claim-grid pre { overflow-wrap: anywhere; margin: 8px 0 0; color: #aeb4c0; font: 10px/1.55 var(--mono); white-space: pre-wrap; }
+.report-profile .selected-experiment { border-color: rgba(255,77,93,.3); background: linear-gradient(145deg, rgba(255,77,93,.08), rgba(255,255,255,.02)); }
+.report-profile .selected-experiment strong { color: #fff; }
+.report-profile .selected-experiment p:nth-of-type(2) { color: #d7b8bc; }
+.report-profile .selected-experiment p:nth-of-type(3) { color: #b7c9ee; }
 .assessment-grid article > div { display: flex; align-items: center; justify-content: space-between; gap: 7px; }
 .assessment-grid strong { font: 700 9px var(--mono); text-transform: uppercase; }
 .assessment-grid span { padding: 4px 6px; border-radius: 99px; font: 800 8px var(--mono); }
@@ -227,7 +231,7 @@ h1 em { color: var(--red); font-style: normal; }
 .stream-line[data-kind="tool_result"] .stream-type { color: var(--green); }
 .stream-line[data-kind="failure.detected"] .stream-type { color: var(--red); }
 .stream-line pre { overflow-wrap: anywhere; margin: 0; padding: 9px; color: #9fa6b3; font: 9px/1.5 var(--mono); white-space: pre-wrap; }
-.stream-line[data-kind="behavior.profile"] pre, .stream-line[data-kind="lab.report"] pre { max-height: 320px; overflow: auto; scrollbar-color: #343945 transparent; }
+.stream-line[data-kind="behavior.profile"] pre, .stream-line[data-kind="experiment.plan"] pre, .stream-line[data-kind="lab.report"] pre { max-height: 320px; overflow: auto; scrollbar-color: #343945 transparent; }
 .stream-footer { padding: 10px 14px; border-top: 1px solid var(--line); color: #626875; font: 9px var(--mono); }
 
 body[data-running="true"] .status-dot { animation: blink 1s infinite; }
