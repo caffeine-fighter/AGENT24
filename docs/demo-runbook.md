@@ -117,14 +117,17 @@ uv run uvicorn agent24.api.app:app --host 127.0.0.1 --port 8000
 동일 target reference 결과를 live OpenAI 결과로 설명하지 않는다. `offline_demo` tool event는
 target 없는 generic 입력에만 허용된다.
 
-비공개 origin을 토큰 없이 전체 경로로 리허설할 때는 다음 명령을 사용한다.
+별도 원격 저장소나 배포 없이, 체크인된 예시 Agent로 전체 경로를 리허설할 때는 다음
+명령을 사용한다.
 
 ```bash
 uv run python scripts/demo-local.py
 ```
 
-이 명령은 현재 checkout의 full SHA와 allowlisted manifest/entrypoint를 `local-demo`
-source로 고정한다. 화면에 로컬 source임을 표시하며, 외부 저장소 코드는 실행하지 않는다.
+이 명령은 `examples/demo-agent-repo`의 manifest와 entrypoint bytes를 64자 bundle SHA-256으로
+고정한다. 정확히 검토된 이 bundle과 고정 mission에 한해서 entrypoint를 `python -I -S`
+child에서 실행하며, 모든 tool call은 network-disabled host-owned SandboxGym으로 전달한다.
+임의 로컬 경로와 외부 GitHub source는 실행하지 않고 실제 서비스 side effect도 만들지 않는다.
 
 예시 participant Agent repo로 self-contained 데모를 할 때는 다음 명령을 사용한다.
 
@@ -137,9 +140,9 @@ uv run python scripts/demo-local.py --example-agent --port 8769
 `local-bundle` resolver로 bounded intake한다. allowlisted path와 bytes에서 계산한 64자
 bundle SHA-256 revision, manifest/entrypoint의 Git blob SHA 및 SHA-256 content hash를
 보존하며 이를 Git commit으로 표시하지 않는다. 별도 공개 GitHub 저장소나 fake 좌표를
-사용하지 않고, entrypoint도 여전히 import/실행하지 않는다. example-agent 모드의 고정
-mission은 “케이크 1개 주문 + 가족 캘린더 등록”이며, 별도 child runner는 다른 mission을
-실행 전에 거부한다.
+사용하지 않는다. example-agent 모드의 고정 mission은 “케이크 1개 주문 + 가족 캘린더
+등록”이며, exact hash를 통과한 entrypoint만 child runner가 실행한다. 다른 mission·bundle
+bytes·path는 child 생성 전에 거부한다.
 
 실제 공개 GitHub 입력을 브라우저에서 검증하려면 다음 모드로 실행한다.
 
@@ -172,8 +175,11 @@ AGENT24_RUN_REAL_OPENAI_SMOKE=1 uv run pytest -q \
   tests/integration/test_openai_diagnostic_smoke.py
 ```
 
-현재 #101의 `run_sandbox_experiment`는 기존 `DeterministicLabLoop` bundled primitive를
-호출한다. #100 bounded child runner를 주 evidence로 연결하는 일은 #102의 별도 gate다.
+현재 `run_sandbox_experiment`는 exact local bundle에서 #100 bounded child runner를 주
+실행 primitive로 사용한다. baseline·fault·3회 replay·protected replay·neighbor·benign·
+blanket-block·minimized run은 같은 source SHA, fixture, seed, 초기 snapshot에 묶이며
+`sandbox.evidence`의 raw trace/ledger와 같은 evidence ID가 report와 protected replay에
+연결된다. runner crash·budget stop은 finding 없이 typed terminal로 끝난다.
 
 ### 3회 known-good 사전 검증
 

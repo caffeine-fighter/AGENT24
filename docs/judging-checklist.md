@@ -12,7 +12,7 @@
 - [x] source SHA, BehaviorProfile evidence, plan의 `WHY`·`EXPECT`, oracle, report가 같은 Raw Stream에 남는다.
 - [x] raw `tool_call` / `tool_result` payload는 표시용 summary와 분리되어 보존된다.
 - [x] source/manifest, diagnostic loop, OpenAI timeout/API 오류가 typed stage/terminal로 드러나며 target 결과를 다른 fixture로 바꾸지 않는다.
-- [x] 외부 repository code를 실행하지 않는 P0 경계가 UI와 report에 표시된다.
+- [x] 임의 외부 repository code는 실행하지 않고, exact-reviewed local demo bundle만 제한된 child에서 실행하는 경계가 UI와 report에 표시된다.
 
 ### Real-time Adaptability · 25%
 
@@ -24,7 +24,7 @@
 
 ### Prompt Quality · 20%
 
-- [x] runtime instruction은 synthetic scope, observed/hypothesis 분리, 도구 우선 호출, 실제 action 주장 금지를 명시한다.
+- [x] runtime instruction은 `target_sandbox`와 synthetic/adapter scope를 구분하고, observed/hypothesis 분리, 도구 우선 호출, 실제 외부 action 주장 금지를 명시한다.
 - [x] experiment 선택은 LLM keyword guess가 아니라 BehaviorProfile field와 evidence를 읽는 결정적 policy다.
 - [x] `unsupported`, `budget_exhausted`, `no_failure_observed`가 취약점이나 안전 인증으로 바뀌지 않는다.
 - [x] LLM은 controller evidence를 설명할 뿐 oracle verdict를 생성하지 않는다.
@@ -61,7 +61,7 @@
 | **테스트 runner가 고정이면 Agent가 무엇을 하나요?** | “환경과 oracle은 재현성을 위해 고정돼 있습니다. Lab Agent는 입력에서 BehaviorProfile을 만들고, 어떤 fault를 먼저 주입할지 계획하며, 도구를 호출하고, evidence를 부검하고, 최소 보호책을 선택해 재실행합니다. 정답을 fixture에 미리 쓰는 대신 같은 hidden world가 pass/fail을 판정합니다.” | `experiment_plan`의 `tool_choice_reason`, `expected_evidence`, Raw `gym.tool_call`, `oracle.report` |
 | **실제 행동 전에 사용자 승인을 받으면 되지 않나요?** | “승인은 알려진 위험한 행동에는 유용하지만, timeout 뒤 이미 commit된 결제를 다시 승인받는 식의 상태 불일치는 해결하지 못합니다. P0은 실제 action을 전혀 하지 않고, idempotency와 reconciliation 같은 실행 정책을 합성 환경에서 검증합니다. 실제 배포에서는 승인도 별도 방어선으로 남습니다.” | 첫 charge의 `committed=UNKNOWN`, status 조회 없는 retry, protected reconciliation |
 | **LLM이 자기 결과를 채점하면 믿을 수 있나요?** | “채점하지 않습니다. controller가 소유한 hidden world, ledger, trace invariant가 verdict를 만듭니다. LLM은 bounded evidence를 마지막에 설명할 수 있지만 `verified_mitigation`을 선언할 권한은 없습니다.” | `oracle.report`, ledger refs, `protected_replay.gates`, LLM 호출 전 생성된 `finding_report` |
-| **이 sandbox가 실제 Agent와 얼마나 같나요?** | “P0은 외부 코드를 실행하지 않습니다. pinned manifest로 선택한 synthetic behavior archetype만 측정하므로 실제 Agent의 취약점 발견이라고 말하지 않습니다. 대신 fault, seed, world, oracle을 결정적으로 만들어 제품 원리와 진단 계약을 증명합니다. framework 실행 adapter는 후속 범위입니다.” | `source_descriptor`, `execution_scope=synthetic_archetype`, residual/unsupported scope |
+| **이 sandbox가 실제 Agent와 얼마나 같나요?** | “기본 데모는 체크인 후 bytes를 검토·고정한 ExampleCakeAgent entrypoint 자체를 제한된 child에서 실행합니다. 도구와 서비스는 host-owned synthetic replacement라 실제 provider fidelity나 임의 GitHub Agent 지원을 주장하지 않습니다. 같은 source·seed·초기 snapshot의 raw trace와 ledger만 판정합니다.” | `source_descriptor`, `execution_scope=target_sandbox`, `sandbox.evidence`, residual/unsupported scope |
 | **결제를 전부 막으면 가장 안전하지 않나요?** | “그 정책은 charge를 0건으로 만들지만 케이크 구매 목표도 실패합니다. 우리의 patch gate는 same-seed 안전뿐 아니라 benign control과 mission success를 요구하고 blanket block을 명시적으로 거부합니다.” | `blanket_block.mission_succeeded=false`, `blanket_block_rejected=true`, benign PASS |
 | **3/3이면 안전하다는 뜻인가요?** | “아닙니다. 같은 seed에서 이 failure가 재현되고 이 patch가 통과했다는 뜻뿐입니다. stale status, 실제 provider, 미탐색 operator는 residual risk로 남고 실패 미발견은 안전 인증이 아닙니다.” | `reproduction_count=3`, `residual_risk`, `unsupported_scope` |
 | **GitHub repo를 받는데 악성 코드는 어떻게 막나요?** | “clone, import, install, execute하지 않습니다. GitHub metadata로 ref를 SHA에 고정합니다. owner manifest는 두 allowlist 경로·256 KB로 제한하고, manifest가 없으면 검토된 exact SHA의 최대 4개 path/blob metadata만 확인합니다. private token은 request header에만 있습니다.” | full resolved SHA, profile origin, path/blob/line evidence, `SYNTHETIC ARCHETYPE` badge |
@@ -83,9 +83,9 @@
 
 대신 다음 범위 문장을 사용한다.
 
-> “고정된 manifest로 선택한 synthetic archetype에서 controller oracle이 실패와 보호책을
-> 측정했습니다. 외부 repository code와 실제 계정은 실행하지 않았으며, 미탐색 범위는
-> 안전 인증하지 않습니다.”
+> “검토·고정된 로컬 예시 Agent를 제한된 child에서 실행하고, host-owned synthetic
+> service의 trace·ledger로 실패와 보호책을 측정했습니다. 임의 외부 repository와 실제
+> 계정·provider는 실행하지 않았으며, 미탐색 범위는 안전 인증하지 않습니다.”
 
 ## 심사 직전 숫자 cross-check
 

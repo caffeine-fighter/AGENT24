@@ -286,6 +286,8 @@ function renderScopeNotice() {
   scopeNotice.dataset.scope = state.analysisScope;
   scopeNotice.textContent = state.analysisScope === "fixture_fallback"
     ? "내장 예시로 전환했습니다. 제출한 저장소를 분석한 결과가 아닙니다. 가상 환경의 원본 기록만 보여드리며, 이 결과로 안전을 보장할 수 없습니다."
+    : state.analysisScope === "target_sandbox"
+      ? "검토 후 고정한 로컬 ExampleCakeAgent의 정확한 entrypoint bytes를 제한된 child process에서 실행했습니다. 결제·캘린더는 network-disabled synthetic local replacement이며 실제 외부 side effect는 없습니다. 이는 임의 저장소 코드 실행을 지원하거나 안전성을 보장한다는 뜻이 아닙니다."
     : state.analysisScope === "allowlisted_adapter"
       ? "정확히 고정된 외부 Agent source의 계약을 정적으로 확인한 뒤, 허용된 adapter의 네트워크 차단 local replacement만 실행했습니다. 제출한 Python과 실제 merchant·결제 side effect는 실행하지 않았습니다."
     : state.analysisScope === "compatibility_only"
@@ -293,10 +295,20 @@ function renderScopeNotice() {
       : state.analysisScope === "source_unresolved" || state.analysisScope === "source_preflight_failed"
       ? "외부 저장소 또는 allowlist 설정을 확인하지 못해 제출한 에이전트 분석과 실험을 실행하지 않았습니다."
       : "가상 환경에서만 실행합니다. 외부 저장소의 코드는 실행하지 않습니다. 확인된 저장소 정보와 허용된 설정 파일을 바탕으로 행동을 재현하며, 문제를 찾지 못했더라도 안전하다고 단정할 수 없습니다.";
+  const headerBoundary = document.querySelector(".header-boundary");
+  if (headerBoundary) {
+    headerBoundary.textContent = state.analysisScope === "target_sandbox"
+      ? "TARGET CODE IN SANDBOX · 실제 외부 side effect 없음"
+      : state.analysisScope === "allowlisted_adapter"
+        ? "ALLOWLISTED ADAPTER · 실제 외부 side effect 없음"
+        : isExampleAgentTarget(state.target?.repositoryUrl)
+          ? "BOUNDED DEMO · 실제 외부 side effect 없음"
+          : "SIMULATION ONLY · 실제 외부 side effect 없음";
+  }
 }
 
-const API_CALL_TYPES = new Set(["tool_call", "gym.tool_call"]);
-const API_RESULT_TYPES = new Set(["tool_result", "gym.tool_result"]);
+const API_CALL_TYPES = new Set(["tool_call", "gym.tool_call", "target.tool_call"]);
+const API_RESULT_TYPES = new Set(["tool_result", "gym.tool_result", "target.tool_result"]);
 
 function eventToolName(event) {
   return event?.data?.tool || event?.raw?.name || "unknown API";
@@ -451,20 +463,126 @@ function buildConversationEntries() {
         );
         break;
       }
+      case "target.execution.plan":
+        add(
+          event,
+          "고정된 target entrypoint 실행 계획을 세웠어요.",
+          "이제 합성 archetype이 아니라 ExampleCakeAgent source 자체를 bounded child에서 실행합니다.",
+          "target model " + (data.target_model || "deterministic_python") + " · " + (data.runs || []).join(" → ") + " · service " + (data.service_boundary || "unknown"),
+        );
+        break;
+      case "target.execution.started":
+        add(
+          event,
+          data.execution_kind === "protected_replay"
+            ? "같은 target code를 보호 경계와 함께 다시 실행하고 있어요."
+            : data.execution_kind === "benign_control"
+              ? "같은 target code의 clean control을 실행하고 있어요."
+              : "고정된 target entrypoint를 child sandbox에서 실행하고 있어요.",
+          "target source의 tool call과 local replacement 응답을 원본 순서로 기록합니다.",
+          (data.target_model || "deterministic_python") + " · " + (data.service_boundary || "synthetic local replacement") + " · run " + (data.target_run_id || "unknown"),
+          "neutral",
+        );
+        break;
+      case "target.execution.completed": {
+        const world = data.world || {};
+        const kind = data.execution_kind || "target";
+        add(
+          event,
+          kind === "vulnerable"
+            ? "실제 target 실행이 끝났어요."
+            : kind === "protected_replay"
+              ? "실제 protected target replay가 끝났어요."
+              : "실제 clean control이 끝났어요.",
+          data.succeeded === true
+            ? `target Agent가 ${world.orders ?? "?"}건 주문, 결제 ${world.charges ?? "?"}회를 남겼습니다.`
+            : "target 실행이 실패해 결과를 확정하지 않았습니다.",
+          (data.target_model || "deterministic_python") + " · wallet " + (world.wallet_krw ?? "?") + " · trace " + (data.trace_events ?? "?") + " · " + (data.trace_digest || "digest 없음"),
+          data.succeeded === true ? "neutral" : "danger",
+        );
+        break;
+      }
+      case "target.assessment":
+        add(
+          event,
+          "실제 target ledger를 기준으로 안전 조건을 판정했어요.",
+          "Agent의 완료 응답이 아니라 child sandbox의 ledger와 world state를 사용했습니다.",
+          "violations " + (Array.isArray(data.violations) ? data.violations.length : 0) + "개 · " + (data.target_model || "deterministic_python"),
+          Array.isArray(data.violations) && data.violations.length ? "danger" : "good",
+        );
+        break;
+      case "target.policy_applied":
+        add(
+          event,
+          "host boundary가 idempotency key를 적용했어요.",
+          "target source를 고치거나 성공을 가정한 것이 아니라, protected replay의 dispatch 경계에서만 요청을 보호했습니다.",
+          (data.policy_id || "policy") + " · " + (data.action || "action") + " · " + (data.reason || ""),
+          "recovering",
+        );
+        break;
+      case "target.policy_reconciliation":
+        add(
+          event,
+          "host boundary가 기존 결제 상태를 확인했어요.",
+          "재시도 전에 payment.status를 조회해 이미 커밋된 결제를 다시 만들지 않았습니다.",
+          (data.policy_id || "policy") + " · payment.status · " + (data.result?.status || "unknown"),
+          "recovering",
+        );
+        break;
+      case "target.ledger_mutation":
+        add(
+          event,
+          "target ledger에 상태 변화가 기록됐어요.",
+          "child sandbox의 host-owned ledger mutation을 원본 순서로 보존했습니다.",
+          (data.execution_kind || "target") + " · " + (Array.isArray(data.entries) ? data.entries.length : 0) + " effect",
+          "neutral",
+        );
+        break;
+      case "target.world_diff":
+        add(
+          event,
+          data.changed ? "target world state가 변경됐어요." : "조회만 하고 world state는 유지됐어요.",
+          "target entrypoint 실행 뒤의 snapshot hash 변화를 기록했습니다.",
+          (data.execution_kind || "target") + " · " + (data.before_state_hash || "?") + " → " + (data.after_state_hash || "?"),
+          data.changed ? "danger" : "neutral",
+        );
+        break;
       case "gym.baseline.completed":
         add(
           event,
-          "안전장치 적용 전 baseline 기록을 확보했어요.",
-          "이 기록은 합성 Gym의 baseline이며, 제출한 Agent 코드가 실행됐다는 뜻이 아닙니다.",
-          (data.execution_scope || "synthetic") + " · " + (data.trace_count ?? "?") + " trace · " + (data.ledger_count ?? "?") + " ledger",
+          data.execution_scope === "target_sandbox"
+            ? "실제 target code의 baseline 기록을 확보했어요."
+            : "안전장치 적용 전 baseline 기록을 확보했어요.",
+          data.execution_scope === "target_sandbox"
+            ? "고정된 ExampleCakeAgent를 bounded child에서 실행한 clean control입니다."
+            : "이 기록은 합성 Gym의 baseline이며, 제출한 Agent 코드가 실행됐다는 뜻이 아닙니다.",
+          (data.execution_scope || "synthetic") + " · " + (data.trace_count ?? data.trace_events ?? "?") + " trace · " + (data.ledger_count ?? data.ledger_entries ?? "?") + " ledger",
         );
         break;
+      case "sandbox.evidence": {
+        const perturbedPayments = Array.isArray(data.perturbed?.ledger)
+          ? data.perturbed.ledger.filter((entry) => entry.tool === "payment.charge").length
+          : "?";
+        const protectedPayments = Array.isArray(data.protected?.ledger)
+          ? data.protected.ledger.filter((entry) => entry.tool === "payment.charge").length
+          : "?";
+        add(
+          event,
+          "로컬 Agent 실행 증거 묶음을 고정했어요.",
+          "같은 source SHA·fixture·seed·초기 snapshot의 취약 실행과 protected replay를 원본 trace·ledger로 연결했습니다.",
+          `${data.evidence_id || "evidence 없음"} · payment ${perturbedPayments} → ${protectedPayments} · replay ${data.replay_digests?.length ?? "?"}/${data.protected_replay_digests?.length ?? "?"}`,
+          "danger",
+        );
+        break;
+      }
       case "damage.updated":
         add(
           event,
-          "가상 world state에서 변화가 관찰됐어요.",
+          data.execution_scope === "target_sandbox"
+            ? "실제 target code의 world state에서 변화가 관찰됐어요."
+            : "가상 world state에서 변화가 관찰됐어요.",
           data.detail || data.headline || "상태 변화가 기록됐어요.",
-          (data.label || "damage") + " · " + summarizeWorld(data.world),
+          (data.execution_scope === "target_sandbox" ? "actual target sandbox" : (data.label || "damage")) + " · " + summarizeWorld(data.world),
           "danger",
         );
         break;
@@ -481,7 +599,9 @@ function buildConversationEntries() {
         const divergence = Array.isArray(data.steps) ? data.steps.find((step) => step.kind === "divergence") : null;
         add(
           event,
-          "공개 실행 기록에서 divergence를 정리했어요.",
+          state.analysisScope === "target_sandbox"
+            ? "실제 target trace에서 divergence를 정리했어요."
+            : "공개 실행 기록에서 divergence를 정리했어요.",
           divergence?.text || "autopsy evidence가 기록됐어요.",
           "steps " + (Array.isArray(data.steps) ? data.steps.length : 0) + "개",
           "danger",
@@ -501,13 +621,17 @@ function buildConversationEntries() {
         add(
           event,
           data.success ? "protected replay가 통과했어요." : "protected replay에서 다시 문제가 관찰됐어요.",
-          data.success ? "제안한 안전장치 뒤의 합성 world state를 다시 확인했어요." : "안전장치 뒤에도 동일한 조건을 통과하지 못했어요.",
+          data.success
+            ? data.execution_scope === "target_sandbox"
+              ? "같은 target entrypoint를 보호 경계에서 다시 실행해 실제 world state를 확인했어요."
+              : "제안한 안전장치 뒤의 합성 world state를 다시 확인했어요."
+            : "안전장치 뒤에도 동일한 조건을 통과하지 못했어요.",
           summarizeWorld(data.world),
           data.success ? "good" : "danger",
         );
         break;
       case "oracle.report":
-        add(event, "Gym oracle 결과를 받았어요.", data.passed === true ? "모든 검사 조건이 통과했어요." : "검사 조건 중 일부가 통과하지 못했어요.", "violations " + (Array.isArray(data.violations) ? data.violations.length : 0) + "개", data.passed === true ? "good" : "danger");
+        add(event, data.execution_scope === "target_sandbox" ? "실제 target ledger 판정 결과를 받았어요." : "Gym oracle 결과를 받았어요.", data.passed === true ? "모든 검사 조건이 통과했어요." : "검사 조건 중 일부가 통과하지 못했어요.", "violations " + (Array.isArray(data.violations) ? data.violations.length : 0) + "개", data.passed === true ? "good" : "danger");
         break;
       case "finding.report":
         add(event, "finding record를 정리했어요.", data.bounded_summary || data.status || "finding 결과가 기록됐어요.", "finding " + (data.finding_id || "unknown"));
@@ -554,6 +678,16 @@ function buildConversationEntries() {
         );
         break;
       case "run.completed":
+        if (data.execution_scope === "target_sandbox") {
+          add(
+            event,
+            "실제 target sandbox 진단을 완료했어요.",
+            data.message || "target evidence와 deterministic 진단서를 보존했습니다.",
+            "target model deterministic_python · OpenAI 설명 " + (data.openai_analysis_completed === true ? "사용" : "미사용") + " · " + (data.safety_boundary || "TARGET_CODE_IN_SANDBOX"),
+            data.status === "target_execution_failed" ? "danger" : data.openai_analysis_completed === true ? "good" : "warning",
+          );
+          break;
+        }
         if (data.diagnostic_completed === true && data.openai_analysis_completed === false) {
           add(
             event,
@@ -596,8 +730,8 @@ function buildConversationEntries() {
 
   addMilestone(pick(["source.descriptor", "source.snapshot", "run.started"]));
   addMilestone(pick(["behavior.profile", "target.profile"]));
-  addMilestone(pick(["experiment.plan", "pack.selected", "pack.compatibility"]));
-  addMilestone(pick(["damage.updated", "failure.detected", "oracle.report", "lab.report", "finding.report"]));
+  addMilestone(pick(["target.execution.plan", "experiment.plan", "pack.selected", "pack.compatibility"]));
+  addMilestone(pick(["sandbox.evidence", "target.assessment", "damage.updated", "failure.detected", "oracle.report", "lab.report", "finding.report"]));
   addMilestone(pick(["vaccine.proposed"]));
   addMilestone(pick(["replay.completed", "protected_replay", "verification.updated"]));
   if (!hasStructuredReport && !hasOfflineStatus) addMilestone(pick(["final_output"]));
@@ -684,7 +818,10 @@ function renderConversation() {
 }
 
 function apiResultPayload(pair) {
-  return pair?.result?.raw?.output ?? pair?.result?.data ?? {};
+  return pair?.result?.raw?.output
+    ?? pair?.result?.data?.result
+    ?? pair?.result?.data
+    ?? {};
 }
 
 function apiPairVisualStatus(pair) {
@@ -746,6 +883,18 @@ function describeCuaPair(pair, index, pairs) {
       detail: result
         ? "공개 tool 응답에서 상품과 49,000원 가격을 확인했습니다."
         : "가상 상점에서 요청 조건에 맞는 상품을 확인합니다.",
+      activityStatus,
+      visualStatus,
+      tool,
+      phase,
+    };
+  }
+  if (tool === "catalog.search") {
+    return {
+      title: result ? "상품 검색 완료" : "요청 조건에 맞는 케이크를 검색하는 중…",
+      detail: result
+        ? "target Agent가 5만원 이하의 판매 가능 상품을 확인했습니다."
+        : "catalog.search에 생일 케이크와 최대 가격 조건을 전달합니다.",
       activityStatus,
       visualStatus,
       tool,
@@ -873,6 +1022,20 @@ function buildCuaActivity(pairs) {
       });
       return;
     }
+    if (event.type === "target.execution.started") {
+      const kind = String(data.execution_kind || "target").replaceAll("_", " ");
+      entries.push({
+        title: kind === "vulnerable"
+          ? "target code 실행 · 실패 재현"
+          : kind === "protected replay"
+            ? "target code 실행 · 보호 replay"
+            : "target code 실행 · " + kind,
+        detail: "ExampleCakeAgent entrypoint를 bounded child에서 실행하고 local replacement API를 연결합니다.",
+        meta: (data.target_model || "deterministic_python") + " · run " + (data.target_run_id || "unknown"),
+        status: "active",
+      });
+      return;
+    }
     if (API_CALL_TYPES.has(event.type)) {
       const matched = pairByRequest.get(event);
       if (!matched) return;
@@ -882,6 +1045,27 @@ function buildCuaActivity(pairs) {
         detail: copy.detail,
         meta: visibleCuaToolName(copy.tool) + " · " + (eventCallId(event) === "—" ? "event #" + event.seq : "call_id " + eventCallId(event)),
         status: copy.activityStatus,
+      });
+      return;
+    }
+    if (event.type === "target.policy_reconciliation") {
+      entries.push({
+        title: "기존 결제 상태 확인 · 추가 결제 대기",
+        detail: "unknown 응답 뒤 payment.status를 확인해 이미 커밋된 결제를 재사용합니다.",
+        meta: "host policy · event #" + event.seq,
+        status: "recovering",
+      });
+      return;
+    }
+    if (event.type === "target.execution.completed") {
+      const kind = String(data.execution_kind || "target").replaceAll("_", " ");
+      entries.push({
+        title: "target code 실행 완료 · " + kind,
+        detail: data.succeeded === true
+          ? "Agent result와 child ledger를 확인했습니다. " + summarizeWorld(data.world)
+          : "target 실행이 실패해 finding으로 확정하지 않았습니다.",
+        meta: (data.target_model || "deterministic_python") + " · trace " + (data.trace_events ?? "?") + " · event #" + event.seq,
+        status: data.succeeded === true ? "done" : "error",
       });
       return;
     }
@@ -1387,12 +1571,24 @@ function renderCuaComputer(pairs) {
   setText("#cuaWalletState", Number.isFinite(world?.wallet_krw) ? won.format(world.wallet_krw) : "—");
   setText(
     "#cuaScreenCaption",
-    "가상 브라우저 · " + (latest ? "event #" + latest.seq : "event 대기") + " · 실제 구매 및 결제 없음",
+    (state.analysisScope === "target_sandbox" ? "실제 target code · bounded child" : "가상 브라우저")
+      + " · " + (latest ? "event #" + latest.seq : "event 대기")
+      + " · 실제 외부 구매 및 결제 없음",
   );
+  const boundary = document.querySelector(".browser-boundary");
+  if (boundary) {
+    boundary.textContent = state.analysisScope === "target_sandbox" ? "BOUNDED CHILD" : "SIMULATED";
+  }
 }
 
 function renderGymSession() {
   const pairs = pairApiInteractions(state.events);
+  setText(
+    "#interactionTitle",
+    state.analysisScope === "target_sandbox"
+      ? "ExampleCakeAgent ↔ local replacement API"
+      : "Target agent ↔ Gym",
+  );
   const apiList = $("#apiInteractionList");
   if (apiList) {
     if (!pairs.length) {
@@ -1469,6 +1665,16 @@ function renderGymSession() {
       const world = data.world || {};
       worldChanges.push({ title: (event.phase || "CRASH") + " · vulnerable state", detail: data.detail || diffWorld(previousWorld, world), tone: "danger" });
       previousWorld = world;
+    } else if (event.type === "target.execution.completed") {
+      const world = data.world || {};
+      const kind = data.execution_kind || "target";
+      const phase = event.phase || data.phase || "CRASH";
+      worldChanges.push({
+        title: phase + " · actual " + kind.replaceAll("_", " "),
+        detail: (data.succeeded ? "실행 완료 · " : "실행 실패 · ") + summarizeWorld(world),
+        tone: data.succeeded ? "neutral" : "danger",
+      });
+      previousWorld = world;
     } else if (event.type === "replay.completed") {
       const world = data.world || {};
       worldChanges.push({ title: (event.phase || "REPLAY") + " · protected state", detail: (data.success ? "pass · " : "fail · ") + diffWorld(previousWorld, world), tone: data.success ? "good" : "danger" });
@@ -1495,6 +1701,7 @@ function renderGymSession() {
   setText("#worldChangeCount", worldChanges.length + " change" + (worldChanges.length === 1 ? "" : "s"));
 
   const scopeLabels = {
+    target_sandbox: "reviewed local AUT / bounded child / synthetic services",
     synthetic_archetype: "synthetic / no side effect",
     fixture_fallback: "fixture / 제출 repo 미분석",
     allowlisted_adapter: "allowlisted adapter / network blocked",
@@ -1504,7 +1711,12 @@ function renderGymSession() {
   };
   setText("#gymPhaseLabel", state.phase || "대기");
   setText("#gymSessionScope", scopeLabels[state.analysisScope] || state.analysisScope || "scope unknown");
-  setText("#worldStateScope", "sandbox / no side effect");
+  setText(
+    "#worldStateScope",
+    state.analysisScope === "target_sandbox"
+      ? "host-owned ledger / synthetic services / no external side effect"
+      : "sandbox / no side effect",
+  );
   const sessionStatus = state.status === "running"
     ? "RUNNING · " + (state.phase || "CLONE")
     : state.status === "complete"
@@ -1534,6 +1746,7 @@ function renderLabReport() {
   const snapshot = state.sourceSnapshotView;
   const adapter = state.adapterContractView;
   const source = state.sourceDescriptorView;
+  const targetSandbox = state.analysisScope === "target_sandbox";
   const hasTerminalResult = ["complete", "partial", "failed"].includes(state.status);
   panel.hidden = !hasTerminalResult;
   if (panel.hidden) return;
@@ -1567,6 +1780,7 @@ function renderLabReport() {
       || (state.status === "running" ? "공개 이벤트를 모으고 있어요." : state.terminalNotice?.message || "실험 결과를 정리하고 있어요."),
   );
   const scopeLabels = {
+    target_sandbox: "판정 범위 · 검토·고정된 local AUT entrypoint 실행 (bounded child) + synthetic local services",
     synthetic_archetype: "판정 범위 · 합성 archetype 실행",
     fixture_fallback: "판정 범위 · 내장 예시이며 제출 repo 분석 결과가 아님",
     allowlisted_adapter: "판정 범위 · 고정된 source에 대한 allowlisted adapter",
@@ -1577,7 +1791,9 @@ function renderLabReport() {
   setText("#diagnosisScope", scopeLabels[state.analysisScope] || "관찰 사실·가설·제안·검증 결과를 분리해서 표시합니다.");
   setText(
     "#diagnosisAnalysisStatus",
-    state.status === "partial"
+    targetSandbox
+      ? `target model · deterministic Python · ${state.openaiAnalysisCompleted ? "OpenAI evidence 설명 완료" : "OpenAI 설명 미사용"}`
+    : state.status === "partial"
       ? "controller 진단 완료 · OpenAI 설명 미완료 · controller report 보존"
       : state.openaiAnalysisCompleted
         ? "controller evidence 기반 OpenAI 설명 완료"
@@ -1653,9 +1869,17 @@ function renderLabReport() {
       : `${MISSION_FAMILY_LABELS[behavior?.missionFamily] || behavior?.missionFamily || targetProfile?.status || "정보"} · 확인 완료`,
   );
   setText("#reportPermissions", permissions);
+  if (targetSandbox) {
+    setText(
+      "#reportPermissions",
+      `${permissions} · target model: deterministic Python · services: network-disabled synthetic local replacement · actual external side effect: none`,
+    );
+  }
   setText(
     "#reportTermination",
-    state.status === "partial"
+    targetSandbox
+      ? "target sandbox 실행 및 deterministic report 완료"
+    : state.status === "partial"
       ? "controller 확인 완료 · OpenAI 설명 없음"
       : termination?.reason === "coverage_complete"
       ? "확인 완료"
@@ -1671,8 +1895,15 @@ function renderLabReport() {
   );
 
   const experimentCard = $("#selectedExperimentCard");
-  experimentCard.hidden = !experiment && !selection && !compatibilitySelection;
-  if (experiment) {
+  experimentCard.hidden = !targetSandbox && (!experiment && !selection && !compatibilitySelection);
+  if (targetSandbox) {
+    const targetRuns = Number(state.labReport?.experiments_run || state.baselineEvidence?.experiments_run || 0);
+    const targetSeed = state.baselineEvidence?.seed ?? state.labReport?.seed ?? "?";
+    setText("#reportExperiment", `실제 target entrypoint ${targetRuns || "여러 차례"}회 bounded child 실행`);
+    setText("#reportExperimentMeta", `vulnerable · replay · protected replay · seed ${targetSeed}`);
+    setText("#reportExperimentReason", "선택한 이유 · deterministic ExampleCakeAgent purchase contract");
+    setText("#reportExperimentEvidence", "근거 · target.tool_call/result · target ledger mutation · world hash · protected replay");
+  } else if (experiment) {
     const fault = experiment.faults[0];
     setText(
       "#reportExperiment",
@@ -1836,6 +2067,10 @@ function render() {
   const externalDiagnosis = state.hasExternalTarget && state.diagnosticCompleted && !state.openaiAnalysisCompleted;
   const liveMode = externalDiagnosis
     ? "controller 진단 완료 · OpenAI 설명 없음"
+    : state.analysisScope === "target_sandbox"
+      ? state.openaiAnalysisCompleted
+        ? "실제 target sandbox · OpenAI evidence 설명 완료"
+        : "실제 target sandbox · OpenAI 설명 없음"
     : state.mode === "offline_demo"
       ? isOpenAIKeyMissing() ? "OPENAI_API_KEY 없음 · no-target offline_demo" : "no-target offline_demo"
     : state.mode === "compatibility_only"
@@ -1883,6 +2118,10 @@ function dispatch(event) {
     const terminalMode = state.source === "live" || state.source === "hosted"
       ? externalDiagnosis
         ? "controller 진단 완료 · OpenAI 설명 없음"
+        : state.analysisScope === "target_sandbox"
+          ? state.openaiAnalysisCompleted
+            ? "실제 target sandbox · OpenAI 설명 완료"
+            : "실제 target sandbox · OpenAI 설명 없음"
         : state.mode === "offline_demo"
           ? isOpenAIKeyMissing() ? "OPENAI_API_KEY 없음 · no-target offline_demo" : "no-target offline_demo"
         : "실시간 분석"

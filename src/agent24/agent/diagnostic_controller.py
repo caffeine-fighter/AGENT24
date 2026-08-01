@@ -37,6 +37,7 @@ from .models import (
 from .planner import OperatorCandidate, candidate_operators, plan_for_candidate
 from .profile import BehaviorProfile
 from .prompts import DIAGNOSTIC_CONTROLLER_INSTRUCTIONS, fence_untrusted
+from .sandbox_diagnostic import SandboxDiagnosticEvidence
 
 DIAGNOSTIC_TOOL_NAMES: tuple[str, ...] = (
     "inspect_target",
@@ -559,12 +560,17 @@ class DiagnosticToolController:
             return self._reject(
                 "invalid_experiment_result", "sandbox returned no typed diagnostic result"
             )
+        if result.cost_units_used > budget:
+            return self._reject("budget_exceeded", "bounded primitive exceeded requested budget")
         if result.cost_units_used > DIAGNOSTIC_MAX_BUDGET_UNITS:
             return self._reject("budget_exceeded", "bounded primitive exceeded controller budget")
         self.state.result = result
         self.state.budget_spent = result.cost_units_used
+        sandbox_evidence = result.sandbox_evidence
         self.state.evidence_id = (
-            f"evidence-{hashlib.sha256(run_digest_bytes(result)).hexdigest()[:20]}"
+            sandbox_evidence.evidence_id
+            if isinstance(sandbox_evidence, SandboxDiagnosticEvidence)
+            else f"evidence-{hashlib.sha256(run_digest_bytes(result)).hexdigest()[:20]}"
         )
         self.state.phase = "experiment_run"
         self.channel.publish(
@@ -579,7 +585,11 @@ class DiagnosticToolController:
                 "evidence_id": self.state.evidence_id,
                 "budget_spent": self.state.budget_spent,
                 "evidence_ready": True,
-                "primitive_scope": "DeterministicLabLoop bundled phases",
+                "primitive_scope": (
+                    "LocalSandboxRunner + stateful SandboxGym bundled phases"
+                    if isinstance(sandbox_evidence, SandboxDiagnosticEvidence)
+                    else "DeterministicLabLoop bundled phases"
+                ),
             },
             summary="bounded experiment complete",
         )
@@ -609,6 +619,7 @@ class DiagnosticToolController:
                 if violation.state_path
             }
         )
+        sandbox_evidence = result.sandbox_evidence
         return {
             "evidence_id": self.state.evidence_id,
             "claim_status": "observed_only_until_verification",
@@ -620,6 +631,11 @@ class DiagnosticToolController:
             "proposed_patch_id": result.patch.patch_id if result.patch else None,
             "evidence_refs": [ref.model_dump(mode="json") for ref in result.report.evidence],
             "execution_scope": self.execution_scope,
+            "sandbox_evidence": (
+                sandbox_evidence.replay_summary()
+                if isinstance(sandbox_evidence, SandboxDiagnosticEvidence)
+                else None
+            ),
         }
 
     async def _inspect_evidence(
@@ -903,6 +919,8 @@ class DiagnosticToolController:
 def run_digest_bytes(result: DiagnosticLoopResult) -> bytes:
     """Stable evidence identity without exposing provider metadata."""
 
+    if isinstance(result.sandbox_evidence, SandboxDiagnosticEvidence):
+        return result.sandbox_evidence.evidence_id.encode("utf-8")
     return canonical_json(result.perturbed.model_dump(mode="json")).encode("utf-8")
 
 

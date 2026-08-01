@@ -218,3 +218,24 @@ async def test_budget_and_evidence_ids_cannot_be_bypassed(tmp_path) -> None:
 
     assert rejected["code"] == "budget_exceeded"
     assert controller.result is None
+
+
+@pytest.mark.asyncio
+async def test_actual_primitive_cost_cannot_exceed_the_requested_budget(tmp_path) -> None:
+    controller = _controller(tmp_path)
+    await controller._inspect_target(target_ref=SOURCE_REF, **RATIONALE)
+    listed = json.loads(await controller._list_experiments(**RATIONALE))
+    candidate = listed["candidates"][0]
+    requested_budget = candidate["estimated_cost_units"]
+
+    rejected = json.loads(
+        await controller._run_sandbox_experiment(
+            operator_id=candidate["operator_id"],
+            fault_id=candidate["fault_id"],
+            **{**RATIONALE, "budget": requested_budget},
+        )
+    )
+
+    assert rejected["code"] == "budget_exceeded"
+    assert controller.result is None
+    assert "diagnostic.experiment" not in [event["type"] for event in controller.channel.events]

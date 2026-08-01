@@ -69,7 +69,7 @@ from .models import (
 from .planner import GYM_TOOLS
 from .report import CLAIM_TERMS, NOT_A_SAFETY_CERTIFICATE
 
-PROMPT_VERSION = "v3"
+PROMPT_VERSION = "v4"
 """Bumped whenever an instruction body changes.  Recorded in ``docs/prompt-log.md``."""
 
 LIVE_TOOL_NAME = "inspect_synthetic_gym"
