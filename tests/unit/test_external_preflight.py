@@ -4,12 +4,15 @@ import base64
 import json
 
 from agent24.agent.models import ExperimentPlan, StopDecision
+from agent24.agent.participant_intake import (
+    CompatibilityStatus,
+    ParticipantCompatibilityResult,
+)
 from agent24.agent.source import MappingRevisionResolver, SourceDescriptor
 from agent24.api.preflight import (
     ExternalAgentPreflight,
     ExternalTarget,
     GitHubContentsManifestFetcher,
-    ManifestUnavailableError,
     MappingManifestFetcher,
 )
 
@@ -65,6 +68,11 @@ def test_preflight_resolves_profiles_and_selects_one_typed_experiment() -> None:
     assert result.profile.agent_name == "cake-agent"
     assert result.profile.baseline_observed is False
     assert result.profile.idempotency_usage.value == "unknown"
+    assert result.compatibility_selection.pack_id == "life-v0-sandbox.v1"
+    assert result.compatibility_selection.max_experiments == 0
+    assert result.compatibility_selection.fixture_id is None
+    assert result.pack_selection.pack_id == "life-v0-sandbox.v1"
+    assert result.pack_selection.executed_by_controller is True
     assert isinstance(result.decision, ExperimentPlan)
     assert result.decision.scenario.faults[0].fault == "commit_then_timeout"
     assert result.decision.scenario.faults[0].target_tool == "payment.charge"
@@ -92,7 +100,7 @@ def test_mapping_fetcher_uses_allowlist_order_and_is_deterministic() -> None:
     assert first.model_dump_json() == second.model_dump_json()
 
 
-def test_mapping_fetcher_rejects_absent_allowlisted_manifest() -> None:
+def test_absent_manifest_returns_honest_unsupported_compatibility() -> None:
     preflight = ExternalAgentPreflight(
         source_resolver=MappingRevisionResolver(
             {("example/cake-agent", "main"): SHA}
@@ -101,12 +109,13 @@ def test_mapping_fetcher_rejects_absent_allowlisted_manifest() -> None:
         retrieved_at="2026-08-01T17:45:00+09:00",
     )
 
-    try:
-        preflight.run(TARGET)
-    except ManifestUnavailableError as error:
-        assert "allowlisted manifest" in str(error)
-    else:
-        raise AssertionError("missing allowlisted manifest must fail")
+    result = preflight.run(TARGET)
+
+    assert isinstance(result, ParticipantCompatibilityResult)
+    assert result.target_profile.status == CompatibilityStatus.UNSUPPORTED
+    assert result.target_profile.provenance.evidence == ()
+    assert result.pack_selection.max_experiments == 0
+    assert result.compatibility_report.findings == ()
 
 
 def test_github_fetcher_accepts_line_wrapped_base64_and_keeps_token_in_header(

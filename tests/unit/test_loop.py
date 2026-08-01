@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent24.agent.loop import SYNTHETIC_SCOPE, DeterministicLabLoop
+from agent24.agent.loop import REPORT_REDACTED_PROMPT, SYNTHETIC_SCOPE, DeterministicLabLoop
 from agent24.agent.models import Mission, MissionFamily, ToolSpec, run_digest
 from agent24.agent.planner import select_p0_experiment
 from agent24.agent.profile import AgentManifest, build_behavior_profile
@@ -59,6 +59,8 @@ async def test_loop_measures_reproduces_and_verifies_the_selected_synthetic_arch
     assert SYNTHETIC_SCOPE in result.report.residual_risk
 
     assert result.lab_report.findings
+    assert result.lab_report.agent.system_prompt == REPORT_REDACTED_PROMPT
+    assert cake_manifest().system_prompt not in result.lab_report.model_dump_json()
     assert result.lab_report.findings[0].verified is not None
     assert result.lab_report.termination.reason == "coverage_complete"
     assert SYNTHETIC_SCOPE in result.lab_report.unsupported_scope

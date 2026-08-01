@@ -157,7 +157,7 @@ cases:
   - id: one-input-synthetic-loop
     issue: 26
     command: "pytest tests/unit/test_loop.py::test_loop_measures_reproduces_and_verifies_the_selected_synthetic_archetype tests/integration/test_api.py::test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl -q"
-    expectation: "one structured target produces pinned provenance, a 3/3 deterministic Life-v0 failure, cited oracle report, accepted patch gates, SandboxGym protected replay, and both report contracts in one ordered SSE/JSONL run"
+    expectation: "one structured target produces pinned provenance plus a bounded source snapshot, a 3/3 deterministic Life-v0 failure, cited oracle report, accepted patch gates, SandboxGym protected replay, and both report contracts in one ordered SSE/JSONL run"
   - id: one-input-openai-scope-boundary
     issue: 26
     command: "pytest tests/integration/test_api.py::test_live_target_passes_bounded_synthetic_evidence_to_openai tests/integration/test_api.py::test_diagnostic_failure_is_sanitized_and_falls_back -q"
@@ -190,7 +190,7 @@ cases:
   - id: routing-lifecycle-event
     issue: 57
     command: "pytest tests/integration/test_api.py::test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl tests/integration/test_api.py::test_unsupported_manifest_stops_without_inventing_an_experiment -q"
-    expectation: "pack.selected is published after behavior_profile and before experiment_plan in both SSE and JSONL, so the unsupported path -- which never reaches experiment_plan -- still records which pack was considered, why, and its budget and fallback"
+    expectation: "source_snapshot is published after source_descriptor, and pack.selected is published after behavior_profile and before experiment_plan in both SSE and JSONL, so the unsupported path -- which never reaches experiment_plan -- still records the bounded source, considered pack, why, budget and fallback"
 
   # Hosted run evidence integrity (issue #68).
   - id: hosted-run-context-integrity
@@ -218,3 +218,17 @@ cases:
     issue: 69
     command: "pytest tests/evals/test_surprise_support.py::test_the_same_fixture_and_seed_reproduce_the_same_terminal_digest tests/evals/test_surprise_support.py::test_an_unsupported_route_has_its_own_stable_digest tests/evals/test_surprise_support.py::test_the_digest_ignores_run_id_and_timestamps -q"
     expectation: "two runs of the same fixture and seed produce one terminal digest while their run ids differ; the unsupported route has its own stable digest that a silently substituted run does not share"
+
+  # Pinned participant-repository intake (issue #62).
+  - id: participant-pinned-static-profiles
+    issue: 62
+    command: "pytest tests/unit/test_participant_intake.py::test_three_pinned_participant_profiles_are_provenance_bearing_and_claim_bounded tests/unit/test_participant_intake.py::test_two_research_like_profiles_have_distinct_pinned_evidence -q"
+    expectation: "three audited sources retain full commit and path/blob/line provenance; two are Research compatibility candidates while the generic starter is unsupported, and none contains a target failure claim"
+  - id: participant-owner-priority-and-drift
+    issue: 62
+    command: "pytest tests/unit/test_participant_intake.py::test_owner_manifest_takes_priority_over_registered_lab_profile tests/unit/test_participant_intake.py::test_branch_drift_never_reuses_an_older_static_profile tests/unit/test_participant_intake.py::test_invalid_static_evidence_terminates_without_reusing_profile -q"
+    expectation: "an allowlisted owner manifest takes priority; changed source/blob metadata, missing files, oversized files, symlinks, and submodules terminate without reusing a stale lab profile"
+  - id: participant-one-input-compatibility-terminal
+    issue: 62
+    command: "pytest tests/integration/test_api.py::test_manifestless_participant_terminates_with_ordered_compatibility_report -q"
+    expectation: "one input emits source_descriptor, metadata-only source_snapshot, target_profile, pack_selection, and compatibility_report in one raw SSE/JSONL run, then terminates with zero experiments and no fabricated finding"

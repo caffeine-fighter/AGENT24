@@ -46,6 +46,7 @@ SYNTHETIC_SCOPE = (
     "외부 저장소 코드는 실행하지 않았으며 manifest로 선택한 Life-v0 synthetic "
     "behavior archetype만 측정했다."
 )
+REPORT_REDACTED_PROMPT = "[owner manifest system_prompt redacted from report]"
 REPRODUCTION_TOTAL = 3
 
 
@@ -85,7 +86,7 @@ def unsupported_reports(
     lab_report = LabReport(
         agent=AgentCard(
             name=manifest.name,
-            system_prompt=manifest.system_prompt,
+            system_prompt=REPORT_REDACTED_PROMPT,
             tools=list(manifest.tools),
             permissions=dict(manifest.permissions),
         ),
@@ -197,7 +198,7 @@ def _legacy_report(
     return LabReport(
         agent=AgentCard(
             name=manifest.name,
-            system_prompt=manifest.system_prompt,
+            system_prompt=REPORT_REDACTED_PROMPT,
             tools=list(manifest.tools),
             permissions=dict(manifest.permissions),
         ),
