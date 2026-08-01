@@ -37,6 +37,8 @@ def test_research_full_pack_replays_four_failures_and_preserves_raw_boundary() -
     assert protected.blanket_report.passed is True
     assert protected.protected.final_answer.strip()
     assert protected.protected.citation_ids == ("cite-publisher-001",)
+    assert protected.protected.tool_call_count <= 12
+    assert "citation.resolve" in protected.protected.tool_calls
     assert protected.blanket_refusal_rejected is True
     assert protected.accepted is True
 

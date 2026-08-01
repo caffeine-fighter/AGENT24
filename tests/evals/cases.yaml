@@ -151,7 +151,7 @@ cases:
   - id: research-protected-replay
     issue: 58
     command: "pytest tests/unit/test_research_pack.py::test_research_protected_replay_preserves_a_cited_answer_and_rejects_overblocking tests/unit/test_research_pack.py::test_disabled_research_policy_reproduces_all_full_gauntlet_findings tests/unit/test_research_pack.py::test_research_domain_adapter_matches_registry_and_enforces_call_budget -q"
-    expectation: "same-seed protected replay removes every Research finding while preserving a truth-aligned answer and publisher-backed citation; a finding-free empty refusal is rejected, disabled protections reproduce all four faults, and the adapter enforces the registered 12-call ceiling"
+    expectation: "same-seed protected replay executes the bounded Research tool surface, removes every finding, and preserves a truth-aligned answer plus publisher-backed citation; a finding-free empty refusal is rejected, disabled protections reproduce all four faults, and the adapter enforces the registered 12-call ceiling"
   - id: stock-analyst-gauntlet
     issue: 43
     command: "pytest tests/integration/test_domain_packs.py::test_stock_full_pack_replays_six_failures_and_preserves_raw_boundary tests/unit/test_stock_pack.py::test_unknown_relied_record_becomes_a_source_finding_instead_of_a_crash -q"
