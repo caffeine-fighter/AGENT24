@@ -3,6 +3,8 @@ import {
   createInitialState,
   createUnsupportedFixture,
   isDocumentedUnsupportedMission,
+  formatRunInput,
+  getInitialTarget,
   reduceRunState,
   validateTargetInput,
 } from "./core.mjs";
@@ -58,6 +60,8 @@ const MISSION_FAMILY_LABELS = Object.freeze({ purchase: "구매 작업" });
 const DIAGNOSIS_LABELS = Object.freeze({ duplicate_side_effect: "같은 작업이 두 번 실행됨" });
 const RESOLVER_LABELS = Object.freeze({
   fixture: "내장 예시",
+  "local-demo": "로컬 데모 소스",
+  "local-example-fixture": "예시 Agent repo fixture",
   "github-api": "GitHub에서 확인",
   "github-http-404": "저장소를 찾지 못함",
   "github-unavailable": "GitHub 연결 실패",
@@ -69,7 +73,8 @@ function apiUrl(path) {
   return new URL(path, apiBase).href;
 }
 
-let state = createInitialState();
+const initialTarget = getInitialTarget(window.location.search);
+let state = createInitialState(initialTarget);
 let timers = [];
 let eventSource = null;
 let runStartedAt = null;
@@ -172,10 +177,14 @@ function renderOutcomes() {
   const scopeNotice = $("#scopeNotice");
   scopeNotice.dataset.scope = state.analysisScope;
   scopeNotice.textContent = state.analysisScope === "fixture_fallback"
-    ? "내장 예시를 보여드리고 있어요. 제출한 저장소를 분석한 결과는 아닙니다. 가상 환경의 원본 기록만 보여드리며, 이 결과만으로는 안전을 보장할 수 없어요."
+    ? "내장 예시로 전환했습니다. 제출한 저장소를 분석한 결과가 아닙니다. 가상 환경의 원본 기록만 보여드리며, 이 결과로 안전을 보장할 수 없습니다."
+    : state.analysisScope === "allowlisted_adapter"
+      ? "정확히 고정된 외부 Agent source의 계약을 정적으로 확인한 뒤, 허용된 adapter의 네트워크 차단 local replacement만 실행했습니다. 제출한 Python과 실제 merchant·결제 side effect는 실행하지 않았습니다."
     : state.analysisScope === "compatibility_only"
-      ? "고정된 공개 저장소 정보로 호환성만 확인했어요. 저장소 코드나 합성 공격은 실행하지 않았으며, 취약점이나 안전성을 판정한 결과가 아니에요."
-      : "실제 서비스에는 연결하지 않아요. 저장소 정보와 허용된 설정만 읽어 가상 환경에서 행동을 재현해요. 문제가 보이지 않아도 안전이 보장되는 것은 아니에요.";
+      ? "공개 저장소의 고정된 metadata로 호환성만 판정했습니다. 저장소 코드나 합성 공격은 실행하지 않았으며, 취약성 또는 안전성을 판정한 결과가 아닙니다."
+      : state.analysisScope === "source_unresolved" || state.analysisScope === "source_preflight_failed"
+      ? "외부 저장소 또는 allowlist 설정을 확인하지 못해 제출한 에이전트 분석과 실험을 실행하지 않았습니다."
+      : "가상 환경에서만 실행합니다. 외부 저장소의 코드는 실행하지 않습니다. 확인된 저장소 정보와 허용된 설정 파일을 바탕으로 행동을 재현하며, 문제를 찾지 못했더라도 안전하다고 단정할 수 없습니다.";
 }
 
 function compactJson(value) {
@@ -192,8 +201,9 @@ function renderLabReport() {
   const compatibilitySelection = state.compatibilitySelectionView;
   const compatibility = state.compatibilityReportView;
   const snapshot = state.sourceSnapshotView;
+  const adapter = state.adapterContractView;
   const source = state.sourceDescriptorView;
-  panel.hidden = !report && !behavior && !experiment && !targetProfile && !selection && !compatibilitySelection && !compatibility;
+  panel.hidden = !report && !behavior && !experiment && !targetProfile && !selection && !compatibilitySelection && !compatibility && !adapter;
   if (panel.hidden) return;
 
   const profile = behavior || targetProfile || report?.profile || {
@@ -228,22 +238,27 @@ function renderLabReport() {
     : behavior?.baselineObserved
       ? "기본 동작 확인 완료"
       : "기본 동작을 확인하지 못했어요";
+  const adapterLabel = adapter
+    ? ` · ADAPTER ${adapter.adapterId} · network ${adapter.networkAccess}`
+    : "";
 
   setText("#reportAgent", profile.agentName);
   setText(
     "#reportSourceRef",
     targetProfile
-      ? `${source?.sourceRef || targetProfile.sourceRef} · ${targetProfile.profileLabel}`
+      ? `${source?.sourceRef || targetProfile.sourceRef} · ${targetProfile.profileLabel} · ${sourceStatus}${adapterLabel}`
       : behavior
-      ? `${source?.sourceRef || behavior.sourceRef} · ${sourceStatus}`
-      : source?.sourceRef || "보고서에 기록된 에이전트",
+      ? `${source?.sourceRef || behavior.sourceRef} · ${sourceStatus}${adapterLabel}`
+      : `${source?.sourceRef || "LabReport agent card"}${adapterLabel}`,
   );
   setText("#reportCapabilities", capabilityText);
   setText(
     "#reportSourceSnapshot",
     snapshot
-      ? `${snapshot.mode.toUpperCase()} · ${snapshot.files.length} file(s) · ${snapshot.totalBytes} bytes · ${snapshot.executionScope}`
-      : "확인한 저장소 범위를 기다리고 있어요",
+      ? `${snapshot.mode.toUpperCase()} · ${snapshot.files.length} file(s) · ${snapshot.totalBytes} bytes · ${snapshot.executionScope}${adapter ? ` · ${adapter.entrypoint}` : ""}`
+      : adapter
+        ? `${adapter.entrypoint} · ${adapter.executionMode}`
+        : "source snapshot event 대기",
   );
   setText(
     "#reportBudget",
@@ -429,7 +444,11 @@ function render() {
   notice.dataset.kind = state.terminalNotice?.kind || "";
   notice.textContent = state.terminalNotice?.message || "";
   setText("#runId", state.runId ? `실행 ID ${state.runId}` : "실행 ID —");
-  const liveMode = state.mode === "offline_demo" ? "준비된 설명으로 진행 중" : "실시간 분석 중";
+  const liveMode = state.mode === "offline_demo"
+    ? "준비된 설명으로 진행 중"
+    : state.mode === "compatibility_only"
+      ? "호환성만 판정 중"
+      : "실시간 분석 중";
   setText(
     "#modeBadge",
     state.status === "idle"
@@ -505,14 +524,13 @@ function playFixture(target, { speed = 360 } = {}) {
 
 async function startLiveRun(target) {
   const controller = new AbortController();
-  // A hosted Responses API planning turn can take longer than a local fixture.
-  // Keep the fallback bounded while allowing the real server-side call to finish.
-  const timeout = setTimeout(() => controller.abort(), 22000);
+  const timeout = setTimeout(() => controller.abort(), 1600);
   try {
     const response = await fetch(apiUrl("/api/runs"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        input: formatRunInput(target),
         target: {
           repository_url: target.repositoryUrl,
           requested_ref: target.requestedRef || null,
@@ -619,4 +637,7 @@ $("#copyStreamButton").addEventListener("click", async () => {
   }
 });
 
+$("#repositoryInput").value = initialTarget.repositoryUrl;
+$("#refInput").value = initialTarget.requestedRef;
+$("#missionInput").value = initialTarget.mission;
 render();

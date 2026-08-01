@@ -3,9 +3,10 @@
 이 문서는 NIGHTMARE LAB의 외부 Agent 입력 화면과 `POST /api/runs`가 공유하는
 P0 제품 계약이다. form, parser, 결과 화면은 이 문구와 상태를 그대로 사용한다.
 
-> **SYNTHETIC ARCHETYPE — 외부 저장소 코드를 실행하지 않습니다.** 저장소에서는
-> 고정된 commit의 metadata와 allowlist manifest 또는 검토된 static evidence
-> metadata만 읽습니다. 합성 Gym에서 실패를 발견하지 못한 결과는 안전 인증이 아닙니다.
+> **SIMULATION ONLY — 제출 Python은 실행하지 않습니다.** 저장소에서는 고정된 commit의
+> metadata와 allowlist manifest, 또는 exact-reviewed adapter의 bounded entrypoint만
+> 확인합니다. adapter가 선택되면 network-disabled local replacement만 실행하며, 합성
+> Gym에서 실패를 발견하지 못한 결과는 안전 인증이 아닙니다.
 
 ## 사용자가 하는 일
 
@@ -22,7 +23,7 @@ NIGHTMARE LAB Agent가 source 고정, owner/static profile 판정, 지원되는 
 | `Ref or commit` | `target.requested_ref` | UI에서는 필수. branch, tag 또는 commit SHA. 최대 200자. 서버 모델의 `null`은 API 하위 호환용이며 default branch를 resolve한다. 재현 가능한 데모에서는 항상 명시한다. | 빈 UI 값, 제어문자, URL에 포함된 ref와 불일치 |
 | `Crash-test mission` | `target.mission` | 필수. 최대 2,000자. 평가할 목표와 사용자 제약을 자연어로 쓴다. | 빈 값, 길이 초과 |
 | 없음 | `input` | UI가 위 세 필드를 설명하는 한 번의 controller 입력으로 만든다. 사용자가 별도로 작성하지 않는다. | `target`과 모순되는 별도 입력을 만들지 않는다. |
-| 없음 | manifest / entrypoint | form 필드가 아니다. 서버가 allowlist 경로에서 manifest를 자동 발견하고 entrypoint를 metadata로만 검증한다. | 사용자에게 임의 경로나 실행 명령을 받지 않는다. |
+| 없음 | manifest / entrypoint | form 필드가 아니다. 서버가 allowlist 경로에서 manifest를 자동 발견하고 선언된 entrypoint를 최대 64 KB bounded evidence로 읽어 hash metadata만 남긴다. | 사용자에게 임의 경로나 실행 명령을 받지 않는다. |
 | 없음 | `GITHUB_TOKEN` | private 저장소용 선택적 서버 환경 변수다. HTTPS request header에만 들어가며 event, log, 오류 문구, form에 넣지 않는다. | form에 토큰을 붙여 넣도록 요구하지 않는다. |
 
 UI의 `Ref or commit`은 재현성 때문에 필수로 동결한다. API의 nullable
@@ -53,13 +54,20 @@ Crash-test mission: 엄마 생일 케이크 하나를 5만원 이하로 주문�
 ```
 
 정상 preflight는 `main`을 full commit SHA로 고정한 뒤 아래 순서를 같은 Raw API
-Stream에 남긴다. owner manifest 경로는 synthetic diagnosis를 계속하고, manifest가
+Stream에 남긴다. owner manifest 경로는 synthetic diagnosis를 계속하고, exact-reviewed
+adapter 경로는 `adapter.matched`와 local replacement diagnosis를 추가하며, manifest가
 없는 등록된 participant는 compatibility report에서 종료한다.
 
 ```text
 source_descriptor → source_snapshot → target_profile → pack_selection
 → behavior_profile → pack.selected → experiment_plan
 → baseline / fault / oracle / divergence / patch / protected replay
+→ finding_report → lab_report
+
+또는 (allowlisted adapter)
+
+source_descriptor → source_snapshot → adapter.matched → target_profile → pack_selection
+→ behavior_profile → pack.selected → experiment_plan → local replacement Gym trace
 → finding_report → lab_report
 
 또는
@@ -74,13 +82,14 @@ source_descriptor → source_snapshot → target_profile → pack_selection → 
 |---|---|---|
 | 공개 `github.com` 저장소 | preflight 지원 | GitHub metadata로 ref를 full SHA로 고정하고 manifest를 읽는다. |
 | private `github.com` 저장소 + 서버 `GITHUB_TOKEN` | preflight 지원 | 토큰은 GitHub API header에만 사용한다. 권한이 없으면 접근 실패다. |
-| private 저장소 + 토큰 없음/권한 없음 | 접근 실패 | 외부 Agent를 분석했다고 주장하지 않고 명시적 synthetic fallback으로 전환한다. |
+| private 저장소 + 토큰 없음/권한 없음 | 접근 실패 | API/hosted path는 외부 Agent를 분석했다고 주장하지 않고 `source_unresolved`/`source_preflight_failed`로 실험을 중단한다. local offline fixture는 별도 `fixture` source로만 표시한다. |
 | GitLab, Bitbucket, 로컬 경로, 임의 ZIP | 미지원 | P0은 `https://github.com`만 지원한다. |
 | LangGraph, CrewAI, Agents SDK 등 특정 framework | 실행 지원 아님 | manifest schema는 framework 중립 metadata다. P0은 어떤 framework의 repository code도 import·install·execute하지 않는다. |
 | allowlist manifest | metadata 지원 | `.agent24/manifest.json`, 다음으로 `agent24.manifest.json`만 탐색하며 최대 256 KB다. |
+| exact-reviewed allowlisted adapter | 제한된 실행 지원 | 현재는 `Upsonic/UCP-Agent@3f98ef0`의 AST 계약만 매칭하며, `adapter.matched` 후 network-disabled local replacement를 실행한다. upstream Python/dependency와 실제 side effect는 실행하지 않는다. |
 | 검토된 participant static profile | metadata-only compatibility 지원 | exact `repository@SHA`에 등록된 최대 4개 path의 blob SHA·size·type만 확인한다. 본문이나 repository code를 실행하지 않는다. |
 | manifest가 없고 static profile도 없음 | `unsupported` | `pinned_profile_not_registered`, experiments 0, findings 0으로 종료한다. |
-| manifest의 entrypoint | metadata만 지원 | source 내부 상대 경로인지 검증하지만 파일을 import하거나 setup hook을 실행하지 않는다. |
+| manifest의 entrypoint | bounded evidence 지원 | source 내부 상대 경로인지 검증하고 최대 64 KB의 path/size/blob SHA/content SHA만 기록하며 파일을 import하거나 setup hook을 실행하지 않는다. |
 | 지원 tool vocabulary만 가진 manifest | profile 가능 | manifest를 읽을 수 있다는 뜻이지 곧바로 runnable diagnostic이라는 뜻은 아니다. |
 | `payment.charge` 또는 `web.read`에 대응하는 profile | 외부 입력 P0 실험 가능 | 현재 one-input loop는 `commit_then_timeout`, `malicious_web_content`, `empty_result` 중 증거에 맞는 operator 하나를 선택한다. |
 | 대응할 fault operator가 없는 profile | `unsupported` | 비슷한 실험으로 바꾸거나 취약점을 만들어내지 않고 종료한다. |
@@ -96,6 +105,8 @@ manifest가 허용한 도구명과 외부 입력 loop가 실제 재현할 수 �
 - `OWNER MANIFEST`: 저장소 소유자가 allowlisted manifest로 선언한 contract
 - `LAB-INFERRED STATIC PROFILE`: Lab이 pinned path/blob/line evidence로 만든
   compatibility 가설이며 owner 선언이 아님
+- `ALLOWLISTED ADAPTER`: exact pinned source의 AST 계약을 확인하고, source 이름을
+  보존한 network-disabled local replacement에서만 동작을 측정한 contract
 
 후자의 자세한 계약은 [`participant-repository-intake.md`](participant-repository-intake.md)를
 따른다. 어느 쪽도 target의 확인된 취약점을 뜻하지 않는다.
@@ -134,7 +145,7 @@ Raw API Stream에는 아래 wire code를 그대로 보존한다.
 | 상태 | wire 근거 | 사용자에게 표시할 정확한 문구 |
 |---|---|---|
 | 미지원 source host | `UnsupportedSourceHostError` → `source_preflight_failed` | “지원하지 않는 저장소입니다. P0은 HTTPS github.com 저장소만 받습니다. 외부 Agent 코드는 실행하지 않았습니다.” |
-| source 접근 실패 | `SourceAccessError` → `source_preflight_failed` | “저장소 또는 ref에 접근하지 못했습니다. 공개 범위와 ref를 확인하거나, private 저장소라면 서버의 GITHUB_TOKEN 권한을 확인하세요. 외부 Agent 진단을 주장하지 않고 합성 fallback으로 전환합니다.” |
+| source 접근 실패 | `SourceAccessError` → `source_preflight_failed` | “저장소 또는 ref에 접근하지 못했습니다. 공개 범위와 ref를 확인하거나, private 저장소라면 서버의 GITHUB_TOKEN 권한을 확인하세요. 외부 Agent 진단과 synthetic target 실험을 실행하지 않았습니다.” |
 | manifest 없음 + registered static profile | `target_profile.origin=lab_static_profile` | “검토된 pinned metadata로 compatibility만 판정했습니다. 저장소 코드와 synthetic attack은 실행하지 않았습니다.” |
 | manifest 없음 + static profile 없음 | `pack_selection.status=unsupported`, `pinned_profile_not_registered` | “이 commit에 검토된 profile이 없어 실험하지 않았습니다. 실패 미발견이나 안전 인증이 아닙니다.” |
 | static evidence drift/policy reject | `static_evidence_*`, terminal `unsupported` | “검토된 evidence가 현재 pinned source와 일치하지 않아 profile을 재사용하지 않았습니다. 실험과 finding은 0건입니다.” |
@@ -151,8 +162,8 @@ Raw API Stream에는 아래 wire code를 그대로 보존한다.
 profile 또는 명시적 `unsupported`로 처리한다. UI는 내부 예외 문자열을 노출하지 않고,
 가능한 typed 상태를 알고 있을 때만 위 세부 문구를 선택한다. 구분할 수 없으면 다음 공통 문구를 사용한다.
 
-> “외부 source preflight를 완료하지 못했습니다. 외부 Agent 진단을 주장하지 않고
-> 합성 fallback으로 전환합니다. 저장소 접근과 allowlist manifest를 확인하세요.”
+> “외부 source preflight를 완료하지 못했습니다. 외부 Agent 진단과 synthetic target
+> 실험을 주장하지 않습니다. 저장소 접근과 allowlist manifest를 확인하세요.”
 
 ## 안전 문구 배치
 

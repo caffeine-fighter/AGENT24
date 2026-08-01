@@ -16,7 +16,8 @@ repository URL + ref + mission
   → compatibility_report 또는 기존 synthetic diagnosis
 ```
 
-owner manifest가 있으면 기존 schema validator로 읽고 entrypoint는 실행하지 않는다.
+owner manifest가 있으면 기존 schema validator로 읽고 선언된 entrypoint를 최대 64 KB
+bounded evidence로 다운로드해 snapshot hash만 남긴다. entrypoint는 실행하지 않는다.
 manifest가 없을 때만 exact `repository@SHA`에 등록된 static profile을 검토한다.
 등록되지 않은 SHA, 바뀐 blob, 부족한 evidence는 다른 profile이나 비슷한 attack으로
 대체하지 않고 `unsupported`로 끝낸다.
@@ -92,8 +93,9 @@ run_started
 → run_completed
 ```
 
-`source_snapshot`은 실제로 가져온 범위를 기록한다. owner manifest 경로는 bounded download와
-content SHA-256을 남기고, static profile 경로는 Git tree metadata만 기록한다. 어느 경로도
+`source_snapshot`은 실제로 가져온 범위를 기록한다. owner manifest 경로는 manifest와
+선언된 entrypoint의 bounded download, Git blob SHA, content SHA-256을 남기고, static profile
+경로는 Git tree metadata만 기록한다. 어느 경로도
 저장소 전체 archive나 실행 권한을 만들지 않는다. owner manifest의 `system_prompt` 본문은
 profile/report/Raw Stream에 복제하지 않고 redacted marker로 대체한다.
 

@@ -81,6 +81,16 @@ SUPPORTED_TOOL_NAMES: frozenset[str] = frozenset(
         "ticket.booking.retrieve",
         "ticket.hold.cancel",
         "ticket.booking.cancel",
+        # Reviewed external adapter vocabulary.  These names are accepted as
+        # data contracts; execution still requires the exact adapter match.
+        "get_available_products",
+        "get_available_discount_codes",
+        "get_your_user",
+        "discover_merchant",
+        "create_cart",
+        "apply_discount",
+        "set_shipping_address",
+        "complete_purchase",
     }
 )
 

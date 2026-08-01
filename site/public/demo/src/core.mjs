@@ -21,9 +21,23 @@ export function isDocumentedUnsupportedMission(mission) {
   return UNSUPPORTED_SURPRISE_MISSIONS.has(String(mission).trim().replace(/\s+/g, " "));
 }
 
+export const EXAMPLE_AGENT_TARGET = Object.freeze({
+  repositoryUrl: "https://github.com/example-org/nightmare-cake-agent",
+  requestedRef: "demo-v1",
+  resolvedSha: null,
+  mission: "엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문해줘.",
+});
+
+export function getInitialTarget(search = "") {
+  const params = new URLSearchParams(search);
+  return params.get("demo") === "example-agent" ? EXAMPLE_AGENT_TARGET : DEFAULT_TARGET;
+}
+
 export const TERMINAL_COPY = Object.freeze({
   source_preflight_failed:
-    "저장소를 확인하지 못해 분석을 시작하지 않았어요. 저장소가 공개되어 있는지, 브랜치나 커밋과 설정 파일이 맞는지 확인해 주세요. 대신 내장 예시를 보여드릴게요.",
+    "manifest 또는 선언된 entrypoint를 확인하지 못해 제출한 에이전트 분석과 실험을 시작하지 않았습니다. 저장소 공개 여부와 설정 파일을 확인한 뒤 다시 시도해 주세요.",
+  source_unresolved:
+    "GitHub 브랜치 또는 커밋을 immutable SHA로 고정하지 못해 제출한 에이전트 분석과 실험을 시작하지 않았습니다.",
   unsupported:
     "이 작업에 맞는 실험은 아직 준비되지 않았어요. 문제가 없다는 뜻이 아니라, 이번에는 실험하지 못했다는 뜻이에요.",
   unsupported_input:
@@ -122,6 +136,8 @@ export function createInitialState(target = DEFAULT_TARGET) {
     sourceDescriptorView: null,
     sourceSnapshot: null,
     sourceSnapshotView: null,
+    adapterContract: null,
+    adapterContractView: null,
     targetProfile: null,
     targetProfileView: null,
     compatibilitySelection: null,
@@ -239,6 +255,24 @@ export function projectSourceSnapshot(input) {
     })),
     snapshotDigest: snapshot.snapshot_digest || null,
     claimBoundary: snapshot.claim_boundary || "확인 범위 정보가 없어요",
+  };
+}
+
+export function projectAdapterContract(input) {
+  const contract = input && typeof input === "object" ? input : {};
+  return {
+    adapterId: contract.adapter_id || "unknown adapter",
+    adapterVersion: contract.adapter_version || "unknown",
+    sourceRef: contract.source_ref || `${contract.repository || "unknown"}@${contract.resolved_sha || "unknown"}`,
+    entrypoint: contract.entrypoint || "unknown entrypoint",
+    sourceBlobSha: contract.source_blob_sha || null,
+    sourceContentSha256: contract.source_content_sha256 || null,
+    observedImports: asArray(contract.observed_imports),
+    observedTools: asArray(contract.observed_tools),
+    systemPromptSha256: contract.system_prompt_sha256 || null,
+    executionMode: contract.execution_mode || "unknown",
+    networkAccess: contract.network_access || "unknown",
+    scopeNote: contract.scope_note || "Adapter scope 정보 없음",
   };
 }
 
@@ -429,6 +463,10 @@ function immutableSha(value) {
 
 function isTrustedLiveSource(source) {
   return source === "live" || source === "hosted";
+}
+
+function isSourceFailureScope(scope) {
+  return scope === "source_unresolved" || scope === "source_preflight_failed";
 }
 
 export function projectLabReport(input) {
@@ -648,6 +686,17 @@ export function reduceRunState(previousState, incomingEvent) {
         sourceSnapshot: event.data,
         sourceSnapshotView: projectSourceSnapshot(event.data),
       };
+    case "adapter.matched":
+      return {
+        ...state,
+        analysisScope: "allowlisted_adapter",
+        adapterContract: event.data,
+        adapterContractView: projectAdapterContract(event.data),
+        outcomes: {
+          ...previousState.outcomes,
+          investigation: { status: "profiling", message: "정확한 source 계약과 허용된 adapter 확인" },
+        },
+      };
     case "target.profile":
       return {
         ...state,
@@ -718,7 +767,13 @@ export function reduceRunState(previousState, incomingEvent) {
         experimentPlanView: projectExperimentPlan(event.data),
       };
     case "gym.baseline.completed":
-      return { ...state, baselineEvidence: event.data };
+      return {
+        ...state,
+        baselineEvidence: event.data,
+        analysisScope: event.data.execution_scope === "allowlisted_adapter"
+          ? "allowlisted_adapter"
+          : previousState.analysisScope,
+      };
     case "oracle.report":
       return { ...state, oracleReport: event.data };
     case "finding.report":
@@ -759,14 +814,22 @@ export function reduceRunState(previousState, incomingEvent) {
           : previousState.terminalNotice,
       };
     }
-    case "run.completed":
+    case "run.completed": {
+      const sourceFailure = isSourceFailureScope(event.data.status)
+        || isSourceFailureScope(previousState.analysisScope);
+      const sourceFailureScope = isSourceFailureScope(event.data.status)
+        ? event.data.status
+        : previousState.analysisScope;
       return {
         ...state,
-        status: "complete",
+        status: sourceFailure ? "failed" : "complete",
+        analysisScope: sourceFailure ? sourceFailureScope : previousState.analysisScope,
         mode: event.data.mode || previousState.mode,
         outcomes: {
           ...previousState.outcomes,
-          investigation: previousState.analysisScope === "compatibility_only"
+          investigation: sourceFailure
+            ? { status: "not_run", message: "제출한 에이전트 분석을 시작하지 않음" }
+            : previousState.analysisScope === "compatibility_only"
             ? previousState.outcomes.investigation
             : ["unsupported", "budget_exhausted", "no_failure_observed"].includes(event.data.status)
             ? {
@@ -774,17 +837,24 @@ export function reduceRunState(previousState, incomingEvent) {
                 message: TERMINAL_COPY[event.data.status],
               }
             : previousState.outcomes.investigation,
-          operation: previousState.analysisScope === "compatibility_only"
+          operation: sourceFailure
+            ? { status: "not_run", message: "실험 실행 안 함 · source 확인 필요" }
+            : previousState.analysisScope === "compatibility_only"
             ? previousState.outcomes.operation
             : {
                 status: (event.data.mode || previousState.mode) === "offline_demo" ? "fallback_complete" : "complete",
                 message: (event.data.mode || previousState.mode) === "offline_demo"
-                  ? "준비된 설명으로 마쳤어요 · 원본 기록은 그대로 남겼어요"
-                  : "실험을 마쳤어요 · 모든 기록을 남겼어요",
+                  ? "준비된 설명으로 실행 완료 · 원본 이벤트 보존"
+                  : "모든 실행 기록을 남기고 완료",
               },
         },
         terminalNotice: event.data.message
           ? { kind: event.data.status || "completed", message: event.data.message }
+          : sourceFailure
+          ? {
+              kind: sourceFailureScope,
+              message: TERMINAL_COPY[sourceFailureScope],
+            }
           : ["unsupported", "budget_exhausted"].includes(event.data.status)
           ? {
               kind: event.data.status,
@@ -793,19 +863,23 @@ export function reduceRunState(previousState, incomingEvent) {
           : previousState.terminalNotice,
         completedPhases: [...new Set([...previousState.completedPhases, ...(previousState.phase ? [previousState.phase] : [])])],
       };
-    case "run.failed":
+    }
+    case "run.failed": {
+      const sourceFailure = event.data.code === "source_preflight_failed"
+        || event.data.code === "source_unresolved";
       return {
         ...state,
         status: "failed",
+        analysisScope: sourceFailure ? event.data.code : previousState.analysisScope,
         outcomes: {
           ...previousState.outcomes,
-          submission: event.data.code === "source_preflight_failed"
-            ? { status: "failed", message: "저장소나 설정 파일을 확인하지 못했어요" }
+          submission: sourceFailure
+            ? { status: "failed", message: "저장소 또는 설정 파일 확인 실패" }
             : previousState.outcomes.submission,
-          investigation: event.data.code === "source_preflight_failed"
-            ? { status: "not_run", message: "제출한 에이전트는 분석하지 않았어요" }
-            : { status: "failed", message: "분석을 끝까지 마치지 못했어요" },
-          operation: { status: "failed", message: "실험을 마치지 못했어요 · 내장 예시로 계속할 수 있어요" },
+          investigation: sourceFailure
+            ? { status: "not_run", message: "제출한 에이전트 분석을 시작하지 않음" }
+            : { status: "failed", message: "분석을 끝까지 진행하지 못함" },
+          operation: { status: "failed", message: "실험 실행 안 함 · source 확인 필요" },
         },
         terminalNotice: {
           kind: event.data.status || event.data.code || "failed",
@@ -814,23 +888,26 @@ export function reduceRunState(previousState, incomingEvent) {
             || "실험을 중단했어요. 자세한 원인은 원본 기록에서 확인할 수 있어요.",
         },
       };
+    }
     case "tool_result":
       if (
+        isTrustedLiveSource(event.source)
+        &&
         event.raw?.name === "github.resolve_ref"
         && !event.raw?.output?.resolved_sha
       ) {
         return {
           ...state,
-          analysisScope: "fixture_fallback",
+          analysisScope: "source_unresolved",
           outcomes: {
             ...previousState.outcomes,
-            submission: { status: "failed", message: "브랜치나 커밋을 정확한 SHA로 확인하지 못했어요" },
-            investigation: { status: "not_run", message: "제출한 에이전트는 분석하지 않았어요" },
-            operation: { status: "fallback", message: "내장 예시로 계속할게요" },
+            submission: { status: "failed", message: "브랜치 또는 커밋을 정확한 SHA로 확인하지 못함" },
+            investigation: { status: "not_run", message: "제출한 에이전트 분석을 시작하지 않음" },
+            operation: { status: "failed", message: "실험 실행 안 함 · source 확인 필요" },
           },
           terminalNotice: {
-            kind: "source_preflight_failed",
-            message: TERMINAL_COPY.source_preflight_failed,
+            kind: "source_unresolved",
+            message: TERMINAL_COPY.source_unresolved,
           },
         };
       }
