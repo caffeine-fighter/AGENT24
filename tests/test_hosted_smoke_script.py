@@ -72,36 +72,54 @@ def trace(*, hosted: bool, source_pinned: bool = True) -> list[dict[str, object]
         type="pack.selected",
         data={"selected": {"domain_kind": "life"}} if source_pinned else {},
     )
-    events[14].update(
-        type="tool_result",
-        raw={
-            "name": "openai.responses.plan_experiment",
-            "output": {
-                "fallback": not hosted,
-                "response_id": "resp_live_smoke" if hosted else None,
+    if hosted:
+        events[14].update(
+            type="tool_result",
+            raw={
+                "name": "openai.responses.plan_experiment",
+                "output": {"fallback": False, "response_id": "resp_live_smoke"},
             },
-        },
-    )
+        )
+    else:
+        events[14].update(
+            type="stage_failed",
+            data={
+                "stage": "openai_analysis",
+                "code": "openai_key_missing",
+                "message": "controller result preserved",
+            },
+        )
     events[15].update(type="experiment_plan")
     events[-1].update(
         type="run.completed",
-        data={"status": "verified", "safety_boundary": "SIMULATION_ONLY"},
+        data={
+            "status": "verified" if hosted else "openai_analysis_unavailable",
+            "source_resolved": True,
+            "diagnostic_completed": True,
+            "openai_analysis_completed": hosted,
+            "execution_scope": "synthetic_archetype",
+            "safety_boundary": "SIMULATION_ONLY",
+        },
     )
     return events
 
 
 @pytest.mark.parametrize(
-    ("mode", "hosted", "response_observed"),
-    [("openai_hosted", True, True), ("offline_demo", False, False)],
+    ("mode", "hosted", "response_observed", "terminal"),
+    [
+        ("openai_hosted", True, True, "verified"),
+        ("offline_demo", False, False, "openai_analysis_unavailable"),
+    ],
 )
 def test_verify_trace_accepts_both_explicit_modes(
-    mode: str, hosted: bool, response_observed: bool
+    mode: str, hosted: bool, response_observed: bool, terminal: str
 ) -> None:
     result = SMOKE.verify_trace(
         trace(hosted=hosted),
         run_id=RUN_ID,
         expected_mode=mode,
         expected_source="pinned",
+        expected_terminal=terminal,
     )
 
     assert result == {
@@ -110,7 +128,7 @@ def test_verify_trace_accepts_both_explicit_modes(
         "source_ref": PINNED_SHA,
         "source_pinned": True,
         "openai_response_observed": response_observed,
-        "terminal_status": "verified",
+        "terminal_status": terminal,
     }
 
 
@@ -152,11 +170,12 @@ def test_verify_trace_accepts_allowlisted_adapter_path() -> None:
         run_id=RUN_ID,
         expected_mode="offline_demo",
         expected_source="pinned",
+        expected_terminal="openai_analysis_unavailable",
         expected_adapter=True,
     )
 
     assert result["event_count"] == 39
-    assert result["terminal_status"] == "verified"
+    assert result["terminal_status"] == "openai_analysis_unavailable"
 
 
 def test_verify_trace_rejects_non_contiguous_sequence() -> None:
@@ -180,8 +199,18 @@ def source_failure_trace(code: str = "source_unresolved") -> list[dict[str, obje
         ("tool_result", {}),
         ("source_descriptor", {"resolved_sha": None}),
         ("source_snapshot", {"mode": "metadata_only", "execution_scope": "none"}),
-        ("run_failed", {"status": "offline_demo", "code": code}),
-        ("run.completed", {"status": code, "safety_boundary": "SIMULATION_ONLY"}),
+        ("stage_failed", {"stage": "source", "code": code, "message": "source stop"}),
+        (
+            "run.completed",
+            {
+                "status": code,
+                "source_resolved": False,
+                "diagnostic_completed": False,
+                "openai_analysis_completed": False,
+                "execution_scope": "none",
+                "safety_boundary": "SIMULATION_ONLY",
+            },
+        ),
     ]
     return [
         {

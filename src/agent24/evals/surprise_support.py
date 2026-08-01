@@ -320,7 +320,9 @@ def terminal_digest(events: Sequence[Mapping[str, Any]]) -> str:
 # --------------------------------------------------------------------------
 
 TERMINAL_TYPES: frozenset[str] = frozenset({"run_completed"})
-SUPPORTED_TERMINAL_STATUSES: frozenset[str] = frozenset({"completed", "offline_demo"})
+SUPPORTED_TERMINAL_STATUSES: frozenset[str] = frozenset(
+    {"completed", "offline_demo", "openai_analysis_unavailable", "openai_analysis_failed"}
+)
 
 
 class SurpriseSupportReport(BaseModel):

@@ -2,6 +2,7 @@
 
 from .app import RunAccepted, RunRequest, app, create_app
 from .config import RuntimeSettings
+from .contracts import ExecutionScope, RunTerminalPayload, StageFailurePayload
 from .preflight import (
     ExternalAgentPreflight,
     ExternalPreflightResult,
@@ -35,6 +36,9 @@ __all__ = [
     "RunAccepted",
     "RunRequest",
     "RuntimeSettings",
+    "ExecutionScope",
+    "RunTerminalPayload",
+    "StageFailurePayload",
     "app",
     "create_app",
 ]

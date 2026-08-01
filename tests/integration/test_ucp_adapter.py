@@ -81,7 +81,17 @@ def test_one_github_input_runs_pinned_ucp_adapter_through_sse_and_jsonl(
         )
         + "]"
     )
-    assert events[-1]["payload"] == {"status": "offline_demo", "mode": "offline_demo"}
+    terminal = events[-1]["payload"]
+    assert terminal["status"] == "openai_analysis_unavailable"
+    assert terminal["mode"] == "offline_demo"
+    assert terminal["source_resolved"] is True
+    assert terminal["diagnostic_completed"] is True
+    assert terminal["openai_analysis_completed"] is False
+    assert terminal["execution_scope"] == "allowlisted_adapter"
+    assert terminal["experiments_run"] > 0
+    assert terminal["findings"] == 1
+    assert terminal["safety_boundary"] == "SIMULATION_ONLY"
+    assert "OPENAI_API_KEY" in terminal["message"]
     event_types = [event["type"] for event in events]
     assert "adapter.matched" in event_types
     assert "experiment_plan" in event_types

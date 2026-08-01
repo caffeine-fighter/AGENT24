@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from agent24.tools import load_fixture
+import inspect
+
+from agent24.agent.sandbox_contract import SANDBOX_GYM_TOOL_SCHEMAS
+from agent24.tools import SandboxGym, load_fixture
 
 
 def test_cake_collision_commits_once_then_returns_ambiguous_timeout() -> None:
@@ -90,3 +93,23 @@ def test_function_tool_surface_keeps_dotted_manifest_as_stable_contract() -> Non
         "calendar_create",
         "file_write",
     }
+
+
+def test_local_agent_manifest_argument_schemas_match_sandboxgym_methods() -> None:
+    method_names = {
+        "catalog.search": "catalog_search",
+        "payment.charge": "payment_charge",
+        "payment.status": "payment_status",
+        "calendar.create": "calendar_create",
+    }
+
+    for dotted_name, method_name in method_names.items():
+        schema = SANDBOX_GYM_TOOL_SCHEMAS[dotted_name]["input_schema"]
+        parameters = [
+            name
+            for name in inspect.signature(getattr(SandboxGym, method_name)).parameters
+            if name != "self"
+        ]
+
+        assert parameters == schema["required"]
+        assert set(parameters) == set(schema["properties"])

@@ -53,6 +53,8 @@ def parse_args() -> argparse.Namespace:
             "compatibility_only",
             "source_unresolved",
             "source_preflight_failed",
+            "openai_analysis_unavailable",
+            "openai_analysis_failed",
         ),
         default="verified",
         help="Expected terminal status for the created run (default: verified).",
@@ -245,12 +247,19 @@ def verify_trace(
     )
     require(all(event.get("run_id") == run_id for event in events), "SSE run_id changed")
     require(events[0].get("type") == "run.started", "first event is not run.started")
-    require(events[-1].get("type") == "run.completed", "terminal event is missing")
+    terminals = [event for event in events if event.get("type") == "run.completed"]
+    require(len(terminals) == 1, "stream must contain exactly one run.completed terminal")
+    require(events[-1] is terminals[0], "run.completed terminal is not the final event")
 
     phases = unique_in_order(
         str(event.get("phase")) for event in events if isinstance(event.get("phase"), str)
     )
-    expected_phases = list(EXPECTED_PHASES) if expected_terminal == "verified" else ["CLONE"]
+    expected_phases = (
+        list(EXPECTED_PHASES)
+        if expected_terminal
+        in {"verified", "openai_analysis_unavailable", "openai_analysis_failed"}
+        else ["CLONE"]
+    )
     require(phases == expected_phases, f"unexpected phase order: {phases}")
 
     start_data = events[0].get("data")
@@ -266,6 +275,13 @@ def verify_trace(
         terminal_data.get("status") == expected_terminal,
         f"run did not finish {expected_terminal}",
     )
+    for field in (
+        "source_resolved",
+        "diagnostic_completed",
+        "openai_analysis_completed",
+        "execution_scope",
+    ):
+        require(field in terminal_data, f"terminal stage truth field {field} is missing")
 
     descriptor = next((event for event in events if event.get("type") == "source_descriptor"), None)
     require(isinstance(descriptor, dict), "source_descriptor event is missing")
@@ -282,14 +298,19 @@ def verify_trace(
         snapshot = next((event for event in events if event.get("type") == "source_snapshot"), None)
         require(isinstance(snapshot, dict), "source_snapshot event is missing")
         snapshot_data = snapshot.get("data") if snapshot else None
+        normal_experiment_terminal = expected_terminal in {
+            "verified",
+            "openai_analysis_unavailable",
+            "openai_analysis_failed",
+        }
         expected_snapshot_mode = (
-            "bounded_download" if expected_terminal == "verified" else "metadata_only"
+            "bounded_download" if normal_experiment_terminal else "metadata_only"
         )
         expected_execution_scope = (
             "allowlisted_adapter"
             if expected_adapter
             else "manifest_and_entrypoint"
-            if expected_terminal == "verified"
+            if normal_experiment_terminal
             else "static_metadata_only"
         )
         require(
@@ -307,12 +328,12 @@ def verify_trace(
                 "ALLOWLISTED ADAPTER"
                 if expected_adapter
                 else "OWNER MANIFEST"
-                if expected_terminal == "verified"
+                if normal_experiment_terminal
                 else "LAB-INFERRED STATIC PROFILE"
             ),
             "pinned target profile is missing or has the wrong provenance",
         )
-        if expected_terminal == "verified":
+        if normal_experiment_terminal:
             if expected_adapter:
                 adapter = next(
                     (event for event in events if event.get("type") == "adapter.matched"),
@@ -384,11 +405,12 @@ def verify_trace(
             "unresolved source was not bounded as an empty intake",
         )
         if expected_terminal in {"source_unresolved", "source_preflight_failed"}:
-            failure = next((event for event in events if event.get("type") == "run_failed"), None)
+            failure = next((event for event in events if event.get("type") == "stage_failed"), None)
             require(isinstance(failure, dict), "source failure event is missing")
             failure_data = failure.get("data") if failure else None
             require(
                 isinstance(failure_data, dict)
+                and failure_data.get("stage") == "source"
                 and failure_data.get("code") == expected_terminal,
                 "source failure code did not match the expected terminal",
             )
@@ -417,6 +439,37 @@ def verify_trace(
     )
     if expected_terminal == "compatibility_only":
         require(openai_result is None, "compatibility-only run unexpectedly planned an experiment")
+        return {
+            "event_count": len(events),
+            "phases": phases,
+            "source_ref": resolved_sha,
+            "source_pinned": expected_source == "pinned",
+            "openai_response_observed": False,
+            "terminal_status": terminal_data.get("status"),
+        }
+    if expected_mode == "offline_demo" or expected_terminal in {
+        "openai_analysis_unavailable",
+        "openai_analysis_failed",
+    }:
+        require(openai_result is None, "offline run emitted an OpenAI planner tool event")
+        failure = next(
+            (event for event in events if event.get("type") == "stage_failed"),
+            None,
+        )
+        require(isinstance(failure, dict), "OpenAI stage failure event is missing")
+        failure_data = failure.get("data") if failure else None
+        require(
+            isinstance(failure_data, dict)
+            and failure_data.get("stage") == "openai_analysis"
+            and failure_data.get("code") in {
+                "openai_key_missing",
+                "openai_provider_non_2xx",
+                "openai_response_parse_failed",
+                "openai_timeout",
+                "openai_provider_failed",
+            },
+            "offline OpenAI stage failure did not carry a bounded reason code",
+        )
         return {
             "event_count": len(events),
             "phases": phases,

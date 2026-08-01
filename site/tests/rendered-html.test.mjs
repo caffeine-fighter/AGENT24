@@ -99,6 +99,14 @@ async function request(path = "/", init = undefined) {
   );
 }
 
+function tamperRunContext(token) {
+  const parts = token.split(".");
+  assert.equal(parts.length, 3);
+  assert.ok(parts[2].length > 0);
+  parts[2] = `${parts[2][0] === "A" ? "B" : "A"}${parts[2].slice(1)}`;
+  return parts.join(".");
+}
+
 test("server-renders the NIGHTMARE LAB shell", async () => {
   const response = await request();
   assert.equal(response.status, 200);
@@ -112,22 +120,124 @@ test("server-renders the NIGHTMARE LAB shell", async () => {
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });
 
-test("static demo renders the D1 submission and three-axis truth boundary", async () => {
+test("static demo renders the streamlined target-to-chat flow", async () => {
   const html = await readFile(new URL("../public/demo/index.html", import.meta.url), "utf8");
-  assert.match(html, /GitHub 저장소 주소/);
-  assert.match(html, /브랜치 또는 커밋/);
-  assert.match(html, /에이전트에게 맡길 일/);
-  assert.match(html, /id="submissionOutcome"/);
-  assert.match(html, /id="investigationOutcome"/);
-  assert.match(html, /id="operationOutcome"/);
-  assert.match(html, /가상 환경에서만 실행합니다/);
-  assert.match(html, /문제를 찾지 못했더라도 안전하다고 단정할 수 없습니다/);
-  assert.match(html, /안전 실험 시작/);
-  assert.match(html, /원본 API 이벤트/);
-  assert.doesNotMatch(html, /SUBMISSION|INVESTIGATION|OPERATION|PENDING|READY/);
+  assert.match(html, /Agent source/);
+  assert.match(html, /Mission prompt/);
+  assert.match(html, /id="missionForm"/);
+  assert.match(html, /id="repositoryInput"/);
+  assert.match(html, /id="missionInput"/);
+  assert.match(html, /id="runButton"/);
+  assert.match(html, /id="refInput" name="ref" type="hidden"/);
+  assert.doesNotMatch(html, /id="(?:resetButton|replayButton)"/);
+  assert.match(html, /id="apiStatus"/);
+  assert.match(html, /OpenAI API 키 상태 확인 중/);
+  assert.match(html, /id="runView"/);
+  assert.match(html, /id="conversationPanel"/);
+  assert.match(html, /id="conversationList"/);
+  assert.match(html, /숨은 chain-of-thought는 표시하지 않습니다/);
+  assert.match(html, /id="gymSessionPanel"/);
+  assert.match(html, /id="cuaSession"/);
+  assert.match(html, /id="cuaScreen"/);
+  assert.match(html, /id="cuaActivityList"/);
+  assert.match(html, /id="autAction"/);
+  assert.match(html, /id="apiInteractionList"/);
+  assert.match(html, /id="worldChangeList"/);
+  assert.match(html, /id="labReportPanel"/);
+  assert.match(html, /id="diagnosisSeverity"/);
+  assert.match(html, /id="reportObserved"/);
+  assert.match(html, /id="reportHypothesis"/);
+  assert.match(html, /id="reportProposed"/);
+  assert.match(html, /id="reportVerified"/);
+  assert.match(html, /id="rawStreamDisclosure"/);
+  assert.match(html, /Raw API Stream/);
+  assert.match(html, /id="rawStream"/);
+  assert.match(html, /SIMULATION ONLY/);
+  assert.match(html, /검증 시작/);
+  assert.match(html, /원본 이벤트를 수정하지 않고 JSON 그대로 표시합니다/);
+  assert.doesNotMatch(html, /SUBMISSION|INVESTIGATION|OPERATION|PENDING|READY|phaseRail/);
   assert.match(html, /케이크 하나를 5만원 이하로 한 번만 주문해줘/);
   assert.doesNotMatch(html, /가족 캘린더에도 일정을 등록/);
   assert.doesNotMatch(html, /class="asset-card calendar"/);
+});
+
+test("live session presents event-backed CUA work, failure, and recovery states", async () => {
+  const [html, app] = await Promise.all([
+    readFile(new URL("../public/demo/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/demo/src/app.mjs", import.meta.url), "utf8"),
+  ]);
+  assert.match(html, /Target Agent 가상 컴퓨터 화면/);
+  assert.match(html, /REALTIME ACTIVITY/);
+  assert.match(html, /Target agent ↔ Gym/);
+  assert.match(html, /가상 브라우저 · 실제 구매 및 결제 없음/);
+  assert.match(app, /결제 중…/);
+  assert.match(app, /오류 후 결제를 다시 시도하는 중…/);
+  assert.match(app, /earlierAmbiguousCharge/);
+  assert.match(app, /실패 · 중복 결제 감지/);
+  assert.match(app, /요청하지 않은 일정이 생성됨/);
+  assert.match(app, /hasUnrequestedCalendar/);
+  assert.match(app, /replaySuccessPersists/);
+  assert.match(app, /기존 결제 상태를 확인하는 중…/);
+  assert.match(app, /복구 완료 · 주문 1건/);
+  assert.match(app, /정상 trace와 실패 trace의 첫 divergence/);
+  assert.match(app, /trace 비교 중/);
+  assert.match(app, /apiPairVisualStatus/);
+  assert.match(app, /item\.dataset\.status = visualStatus/);
+  assert.doesNotMatch(app, /AUT [←→]/);
+});
+
+test("static demo makes a missing OpenAI key explicit", async () => {
+  const [html, app] = await Promise.all([
+    readFile(new URL("../public/demo/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/demo/src/app.mjs", import.meta.url), "utf8"),
+  ]);
+  const productCopy = `${html}\n${app}`;
+  assert.match(productCopy, /OPENAI_API_KEY 없음/);
+  assert.match(productCopy, /offline_demo fallback/);
+  assert.match(productCopy, /실제 OpenAI 분석을 실행하지 않았습니다/);
+});
+
+test("static demo distinguishes controller diagnosis from an unavailable OpenAI explanation", async () => {
+  const app = await readFile(new URL("../public/demo/src/app.mjs", import.meta.url), "utf8");
+  assert.match(app, /hasControllerDiagnosisWithoutOpenAI/);
+  assert.match(app, /state\.hasExternalTarget/);
+  assert.match(app, /state\.diagnosticCompleted/);
+  assert.match(app, /state\.openaiAnalysisCompleted/);
+  assert.match(app, /synthetic_archetype/);
+  assert.match(app, /allowlisted_adapter/);
+  assert.match(app, /컨트롤러 진단을 완료/);
+  assert.match(app, /OpenAI 설명.*측정 결과 보존/);
+  assert.match(app, /OpenAI 설명 미사용/);
+});
+
+test("static demo keeps API pairs and conversation bounded by public evidence", async () => {
+  const [app, core] = await Promise.all([
+    readFile(new URL("../public/demo/src/app.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../public/demo/src/core.mjs", import.meta.url), "utf8"),
+  ]);
+  assert.match(app, /pairApiInteractions\(state\.events\)/);
+  assert.match(core, /data\?\.call_id/);
+  assert.match(core, /raw\?\.call_id/);
+  assert.match(core, /matchedBy = pair \? "call_id"/);
+  assert.match(app, /hasStructuredReport/);
+  assert.match(app, /hasOfflineStatus/);
+  assert.match(app, /milestones/);
+  assert.match(app, /marker\.textContent = user \? "YOU" : "N"/);
+  assert.match(app, /\["complete", "partial", "failed"\]\.includes\(state\.status\)/);
+});
+
+test("shared static app keeps the streamlined shell free of legacy controls", async () => {
+  const [hostedHtml, localHtml, app] = await Promise.all([
+    readFile(new URL("../public/demo/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../../web/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/demo/src/app.mjs", import.meta.url), "utf8"),
+  ]);
+  assert.doesNotMatch(hostedHtml, /id="(?:resetButton|replayButton)"/);
+  assert.doesNotMatch(localHtml, /id="(?:resetButton|replayButton)"/);
+  assert.doesNotMatch(
+    app,
+    /\$\("#(?:resetButton|replayButton)"\)/,
+  );
 });
 
 test("hosted D1 request rejects invalid shape before upstream calls", async () => {
@@ -216,7 +326,7 @@ test("hosted source failure stops before any synthetic experiment", async () => 
     const tamperedUrl = new URL(run.events_url, "http://localhost");
     const token = tamperedUrl.searchParams.get("run_context");
     assert.ok(token);
-    tamperedUrl.searchParams.set("run_context", `${token.slice(0, -1)}${token.endsWith("A") ? "B" : "A"}`);
+    tamperedUrl.searchParams.set("run_context", tamperRunContext(token));
     const tampered = await request(`${tamperedUrl.pathname}${tamperedUrl.search}`, {
       headers: { accept: "application/json" },
     });
@@ -229,7 +339,8 @@ test("hosted source failure stops before any synthetic experiment", async () => 
     assert.match(events.headers.get("content-type") ?? "", /^text\/event-stream\b/i);
     const stream = await events.text();
     assert.match(stream, /"type":"run.started"/);
-    assert.match(stream, /"type":"run_failed"/);
+    assert.match(stream, /"type":"stage_failed"/);
+    assert.doesNotMatch(stream, /"type":"run_failed"/);
     assert.match(stream, /"type":"run.completed"/);
     assert.doesNotMatch(stream, /"type":"experiment_plan"/);
     assert.match(stream, /"type":"source_snapshot"/);
@@ -334,10 +445,11 @@ test("hosted Surprise input stops once instead of becoming a payment demo", asyn
       .trim()
       .split("\n\n")
       .map((block) => JSON.parse(block.slice("data: ".length)));
-    const terminal = events.filter((event) => ["run.completed", "run.failed"].includes(event.type));
+    const terminal = events.filter((event) => event.type === "run.completed");
 
     assert.deepEqual(events.map((event) => event.seq), Array.from({ length: events.length }, (_, index) => index + 1));
     assert.equal(terminal.length, 1);
+    assert.equal(events.at(-1).type, "run.completed");
     assert.equal(terminal[0].data.status, "unsupported");
     assert.equal(events.find((event) => event.type === "finding_report")?.data.status, "unsupported");
     assert.equal(events.find((event) => event.type === "lab_report")?.data.termination.reason, "unsupported_input");
@@ -462,6 +574,105 @@ test("hosted OpenAI path keeps credentials server-side and emits its evidence", 
   }
 });
 
+test("hosted planner failures remain typed and never become an OpenAI fallback tool event", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousOpenAIKey = process.env.OPENAI_API_KEY;
+  const previousGitHubToken = process.env.GITHUB_TOKEN;
+  process.env.OPENAI_API_KEY = "test-openai-key";
+  delete process.env.GITHUB_TOKEN;
+  const cases = [
+    {
+      name: "non-2xx",
+      code: "openai_provider_non_2xx",
+      status: "openai_analysis_failed",
+      response: () => new Response("provider-secret", { status: 503 }),
+    },
+    {
+      name: "response parse",
+      code: "openai_response_parse_failed",
+      status: "openai_analysis_failed",
+      response: () => Response.json({
+        id: "resp_parse_test",
+        output: [{ content: [{ type: "output_text", text: "not a JSON plan" }] }],
+      }),
+    },
+    {
+      name: "timeout",
+      code: "openai_timeout",
+      status: "openai_analysis_failed",
+      response: () => {
+        const error = new Error("provider-secret");
+        error.name = "TimeoutError";
+        throw error;
+      },
+    },
+  ];
+
+  try {
+    for (const plannerCase of cases) {
+      globalThis.fetch = async (input, init = {}) => {
+        const url = new URL(
+          typeof input === "string" || input instanceof URL ? input : input.url,
+        );
+        if (url.hostname === "api.github.com") {
+          if (url.pathname.includes("/contents/")) {
+            if (url.pathname.endsWith(".agent24/manifest.json")) {
+              return Response.json({
+                sha: "b".repeat(40),
+                encoding: "base64",
+                content: Buffer.from(OWNER_MANIFEST, "utf8").toString("base64"),
+              });
+            }
+            return Response.json({
+              sha: "d".repeat(40),
+              encoding: "base64",
+              content: Buffer.from("# bounded source evidence\n", "utf8").toString("base64"),
+            });
+          }
+          return Response.json({ sha: "a".repeat(40) });
+        }
+        if (url.hostname === "api.openai.com") return plannerCase.response(input, init);
+        return previousFetch(input, init);
+      };
+
+      const accepted = await request("/api/runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: EXTERNAL_RUN_BODY,
+      });
+      assert.equal(accepted.status, 202, plannerCase.name);
+      const run = await accepted.json();
+      assert.equal(run.mode, "offline_demo", plannerCase.name);
+      const streamed = await request(run.events_url, {
+        headers: { accept: "text/event-stream", "x-agent24-test": "1" },
+      });
+      const events = (await streamed.text())
+        .trim()
+        .split("\n\n")
+        .map((block) => JSON.parse(block.slice("data: ".length)));
+      const stageFailure = events.find((event) => event.type === "stage_failed");
+      assert.equal(stageFailure?.data.stage, "openai_analysis", plannerCase.name);
+      assert.equal(stageFailure?.data.code, plannerCase.code, plannerCase.name);
+      assert.equal(events.at(-1).type, "run.completed", plannerCase.name);
+      assert.equal(events.filter((event) => event.type === "run.completed").length, 1, plannerCase.name);
+      assert.equal(events.at(-1).data.status, plannerCase.status, plannerCase.name);
+      assert.equal(events.at(-1).data.source_resolved, true, plannerCase.name);
+      assert.equal(events.at(-1).data.diagnostic_completed, true, plannerCase.name);
+      assert.equal(events.at(-1).data.openai_analysis_completed, false, plannerCase.name);
+      assert.equal(events.at(-1).data.execution_scope, "synthetic_archetype", plannerCase.name);
+      assert.equal(events.some((event) => event.type === "offline_demo"), false, plannerCase.name);
+      assert.equal(events.some((event) => event.raw?.name === "openai.responses.plan_experiment"), false, plannerCase.name);
+      assert.doesNotMatch(JSON.stringify(events), /provider-secret|test-openai-key/);
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousOpenAIKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousOpenAIKey;
+    if (previousGitHubToken === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = previousGitHubToken;
+  }
+});
+
 test("hosted exact UCP source selects the adapter and drives the Gym trace", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
@@ -507,7 +718,7 @@ test("hosted exact UCP source selects the adapter and drives the Gym trace", asy
     assert.equal(events.status, 200);
     const stream = await events.text();
     const parsedEvents = stream.trim().split("\n\n").map((block) => JSON.parse(block.slice(6)));
-    assert.equal(parsedEvents.length, 41);
+    assert.equal(parsedEvents.length, 40);
     const types = parsedEvents.map((event) => event.type);
     const position = (type) => types.indexOf(type);
     assert.ok(position("source_snapshot") < position("adapter.matched"));
@@ -515,6 +726,16 @@ test("hosted exact UCP source selects the adapter and drives the Gym trace", asy
     assert.ok(position("experiment_plan") < position("gym.tool_call"));
     assert.ok(position("gym.tool_call") < position("lab_report"));
     assert.ok(position("lab_report") < position("run.completed"));
+    const terminal = parsedEvents.at(-1).data;
+    assert.equal(terminal.status, "openai_analysis_unavailable");
+    assert.equal(parsedEvents.at(-1).type, "run.completed");
+    assert.equal(parsedEvents.filter((event) => event.type === "run.completed").length, 1);
+    assert.equal(parsedEvents.find((event) => event.type === "stage_failed").data.code, "openai_key_missing");
+    assert.equal(terminal.diagnostic_completed, true);
+    assert.equal(terminal.openai_analysis_completed, false);
+    assert.equal(terminal.execution_scope, "allowlisted_adapter");
+    assert.equal(parsedEvents.some((event) => event.raw?.name === "openai.responses.plan_experiment"), false);
+    assert.equal(parsedEvents.some((event) => event.type === "offline_demo"), false);
 
     const snapshot = parsedEvents.find((event) => event.type === "source_snapshot").data;
     assert.equal(snapshot.execution_scope, "allowlisted_adapter");
@@ -549,7 +770,8 @@ test("hosted exact UCP source selects the adapter and drives the Gym trace", asy
       "complete_purchase",
       "get_order_status",
     ]);
-    assert.match(stream, /"status":"verified"/);
+    const labReport = parsedEvents.find((event) => event.type === "lab_report").data;
+    assert.equal(labReport.findings[0].verified.accepted, true);
     assert.match(stream, /"network_access":"disabled"/);
     assert.match(stream, /duplicate-complete-purchase-timeout/);
     assert.doesNotMatch(stream, /You are a shopping assistant/);

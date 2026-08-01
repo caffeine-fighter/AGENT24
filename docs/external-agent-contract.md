@@ -10,7 +10,9 @@ P0 제품 계약이다. form, parser, 결과 화면은 이 문구와 상태를 �
 
 ## 사용자가 하는 일
 
-사용자는 GitHub 저장소, 재현할 ref, crash-test mission을 한 번 제출한다. 이후
+사용자는 Agent source, 재현할 ref, crash-test mission을 한 번 제출한다. 일반 입력은
+GitHub 저장소이고, `demo-local.py --example-agent`로 시작한 로컬 데모만 체크인된 예시
+bundle URI를 자동 입력한다. 이후
 NIGHTMARE LAB Agent가 source 고정, owner/static profile 판정, 지원되는 경우의 실험
 선택, 합성 실행, 부검, 보호책 제안, 재실행, 보고서 작성을 자율 수행한다. 중간에 사용자가 승인
 버튼이나 다음 단계 버튼을 누르는 흐름은 만들지 않는다.
@@ -19,7 +21,7 @@ NIGHTMARE LAB Agent가 source 고정, owner/static profile 판정, 지원되는 
 
 | 화면 필드 | API 필드 | P0 규칙 | 오류 조건 |
 |---|---|---|---|
-| `GitHub Agent repository` | `target.repository_url` | 필수. 최대 500자. `https://github.com/{owner}/{repo}`와 지원되는 revision URL만 허용한다. | 빈 값, HTTP URL, query/fragment, 잘못된 owner/repo, 미지원 host |
+| `Agent source` | `target.repository_url` | 필수. 최대 500자. 일반 입력은 `https://github.com/{owner}/{repo}`와 지원되는 revision URL만 허용한다. 로컬 예시 모드에서는 오직 `local://agent24/examples/demo-agent-repo`를 자동 입력한다. | 빈 값, HTTP URL, query/fragment, 잘못된 owner/repo, 미지원 host 또는 임의 local URI |
 | `Ref or commit` | `target.requested_ref` | UI에서는 필수. branch, tag 또는 commit SHA. 최대 200자. 서버 모델의 `null`은 API 하위 호환용이며 default branch를 resolve한다. 재현 가능한 데모에서는 항상 명시한다. | 빈 UI 값, 제어문자, URL에 포함된 ref와 불일치 |
 | `Crash-test mission` | `target.mission` | 필수. 최대 2,000자. 평가할 목표와 사용자 제약을 자연어로 쓴다. | 빈 값, 길이 초과 |
 | 없음 | `input` | UI가 위 세 필드를 설명하는 한 번의 controller 입력으로 만든다. 사용자가 별도로 작성하지 않는다. | `target`과 모순되는 별도 입력을 만들지 않는다. |
@@ -83,7 +85,8 @@ source_descriptor → source_snapshot → target_profile → pack_selection → 
 | 공개 `github.com` 저장소 | preflight 지원 | GitHub metadata로 ref를 full SHA로 고정하고 manifest를 읽는다. |
 | private `github.com` 저장소 + 서버 `GITHUB_TOKEN` | preflight 지원 | 토큰은 GitHub API header에만 사용한다. 권한이 없으면 접근 실패다. |
 | private 저장소 + 토큰 없음/권한 없음 | 접근 실패 | API/hosted path는 외부 Agent를 분석했다고 주장하지 않고 `source_unresolved`/`source_preflight_failed`로 실험을 중단한다. local offline fixture는 별도 `fixture` source로만 표시한다. |
-| GitLab, Bitbucket, 로컬 경로, 임의 ZIP | 미지원 | P0은 `https://github.com`만 지원한다. |
+| 체크인된 예시 local bundle | 로컬 데모 전용 | `demo-local.py --example-agent`에서 고정 URI와 bundle SHA-256으로 bounded intake한다. #100 child runner는 고정된 주문+캘린더 mission까지 일치할 때만 실행한다. 임의 filesystem path를 허용하거나 public repo로 표현하지 않는다. |
+| GitLab, Bitbucket, 임의 로컬 경로·URI, 임의 ZIP | 미지원 | 일반 P0 입력은 `https://github.com`만 지원한다. |
 | LangGraph, CrewAI, Agents SDK 등 특정 framework | 실행 지원 아님 | manifest schema는 framework 중립 metadata다. P0은 어떤 framework의 repository code도 import·install·execute하지 않는다. |
 | allowlist manifest | metadata 지원 | `.agent24/manifest.json`, 다음으로 `agent24.manifest.json`만 탐색하며 최대 256 KB다. |
 | exact-reviewed allowlisted adapter | 제한된 실행 지원 | 현재는 `Upsonic/UCP-Agent@3f98ef0`의 AST 계약만 매칭하며, `adapter.matched` 후 network-disabled local replacement를 실행한다. upstream Python/dependency와 실제 side effect는 실행하지 않는다. |
@@ -152,15 +155,22 @@ Raw API Stream에는 아래 wire code를 그대로 보존한다.
 | manifest 오류 | `ManifestResponseError` / `MalformedManifestError` / `ManifestPathError` → `source_preflight_failed` | “manifest를 읽을 수 없습니다. JSON schema, 256 KB 제한, allowlist 경로, 상대 entrypoint를 확인하세요. 외부 Agent 코드는 실행하지 않았습니다.” |
 | 실험 미지원 | `StopDecision.reason=unsupported_input`, terminal `status=unsupported` | “현재 Gym이 이 BehaviorProfile에 맞는 fault operator를 재현할 수 없습니다. 실패를 찾지 못한 것이 아니라 테스트하지 못한 상태입니다.” |
 | budget 소진 | `StopDecision.reason=budget_exhausted` | “실험 budget을 모두 사용해 탐색을 중단했습니다. 확인하지 못한 위험이 남아 있으며 이 결과는 안전 인증이 아닙니다.” |
-| OpenAI 설명 경로 미사용 | `offline_demo` | “OpenAI 설명 경로를 사용할 수 없어 결정적 offline demo로 전환했습니다. Gym 측정과 Raw API Stream은 계속 제공됩니다.” |
-| 진단 loop 내부 실패 | `diagnostic_loop_failed` | “결정적 진단 loop를 완료하지 못했습니다. 외부 Agent 결과를 만들지 않고 합성 fallback으로 전환합니다. 원인은 Raw API Stream에서 확인하세요.” |
-| 실행 timeout | `timeout` | “OpenAI 설명 단계가 시간 제한을 넘었습니다. 이미 측정된 합성 evidence를 보존하고 offline demo로 전환합니다.” |
+| target 진단 완료, OpenAI key 없음 | `stage_failed(openai_key_missing)` → terminal `openai_analysis_unavailable` | “controller 진단은 완료했지만 OPENAI_API_KEY가 없어 OpenAI 설명을 실행하지 않았습니다. controller report만 보존합니다.” |
+| target 진단 완료, OpenAI provider 실패 | `stage_failed(openai_*)` → terminal `openai_analysis_failed` | “controller 진단은 완료했지만 OpenAI 설명 요청에 실패했습니다. provider 원문 없이 controller report만 보존합니다.” |
+| 진단 loop 내부 실패 | `stage_failed(diagnostic_loop_failed)` → terminal `diagnostic_loop_failed` | “controller 진단을 완료하지 못했습니다. 외부 Agent 결과를 다른 fixture로 바꾸지 않았습니다.” |
+| no-target OpenAI unavailable | `offline_demo`, terminal scope `no_target_offline_demo` | “external target이 없는 generic 실행에서만 deterministic synthetic fixture로 전환했습니다.” |
+| 분류되지 않은 runtime 실패 | `stage_failed(runtime_failed)` → terminal `runtime_failed` | “실행 중 오류로 결과를 확정하지 못했습니다. 완료로 표시하지 않고 확인된 단계까지만 보존합니다.” |
 | 실패 미발견 | `no_failure_observed` | “설정된 실험 범위에서 실패를 관찰하지 못했습니다. 이는 안전 인증이 아니며 미탐색 위험이 남아 있습니다.” |
 
 현재 runtime은 source 접근·malformed manifest 계열 실패를 credential이 섞일 수 없는
 `source_preflight_failed` code로 축약한다. 정상적인 manifest 부재는 registered static
 profile 또는 명시적 `unsupported`로 처리한다. UI는 내부 예외 문자열을 노출하지 않고,
 가능한 typed 상태를 알고 있을 때만 위 세부 문구를 선택한다. 구분할 수 없으면 다음 공통 문구를 사용한다.
+
+`run_completed`만 terminal이며 정확히 한 번 나옵니다. 모든 terminal은
+`source_resolved`, `diagnostic_completed`, `openai_analysis_completed`,
+`execution_scope`를 포함하므로 `mode=offline_demo`만 보고 fixture fallback으로 해석하지
+않습니다.
 
 > “외부 source preflight를 완료하지 못했습니다. 외부 Agent 진단과 synthetic target
 > 실험을 주장하지 않습니다. 저장소 접근과 allowlist manifest를 확인하세요.”

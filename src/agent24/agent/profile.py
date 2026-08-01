@@ -85,6 +85,8 @@ class AgentManifest(BaseModel):
 
     # Provenance and classification the loader also produces (issue #18).
     entrypoint: str = ""
+    python_version: str | None = None
+    runtime_contract: dict[str, JsonValue] = Field(default_factory=dict)
     mission_family: MissionFamily = MissionFamily.UNKNOWN
     manifest_hash: str | None = None
     adapter_version: str | None = None
