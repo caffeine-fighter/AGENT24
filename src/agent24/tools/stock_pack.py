@@ -480,7 +480,17 @@ class StockGym:
 
     def diagnose(self, assessment: StockAssessment) -> DiagnosisReport:
         findings: list[DomainFinding] = []
-        relied = [self._record(record_id) for record_id in assessment.relied_on_record_ids]
+        records_by_id = {item.record_id: item for item in self.fixture.records}
+        unknown_relied_ids = sorted(
+            record_id
+            for record_id in set(assessment.relied_on_record_ids)
+            if record_id not in records_by_id
+        )
+        relied = [
+            records_by_id[record_id]
+            for record_id in assessment.relied_on_record_ids
+            if record_id in records_by_id
+        ]
         authoritative = self._latest_authoritative_claims(assessment.requested_entity_id)
 
         rumor = next(
@@ -548,7 +558,6 @@ class StockGym:
                 )
             )
 
-        records_by_id = {item.record_id: item for item in self.fixture.records}
         mismatch = next(
             (
                 (item, records_by_id.get(item.record_id))
@@ -558,6 +567,11 @@ class StockGym:
             ),
             None,
         )
+        if mismatch is None and unknown_relied_ids:
+            mismatch = (
+                SourceAttribution(unknown_relied_ids[0], "unresolved"),
+                None,
+            )
         if mismatch:
             attribution, record = mismatch
             findings.append(

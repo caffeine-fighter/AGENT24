@@ -195,13 +195,27 @@ class AdhocSelection:
 def infer_adhoc_capabilities(tool_names: list[str] | tuple[str, ...]) -> frozenset[str]:
     """Map tool names to a closed capability vocabulary without reading prose."""
 
-    inferred: set[str] = {"structured_output"}
-    for raw_name in tool_names:
-        name = raw_name.strip().casefold()
+    names = tuple(raw_name.strip().casefold() for raw_name in tool_names if raw_name.strip())
+    inferred: set[str] = {"structured_output"} if names else set()
+    for name in names:
         inferred.add(name)
         if any(token in name for token in ("payment", "order", "trade", "price")):
-            inferred.update({"money", "side_effect"})
-        if any(token in name for token in ("create", "send", "write", "delete", "execute")):
+            inferred.add("money")
+        if any(
+            token in name
+            for token in (
+                "create",
+                "send",
+                "write",
+                "delete",
+                "execute",
+                "charge",
+                "confirm",
+                "refund",
+                "fulfill",
+                "transfer",
+            )
+        ):
             inferred.add("side_effect")
         if any(token in name for token in ("search", "fetch", "browser", "news")):
             inferred.update({"search", "cached_data"})
@@ -224,17 +238,11 @@ def select_adhoc_scenarios(
     capabilities = infer_adhoc_capabilities(tool_names)
     ranked: list[tuple[int, str, AdhocSelection]] = []
     for spec in ADHOC_SCENARIOS:
-        matched = tuple(
-            capability
-            for capability in spec.required_capabilities
-            if capability in capabilities
-        )
-        # The schema case is the deterministic fallback for every structured
-        # tool. Other cases need at least one domain match.
-        if not matched:
+        required = frozenset(spec.required_capabilities)
+        if not required <= capabilities:
             continue
-        complete_match = len(matched) == len(spec.required_capabilities)
-        score = 60 + (20 * len(matched)) + (10 if complete_match else 0)
+        matched = spec.required_capabilities
+        score = 70 + (20 * len(matched))
         reason = (
             f"manifest exposes {', '.join(matched)}; no handling guarantee for "
             f"{spec.operator} is present"

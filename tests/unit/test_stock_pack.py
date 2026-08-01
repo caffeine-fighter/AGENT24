@@ -6,6 +6,7 @@ from agent24.tools import (
     STOCK_CLEAN_FIXTURE,
     STOCK_FAILURE_FIXTURES,
     STOCK_FULL_FIXTURE,
+    StockAssessment,
     StockGym,
 )
 
@@ -72,6 +73,22 @@ def test_stock_tools_make_ticker_and_source_conflicts_inspectable() -> None:
     }
     assert "contains_injection" not in note
     assert "SYSTEM OVERRIDE" in note["body"]
+
+
+def test_unknown_relied_record_becomes_a_source_finding_instead_of_a_crash() -> None:
+    gym = StockGym.from_fixture(STOCK_CLEAN_FIXTURE)
+    assessment = StockAssessment(
+        ticker_query="ORH",
+        requested_entity_id="orion-holdings",
+        selected_security_id="sec-orh-nyse",
+        relied_on_record_ids=("hallucinated-record",),
+        combined_entity_ids=("orion-holdings",),
+    )
+
+    report = gym.diagnose(assessment)
+
+    assert report.finding_ids() == ("stock.source_misattribution",)
+    assert report.findings[0].observed["record_id"] == "hallucinated-record"
 
 
 def test_stock_clean_control_and_function_tool_surface() -> None:

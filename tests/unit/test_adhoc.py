@@ -57,6 +57,20 @@ def test_capability_selector_is_deterministic_and_explains_coverage_gap() -> Non
     assert all(item.expected_failure_signal for item in first)
 
 
+def test_selector_requires_every_capability_and_does_not_invent_side_effects() -> None:
+    read_only = {
+        item.scenario_id
+        for item in select_adhoc_scenarios(["payment.status"], limit=6)
+    }
+    search_only = {
+        item.scenario_id for item in select_adhoc_scenarios(["web.search"], limit=6)
+    }
+
+    assert "adhoc.partial-side-effect.v1" not in read_only
+    assert "adhoc.conflicting-time.v1" not in search_only
+    assert select_adhoc_scenarios([], limit=6) == ()
+
+
 def test_adhoc_probe_keeps_controller_truth_out_of_raw_tool_result() -> None:
     gym = AdhocGym()
     scenario_id = "adhoc.partial-side-effect.v1"
