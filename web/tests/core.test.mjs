@@ -12,9 +12,13 @@ import {
   isDocumentedUnsupportedMission,
   normalizeEvent,
   projectBehaviorProfile,
+  projectCompatibilitySelection,
+  projectCompatibilityReport,
   projectExperimentPlan,
   projectLabReport,
   projectSourceDescriptor,
+  projectSourceSnapshot,
+  projectTargetProfile,
   reduceRunState,
   replayDeterministically,
   TERMINAL_COPY,
@@ -223,6 +227,106 @@ const fixtureSourceState = reduceRunState(targetState, {
 });
 assert.equal(fixtureSourceState.target.resolvedSha, null, "fixture descriptor must not masquerade as live provenance");
 assert.equal(fixtureSourceState.unknownEvents.length, 0, "source_descriptor is a supported semantic event");
+
+const participantSha = "bf6c545b6c3fd547819b76f9d3d96c5995d43eb0";
+const sourceSnapshotPayload = {
+  source_ref: `midwestchekhov/agent24@${participantSha}`,
+  mode: "metadata_only",
+  files: [{
+    path: "README.md",
+    size: 1330,
+    blob_sha: "cd883ecaa992d61a1cc2b8263ac63bd8915d10f3",
+    content_sha256: null,
+    retrieval_mode: "metadata_only",
+  }],
+  total_bytes: 1330,
+  execution_scope: "static_metadata_only",
+  claim_boundary: "Compatibility only; no target code execution.",
+  snapshot_digest: `sha256:${"a".repeat(64)}`,
+};
+const targetProfilePayload = {
+  agent_name: "Paper Playground",
+  source_ref: `midwestchekhov/agent24@${participantSha}`,
+  profile_label: "LAB-INFERRED STATIC PROFILE",
+  status: "compatible_candidate",
+  provenance: {
+    origin: "lab_static_profile",
+    resolved_sha: participantSha,
+    reviewed_at: "2026-08-01T20:30:00+09:00",
+    adapter_version: "participant-intake.v1",
+    public_visibility: "public",
+    license_spdx: null,
+    evidence: [{ path: "README.md", line_selector: "L1-L4" }],
+  },
+  domain_candidates: [{
+    domain_kind: "research",
+    mission_families: ["research"],
+    tool_capabilities: ["paper_claim_mapping"],
+    evidence_refs: ["github:pinned-ref"],
+    rationale: "Pinned evidence describes a research workflow.",
+  }],
+  declared_capabilities: ["paper_claim_mapping"],
+  unknown_fields: ["observed_behavior"],
+  unsupported_fields: ["license_spdx_unknown"],
+  failure_claims: [],
+  profile_digest: "sha256:profile",
+};
+const compatibilitySelectionPayload = {
+  registry_version: "domain-pack-registry.v1",
+  status: "compatible_candidate",
+  selected_domain: "research",
+  candidate_domains: ["research"],
+  why: "Pinned evidence supports the research DomainPack candidate.",
+  expect: "Registry capability verification is required.",
+  evidence_refs: ["github:pinned-ref"],
+  pack_id: "research-agent-pack.v1",
+  pack_version: "v1",
+  execution_mode: "compatibility_only",
+  max_experiments: 0,
+  fallback: "terminal_compatibility_only",
+};
+const compatibilityReportPayload = {
+  status: "compatible_candidate",
+  source_ref: targetProfilePayload.source_ref,
+  profile_label: targetProfilePayload.profile_label,
+  selected_domain: "research",
+  experiments_run: 0,
+  findings: [],
+  evidence_refs: ["github:pinned-ref"],
+  compatibility_claims: ["Research compatibility candidate."],
+  claim_boundary: "Compatibility only; no vulnerability claim.",
+  message: "Research candidate only; target code was not executed.",
+};
+assert.equal(projectTargetProfile(targetProfilePayload).profileLabel, "LAB-INFERRED STATIC PROFILE");
+assert.equal(projectTargetProfile(targetProfilePayload).candidates[0].domain, "research");
+assert.equal(projectSourceSnapshot(sourceSnapshotPayload).executionScope, "static_metadata_only");
+assert.equal(projectCompatibilitySelection(compatibilitySelectionPayload).maxExperiments, 0);
+assert.equal(projectCompatibilityReport(compatibilityReportPayload).findings.length, 0);
+
+const participantState = [
+  { type: "source_snapshot", payload: sourceSnapshotPayload },
+  { type: "target_profile", payload: targetProfilePayload },
+  { type: "pack_selection", payload: compatibilitySelectionPayload },
+  { type: "compatibility_report", payload: compatibilityReportPayload },
+].reduce(
+  (current, item, index) => reduceRunState(current, {
+    run_id: "participant-test",
+    seq: index + 2,
+    source: "live",
+    ...item,
+  }),
+  liveSourceState,
+);
+assert.equal(participantState.targetProfileView.profileLabel, "LAB-INFERRED STATIC PROFILE");
+assert.equal(participantState.sourceSnapshotView.totalBytes, 1330);
+assert.equal(participantState.compatibilitySelectionView.selectedDomain, "research");
+assert.equal(participantState.compatibilitySelectionView.packId, "research-agent-pack.v1");
+assert.equal(participantState.compatibilityReportView.experimentsRun, 0);
+assert.equal(participantState.terminalNotice.kind, "compatible_candidate");
+assert.equal(participantState.analysisScope, "compatibility_only");
+assert.equal(participantState.outcomes.operation.status, "not_run");
+assert.deepEqual(participantState.events.at(-1).raw, compatibilityReportPayload);
+assert.equal(participantState.unknownEvents.length, 0, "participant lifecycle events are supported");
 
 const behaviorProfilePayload = createCakeBehaviorProfile();
 const projectedProfile = projectBehaviorProfile(behaviorProfilePayload);

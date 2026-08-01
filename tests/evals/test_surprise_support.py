@@ -179,7 +179,7 @@ def test_communication_becomes_supported_only_when_the_surface_is_there() -> Non
     payment_only = classify_support(COMMUNICATION, tools=_tool_names(PAYMENT_SURFACE))
     with_web = classify_support(COMMUNICATION, tools=_tool_names(WEB_SURFACE))
     assert payment_only.verdict is SupportVerdict.UNSUPPORTED
-    assert "제공하지 않습니다" in payment_only.detail
+    assert "도구도 없어요" in payment_only.detail
     assert with_web.verdict is SupportVerdict.SUPPORTED
     assert with_web.fault_family == "malicious_web_content"
 

@@ -351,7 +351,7 @@ function unsupportedEvents(context: HostedRunContext): LabEvent[] {
     findings: [],
     termination: stop,
     unsupported_scope: [context.supportDetail],
-    no_failure_statement: "실험하지 않았으므로 안전 여부를 판단할 수 없습니다.",
+    no_failure_statement: "실험하지 않았기 때문에 안전한지는 판단할 수 없어요.",
   };
   const items: Array<Omit<LabEvent, "seq" | "timestamp">> = [
     event(context.runId, 1, "run.started", "CLONE", {
@@ -389,10 +389,10 @@ function unsupportedEvents(context: HostedRunContext): LabEvent[] {
       selected: null,
       candidates: [],
       why: context.supportDetail,
-      expect: "실험을 시작하지 않습니다.",
+      expect: "실험을 시작하지 않아요.",
       evidence: [],
       budget: null,
-      fallback: "다른 영역의 실험으로 바꾸지 않습니다.",
+      fallback: "다른 영역의 실험으로 바꾸지 않아요.",
       stop,
       selection_digest: `unsupported:${context.supportDomain}`,
     }),

@@ -15,6 +15,12 @@ from openai.types.responses import (
     ResponseOutputText,
 )
 
+from agent24.agent import (
+    PAPER_PLAYGROUND_SHA,
+    MappingEvidenceMetadataFetcher,
+    ParticipantStaticProfiler,
+    metadata_fixture_for,
+)
 from agent24.agent.source import MappingRevisionResolver
 from agent24.api import (
     ExternalAgentPreflight,
@@ -52,6 +58,19 @@ def _external_preflight(*, supported: bool = True) -> ExternalAgentPreflight:
         ),
         manifest_fetcher=MappingManifestFetcher({".agent24/manifest.json": manifest}),
         retrieved_at="2026-08-01T17:45:00+09:00",
+    )
+
+
+def _participant_preflight() -> ExternalAgentPreflight:
+    return ExternalAgentPreflight(
+        source_resolver=MappingRevisionResolver(
+            {("midwestchekhov/agent24", "main"): PAPER_PLAYGROUND_SHA}
+        ),
+        manifest_fetcher=MappingManifestFetcher({}),
+        static_profiler=ParticipantStaticProfiler(
+            evidence_fetcher=MappingEvidenceMetadataFetcher(metadata_fixture_for())
+        ),
+        retrieved_at="2026-08-01T20:30:00+09:00",
     )
 
 
@@ -318,6 +337,9 @@ def test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl(
         "run_started",
         "phase.changed",
         "source_descriptor",
+        "source_snapshot",
+        "target_profile",
+        "pack_selection",
         "behavior_profile",
         "pack.selected",
         "experiment_plan",
@@ -351,10 +373,30 @@ def test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl(
         "run_completed",
     ]
     source = next(event["payload"] for event in events if event["type"] == "source_descriptor")
+    snapshot = next(event["payload"] for event in events if event["type"] == "source_snapshot")
+    target_profile = next(
+        event["payload"] for event in events if event["type"] == "target_profile"
+    )
+    compatibility_selection = next(
+        event["payload"] for event in events if event["type"] == "pack_selection"
+    )
+    routed_selection = next(
+        event["payload"] for event in events if event["type"] == "pack.selected"
+    )
     profile = next(event["payload"] for event in events if event["type"] == "behavior_profile")
     plan = next(event["payload"] for event in events if event["type"] == "experiment_plan")
     assert source["resolved_sha"] == PINNED_SHA
     assert source["requested_ref"] == "main"
+    assert snapshot["mode"] == "bounded_download"
+    assert snapshot["execution_scope"] == "manifest_only"
+    assert snapshot["files"][0]["path"] == ".agent24/manifest.json"
+    assert snapshot["files"][0]["content_sha256"].startswith("sha256:")
+    assert target_profile["profile_label"] == "OWNER MANIFEST"
+    assert target_profile["provenance"]["origin"] == "owner_manifest"
+    assert compatibility_selection["pack_id"] == "life-v0-sandbox.v1"
+    assert compatibility_selection["max_experiments"] == 0
+    assert compatibility_selection["fixture_id"] is None
+    assert routed_selection["selected"]["pack_id"] == "life-v0-sandbox.v1"
     assert profile["source_ref"] == f"example/cake-agent@{PINNED_SHA}"
     assert profile["baseline_observed"] is False
     assert plan["scenario"]["faults"][0]["fault"] == "commit_then_timeout"
@@ -373,7 +415,78 @@ def test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl(
     assert sandbox_replay["accepted"] is True
     assert sandbox_replay["perturbed"]["charge_count"] == 2
     assert sandbox_replay["protected"]["charge_count"] == 1
+    assert "Buy one cake under budget." not in json.dumps(events, ensure_ascii=False)
     assert events[-1]["payload"]["mode"] == "offline_demo"
+
+
+def test_manifestless_participant_terminates_with_ordered_compatibility_report(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    runtime = OpenAIWhiteBoxAdapter(
+        preflight=_participant_preflight(),
+        settings=RuntimeSettings(openai_api_key=None),
+    )
+    app = create_app(runtime=runtime, artifact_root=tmp_path)
+    target = {
+        "repository_url": "https://github.com/midwestchekhov/agent24",
+        "requested_ref": "main",
+        "mission": "논문 주장의 근거를 검토해줘.",
+    }
+
+    with TestClient(app) as client:
+        accepted = client.post(
+            "/api/runs",
+            json={"input": "one input", "target": target},
+        )
+        metadata = accepted.json()
+        events = _sse_data(client.get(metadata["events_url"]).text)
+
+    assert events == _jsonl_events(tmp_path, metadata["run_id"])
+    assert [event["type"] for event in events] == [
+        "run_started",
+        "phase.changed",
+        "source_descriptor",
+        "source_snapshot",
+        "target_profile",
+        "pack_selection",
+        "compatibility_report",
+        "run_completed",
+    ]
+    assert {event["run_id"] for event in events} == {metadata["run_id"]}
+    assert [event["seq"] for event in events] == list(range(len(events)))
+    snapshot = events[3]["payload"]
+    profile = events[4]["payload"]
+    selection = events[5]["payload"]
+    report = events[6]["payload"]
+    assert snapshot["mode"] == "metadata_only"
+    assert snapshot["execution_scope"] == "static_metadata_only"
+    assert snapshot["files"]
+    assert profile["profile_label"] == "LAB-INFERRED STATIC PROFILE"
+    assert profile["provenance"]["resolved_sha"] == PAPER_PLAYGROUND_SHA
+    assert selection["status"] == "compatible_candidate"
+    assert selection["selected_domain"] == "research"
+    assert selection["pack_id"] == "research-agent-pack.v1"
+    assert selection["registry_version"] == "domain-pack-registry.v1"
+    assert selection["fixture_id"] is None
+    assert selection["max_experiments"] == 0
+    assert report["experiments_run"] == 0
+    assert report["findings"] == []
+    assert "no vulnerability" in report["claim_boundary"]
+    assert not any(
+        event["type"]
+        in {
+            "experiment_plan",
+            "gym.tool_call",
+            "tool_call",
+            "failure.detected",
+            "offline_demo",
+        }
+        for event in events
+    )
+    assert events[-1]["payload"]["status"] == "compatible_candidate"
+    assert events[-1]["payload"]["mode"] == "compatibility_only"
 
 
 def test_live_target_passes_bounded_synthetic_evidence_to_openai(
@@ -495,6 +608,9 @@ def test_unsupported_manifest_stops_without_inventing_an_experiment(
         "run_started",
         "phase.changed",
         "source_descriptor",
+        "source_snapshot",
+        "target_profile",
+        "pack_selection",
         "behavior_profile",
         # Published before the stop branch: on the unsupported path this is the
         # only record of which pack was considered and why nothing ran.
@@ -516,6 +632,7 @@ def test_unsupported_manifest_stops_without_inventing_an_experiment(
     assert pack["selected"] is None
     assert pack["candidates"] == []
     assert pack["selection_digest"]
+    assert "Buy one cake under budget." not in json.dumps(events, ensure_ascii=False)
 
 
 def test_structured_target_validation_rejects_incomplete_submission(

@@ -12,7 +12,9 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 const won = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
 const OUTCOME_STATUS_LABELS = Object.freeze({
   accepted: "접수 완료",
+  ambiguous: "추가 근거 필요",
   budget_exhausted: "실험 종료",
+  compatible_candidate: "호환 후보",
   complete: "완료",
   failed: "진행하지 못함",
   fallback: "예시로 계속",
@@ -171,7 +173,9 @@ function renderOutcomes() {
   scopeNotice.dataset.scope = state.analysisScope;
   scopeNotice.textContent = state.analysisScope === "fixture_fallback"
     ? "내장 예시를 보여드리고 있어요. 제출한 저장소를 분석한 결과는 아닙니다. 가상 환경의 원본 기록만 보여드리며, 이 결과만으로는 안전을 보장할 수 없어요."
-    : "실제 서비스에는 연결하지 않아요. 저장소 정보와 허용된 설정만 읽어 가상 환경에서 행동을 재현해요. 문제가 보이지 않아도 안전이 보장되는 것은 아니에요.";
+    : state.analysisScope === "compatibility_only"
+      ? "고정된 공개 저장소 정보로 호환성만 확인했어요. 저장소 코드나 합성 공격은 실행하지 않았으며, 취약점이나 안전성을 판정한 결과가 아니에요."
+      : "실제 서비스에는 연결하지 않아요. 저장소 정보와 허용된 설정만 읽어 가상 환경에서 행동을 재현해요. 문제가 보이지 않아도 안전이 보장되는 것은 아니에요.";
 }
 
 function compactJson(value) {
@@ -183,65 +187,92 @@ function renderLabReport() {
   const report = state.reportView;
   const behavior = state.behaviorProfileView;
   const experiment = state.experimentPlanView;
+  const targetProfile = state.targetProfileView;
+  const selection = state.packSelectionView;
+  const compatibilitySelection = state.compatibilitySelectionView;
+  const compatibility = state.compatibilityReportView;
+  const snapshot = state.sourceSnapshotView;
   const source = state.sourceDescriptorView;
-  panel.hidden = !report && !behavior && !experiment;
-  if (!report && !behavior && !experiment) return;
+  panel.hidden = !report && !behavior && !experiment && !targetProfile && !selection && !compatibilitySelection && !compatibility;
+  if (panel.hidden) return;
 
-  const profile = behavior || report?.profile || {
+  const profile = behavior || targetProfile || report?.profile || {
     agentName: "에이전트를 아직 확인하지 못했어요",
     capabilities: [],
     tools: [],
     sideEffectTools: [],
+    declaredCapabilities: [],
     permissions: {},
   };
-  const capabilityText = profile.capabilities.length
+  const capabilityText = profile.capabilities?.length
     ? profile.capabilities
         .map((capability) => `${capability.tool} [${capability.categories.map((category) => CATEGORY_LABELS[category] || category).join(", ") || "분류되지 않음"}]`)
         .join(" · ")
-    : profile.tools?.join(" · ") || profile.sideEffectTools?.join(" · ") || "확인된 기능이 없어요";
-  const permissions = Object.keys(profile.permissions).length
+    : profile.tools?.join(" · ")
+      || profile.sideEffectTools?.join(" · ")
+      || profile.declaredCapabilities?.join(" · ")
+      || "확인된 기능이 없어요";
+  const permissions = Object.keys(profile.permissions || {}).length
     ? Object.entries(profile.permissions)
-        .map(([key, value]) => key === "max_spend_krw" ? `최대 결제 금액 ${won.format(value)}` : `${key}: ${value}`)
+        .map(([key, value]) => key === "max_spend_krw" && typeof value === "number"
+          ? `최대 결제 금액 ${won.format(value)}`
+          : `${key}: ${value}`)
         .join(" · ")
     : "설정된 권한이 없어요";
   const termination = report?.experiment.termination;
+  const observedItems = (report?.observed.items || [])
+    .map((item) => `${INVARIANT_LABELS[item.invariant] || item.invariant}: 실제 ${compactJson(item.actual)} / 기준 ${item.expected} (${item.evidence})`)
+    .join("\n");
   const sourceStatus = source
     ? RESOLVER_LABELS[source.resolver] || source.resolver
     : behavior?.baselineObserved
       ? "기본 동작 확인 완료"
       : "기본 동작을 확인하지 못했어요";
-  const observedItems = (report?.observed.items || [])
-    .map((item) => `${INVARIANT_LABELS[item.invariant] || item.invariant}: 실제 ${compactJson(item.actual)} / 기준 ${item.expected} (${item.evidence})`)
-    .join("\n");
 
   setText("#reportAgent", profile.agentName);
   setText(
     "#reportSourceRef",
-    behavior
+    targetProfile
+      ? `${source?.sourceRef || targetProfile.sourceRef} · ${targetProfile.profileLabel}`
+      : behavior
       ? `${source?.sourceRef || behavior.sourceRef} · ${sourceStatus}`
       : source?.sourceRef || "보고서에 기록된 에이전트",
   );
   setText("#reportCapabilities", capabilityText);
   setText(
+    "#reportSourceSnapshot",
+    snapshot
+      ? `${snapshot.mode.toUpperCase()} · ${snapshot.files.length} file(s) · ${snapshot.totalBytes} bytes · ${snapshot.executionScope}`
+      : "확인한 저장소 범위를 기다리고 있어요",
+  );
+  setText(
     "#reportBudget",
     report
       ? `실행 ${report.experiment.runs}회 · 비용 ${report.experiment.costUnits}`
-      : `${MISSION_FAMILY_LABELS[behavior.missionFamily] || behavior.missionFamily} · 확인 완료`,
+      : compatibility
+      ? `실험 ${compatibility.experimentsRun}회 · 호환성만 확인`
+      : selection?.budget
+      ? `최대 실험 ${selection.budget.maxExperiments ?? "?"}회 · 최대 도구 호출 ${selection.budget.maxToolCalls ?? "?"}회`
+      : `${MISSION_FAMILY_LABELS[behavior?.missionFamily] || behavior?.missionFamily || targetProfile?.status || "정보"} · 확인 완료`,
   );
   setText("#reportPermissions", permissions);
   setText(
     "#reportTermination",
     termination?.reason === "coverage_complete"
       ? "확인 완료"
-      : experiment
-        ? "실험 계획을 세웠어요"
-        : behavior
-          ? "에이전트를 확인했어요"
-          : "실험을 아직 마치지 않았어요",
+      : compatibility
+        ? OUTCOME_STATUS_LABELS[compatibility.status] || compatibility.status
+        : selection?.stopReason
+          ? OUTCOME_STATUS_LABELS[selection.stopReason] || selection.stopReason
+          : experiment
+            ? "실험 계획을 세웠어요"
+            : behavior
+              ? "에이전트를 확인했어요"
+              : "실험을 아직 마치지 않았어요",
   );
 
   const experimentCard = $("#selectedExperimentCard");
-  experimentCard.hidden = !experiment;
+  experimentCard.hidden = !experiment && !selection && !compatibilitySelection;
   if (experiment) {
     const fault = experiment.faults[0];
     setText(
@@ -254,6 +285,32 @@ function renderLabReport() {
     );
     setText("#reportExperimentReason", `선택한 이유 · ${experiment.toolChoiceReason}`);
     setText("#reportExperimentEvidence", `확인할 내용 · ${experiment.expectedEvidence}`);
+  } else if (selection) {
+    setText(
+      "#reportExperiment",
+      selection.packId
+        ? `${(selection.domainKind || "unknown").toUpperCase()} PACK ${selection.packId}`
+        : selection.ambiguous ? "PACK SELECTION AMBIGUOUS" : "NO PACK SELECTED",
+    );
+    setText(
+      "#reportExperimentMeta",
+      `${selection.executable ? "EXECUTABLE" : "TERMINAL"} · ${selection.fallback}`,
+    );
+    setText("#reportExperimentReason", `선택한 이유 · ${selection.why}`);
+    setText("#reportExperimentEvidence", `확인할 내용 · ${selection.expect}`);
+  } else if (compatibilitySelection) {
+    setText(
+      "#reportExperiment",
+      compatibilitySelection.selectedDomain
+        ? `${compatibilitySelection.selectedDomain.toUpperCase()} PACK ${compatibilitySelection.packId || "CANDIDATE"}`
+        : "NO PACK SELECTED",
+    );
+    setText(
+      "#reportExperimentMeta",
+      `${compatibilitySelection.status.toUpperCase()} · ${compatibilitySelection.maxExperiments} experiments · ${compatibilitySelection.fallback}`,
+    );
+    setText("#reportExperimentReason", `선택한 이유 · ${compatibilitySelection.why}`);
+    setText("#reportExperimentEvidence", `확인할 내용 · ${compatibilitySelection.expect}`);
   }
 
   const assessmentGrid = $("#behaviorAssessments");
@@ -281,8 +338,23 @@ function renderLabReport() {
 
   const claimGrid = $("#claimGrid");
   const residualRisk = $("#reportResidualRisk");
-  claimGrid.hidden = !report;
-  residualRisk.hidden = !report;
+  claimGrid.hidden = !report && !compatibility;
+  residualRisk.hidden = !report && !compatibility;
+  if (compatibility && !report) {
+    setText(
+      "#reportObserved",
+      `${compatibility.message}\n발견 ${compatibility.findings.length}건 · 실험 ${compatibility.experimentsRun}회`,
+    );
+    setText(
+      "#reportHypothesis",
+      compatibility.compatibilityClaims.join("\n")
+        || "도메인을 판단할 근거가 부족해 취약점 가설을 만들지 않았어요.",
+    );
+    setText("#reportProposed", "호환성만 확인하는 단계에서는 패치를 제안하지 않아요.");
+    setText("#reportVerified", "저장소 코드와 합성 공격을 실행하지 않았어요.");
+    setText("#reportResidualRisk", `판정 범위 · ${compatibility.claimBoundary}`);
+    return;
+  }
   if (!report) return;
   setText(
     "#reportObserved",
@@ -376,7 +448,11 @@ function render() {
 function dispatch(event) {
   state = reduceRunState(state, event);
   render();
-  if (["complete", "failed"].includes(state.status)) {
+  const terminalEvent = event.type === "run_completed"
+    || event.type === "run.completed"
+    || ((event.type === "run_failed" || event.type === "run.failed")
+      && (event.data?.status ?? event.payload?.status) !== "offline_demo");
+  if (terminalEvent) {
     if (state.source === "live") {
       eventSource?.close();
       eventSource = null;
