@@ -196,6 +196,7 @@ def test_diagnostic_controller_has_a_strict_final_shape_and_exact_tool_sequence(
     assert "target_sandbox" in spec.body
     assert "checked-in local" in spec.body
     assert "bounded child runner" in spec.body
+    assert "정확히 `64`" in spec.body
 
 
 def test_the_live_prompt_describes_the_header_the_runtime_actually_emits() -> None:

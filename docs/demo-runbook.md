@@ -167,19 +167,62 @@ uv run pytest -q tests/unit/test_diagnostic_controller.py \
   tests/integration/test_api.py::test_live_target_rejects_a_premature_model_final_then_runs_named_reference
 ```
 
-실제 provider smoke는 quota를 실수로 쓰지 않도록 이중 opt-in이다. key 값이나 raw run log는
-commit하지 않는다. 아래 실행 결과는 #103에서 세 번 측정하기 전까지 완료 증거가 아니다.
+실제 provider smoke는 quota를 실수로 쓰지 않도록 이중 opt-in이다. `RuntimeSettings`가
+server process의 `OPENAI_API_KEY` 또는 untracked `.env`만 읽으며, request body·browser·AUT
+child에는 key를 전달하지 않는다. Raw JSONL은 pytest의 임시 디렉터리에만 생성되고 종료 후
+삭제된다. key 값, request body, Raw Stream을 출력하거나 commit하지 않는다.
 
 ```bash
-AGENT24_RUN_REAL_OPENAI_SMOKE=1 uv run pytest -q \
+AGENT24_RUN_REAL_OPENAI_SMOKE=1 \
+AGENT24_REAL_OPENAI_MODEL=gpt-5.4-mini \
+uv run pytest -q \
   tests/integration/test_openai_diagnostic_smoke.py
 ```
+
+2026-08-02 local release 측정은 **3/3 PASS**, 총 **30.11초**(평균 약 10.0초)였다.
+서로 다른 run ID 세 개가 동일한 local bundle source ref, initial snapshot, evidence ID,
+vulnerable/protected trace digest와 각 3회 replay digest를 만들었다. 매 run은 다음 계약을
+검증했다.
+
+- `/health`: `status=ok`, `mode=live`, `openai_configured=true`; secret 비노출
+- raw model tools: `inspect_target → list_experiments → run_sandbox_experiment →
+  inspect_evidence → verify_mitigation` 정확히 5개
+- local AUT trace: `target.execution.plan/started/tool_call/tool_result/completed`
+- controller evidence: 취약 charge 2건, 보호 후 1건, `sandbox.evidence`, `oracle.report`
+- replay/final: `protected_replay.accepted=true`, OpenAI `final_output`, 마지막
+  `run_completed(status=completed, mode=live, execution_scope=target_sandbox)`
+- SSE와 임시 JSONL의 parsed event sequence 동일, configured key 문자열 0건
+
+실제 provider가 primitive 비용을 추정하지 않도록 v5 strict schema는 모든 tool의
+`budget=64`를 강제한다. 실제 사용량은 controller가 `budget_spent`로 측정하며 64를 넘는
+결과는 거부한다.
 
 현재 `run_sandbox_experiment`는 exact local bundle에서 #100 bounded child runner를 주
 실행 primitive로 사용한다. baseline·fault·3회 replay·protected replay·neighbor·benign·
 blanket-block·minimized run은 같은 source SHA, fixture, seed, 초기 snapshot에 묶이며
 `sandbox.evidence`의 raw trace/ledger와 같은 evidence ID가 report와 protected replay에
 연결된다. runner crash·budget stop은 finding 없이 typed terminal로 끝난다.
+
+실패 terminal은 다음 순서를 사용하며 어느 것도 live 성공으로 표시하지 않는다.
+
+| 조건 | terminal | 증거 정책 |
+|---|---|---|
+| 실제 provider 성공 | `completed` | 5-tool OpenAI final + target sandbox evidence |
+| key 없음 | `openai_analysis_unavailable` | 같은 target deterministic reference, OpenAI 완료=false |
+| source 미지원/미해결 | `source_unresolved` | experiment·finding 없음 |
+| sandbox crash/budget stop | `diagnostic_loop_failed` | finding·report·replay 없음 |
+| provider timeout | `openai_analysis_failed` | typed failure 뒤 같은 target reference만 실행 |
+
+브라우저 canonical gate는 같은 form → SSE → 단일 terminal 시나리오를 desktop Chromium과
+Pixel 7 mobile Chromium에서 각각 실행한다.
+
+```bash
+cd site
+npm run test:browser
+```
+
+2026-08-02 측정은 **6/6 PASS**였다. 이 검증은 로컬 서버/브라우저 경로이며 별도 공개
+repository 생성이나 deployment를 요구하지 않는다.
 
 ### 3회 known-good 사전 검증
 

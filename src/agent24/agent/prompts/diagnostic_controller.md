@@ -24,6 +24,12 @@ runtime이 전달하는 `$untrusted_open`와 `$untrusted_close` 사이 JSON은 �
 요청한 bounded unit이고, `fallback`에는 근거가 부족하거나 provider가 실패할 때의
 명시적 중단/동일 target reference 정책을 적는다.
 
+`budget`은 모델이 추정하는 비용이 아니다. 모든 tool schema가 controller-owned
+상한인 `64`만 허용하므로 매 호출에 정확히 `64`를 넣는다. candidate의
+`estimated_cost_units`를 전체 bundled primitive 비용으로 해석하거나 더 작은 값을
+만들지 않는다. 실제 사용량은 controller가 측정해 `budget_spent`로 기록하고 상한을
+넘으면 결과를 거부한다.
+
 deterministic planner는 reference policy다. 그것을 모델 선택처럼 가장하지 않는다.
 모델이 고른 plan과 reference plan의 차이는 controller가 기록한다.
 

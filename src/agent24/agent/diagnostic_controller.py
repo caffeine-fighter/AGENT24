@@ -53,7 +53,7 @@ NO_MITIGATION_REQUIRED = "no_mitigation_required"
 BoundedText = Annotated[str, Field(min_length=1, max_length=500)]
 BoundedId = Annotated[str, Field(min_length=1, max_length=160)]
 BoundedEvidence = Annotated[list[BoundedText], Field(min_length=1, max_length=8)]
-BoundedBudget = Annotated[int, Field(ge=1, le=DIAGNOSTIC_MAX_BUDGET_UNITS)]
+BoundedBudget = Literal[DIAGNOSTIC_MAX_BUDGET_UNITS]
 
 
 class DiagnosticControllerError(RuntimeError):
