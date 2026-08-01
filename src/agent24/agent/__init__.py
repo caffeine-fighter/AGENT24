@@ -25,6 +25,18 @@ from .fakes import (
     benign_scenario,
     mission_completed_invariant,
 )
+from .manifest import (
+    ALLOWED_MANIFEST_PATHS,
+    MANIFEST_VERSION,
+    SUPPORTED_TOOL_NAMES,
+    MalformedManifestError,
+    ManifestLoadError,
+    ManifestNotFoundError,
+    ManifestPathError,
+    PinnedSourceRequiredError,
+    load_agent_manifest,
+    load_manifest,
+)
 from .models import (
     BLOCKED_STATUS,
     DEFAULT_INJECT_MARKER,
@@ -90,6 +102,18 @@ from .models import (
     run_digest,
 )
 from .protocols import ExperimentPolicyProtocol, GymProtocol, PlannerProtocol
+from .source import (
+    GitHubApiRevisionResolver,
+    InvalidSourceURLError,
+    MappingRevisionResolver,
+    SourceAccessError,
+    SourceDescriptor,
+    SourceRequest,
+    SourceResolutionError,
+    UnsupportedSourceHostError,
+    parse_github_url,
+    resolve_source,
+)
 
 __all__ = [
     "AUT_PROFILES",
@@ -168,11 +192,31 @@ __all__ = [
     "Violation",
     "WellBehavedAUT",
     "apply_overrides",
+    "ALLOWED_MANIFEST_PATHS",
+    "GitHubApiRevisionResolver",
+    "InvalidSourceURLError",
+    "MANIFEST_VERSION",
+    "ManifestLoadError",
+    "ManifestNotFoundError",
+    "ManifestPathError",
+    "MalformedManifestError",
+    "MappingRevisionResolver",
+    "PinnedSourceRequiredError",
+    "SUPPORTED_TOOL_NAMES",
+    "SourceAccessError",
+    "SourceDescriptor",
+    "SourceRequest",
+    "SourceResolutionError",
+    "UnsupportedSourceHostError",
     "args_digest",
     "benign_scenario",
     "canonical_json",
     "classify",
     "find_risk_paths",
     "mission_completed_invariant",
+    "load_agent_manifest",
+    "load_manifest",
+    "parse_github_url",
+    "resolve_source",
     "run_digest",
 ]
