@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import {
   createCakeCrashFixture,
+  createCakeBehaviorProfile,
   createCakeLabReport,
   createInitialState,
   formatRunInput,
   normalizeEvent,
+  projectBehaviorProfile,
   projectLabReport,
   reduceRunState,
   replayDeterministically,
@@ -32,6 +34,11 @@ assert.equal(first.at(-1).type, "run.completed");
 assert.ok(first.some((event) => event.type === "tool_call"));
 assert.ok(first.some((event) => event.type === "tool_result"));
 assert.deepEqual(
+  first.find((event) => event.type === "behavior_profile").raw,
+  createCakeBehaviorProfile(),
+  "fixture BehaviorProfile payload must remain unedited",
+);
+assert.deepEqual(
   first.find((event) => event.type === "lab_report").raw,
   createCakeLabReport(mission),
   "fixture LabReport payload must remain unedited",
@@ -47,6 +54,8 @@ assert.equal(completed.before.files_touched, 0);
 assert.equal(completed.after.files_touched, 0);
 assert.deepEqual(completed.checks, { budget: true, count: true, task: true, benign: true });
 assert.equal(completed.reportView.profile.agentName, "cake-buyer");
+assert.equal(completed.behaviorProfileView.agentName, "cake-buyer");
+assert.equal(completed.behaviorProfileView.assessments.length, 5);
 assert.equal(completed.reportView.observed.items.length, 2);
 assert.deepEqual(completed.reportView.verification, { accepted: true, passedGates: 3, totalGates: 3 });
 
@@ -81,6 +90,37 @@ const unsupportedState = reduceRunState(targetState, {
 assert.equal(unsupportedState.status, "complete");
 assert.equal(unsupportedState.terminalNotice.kind, "unsupported");
 assert.ok(unsupportedState.terminalNotice.message.includes("안전 인증이 아닙니다"));
+
+const behaviorProfilePayload = createCakeBehaviorProfile();
+const projectedProfile = projectBehaviorProfile(behaviorProfilePayload);
+assert.equal(projectedProfile.sourceRef, behaviorProfilePayload.source_ref);
+assert.equal(projectedProfile.assessments[1].name, "idempotency_usage");
+assert.equal(projectedProfile.assessments[1].value, "absent");
+assert.ok(projectedProfile.assessments[1].evidence[0].includes("trace[7]"));
+assert.equal(projectedProfile.assessments[3].value, "unknown");
+assert.ok(projectedProfile.assessments[3].unknownReason.includes("관찰하지 못했습니다"));
+
+const liveProfileState = reduceRunState(targetState, {
+  run_id: "target-test",
+  seq: 1,
+  type: "behavior_profile",
+  source: "live",
+  payload: {
+    ...behaviorProfilePayload,
+    source_ref: "github.com/example/agent@abcdef0123456789",
+  },
+});
+assert.equal(liveProfileState.target.resolvedSha, "abcdef0123456789");
+assert.deepEqual(liveProfileState.events.at(-1).raw.source_ref, "github.com/example/agent@abcdef0123456789");
+
+const fixtureProfileState = reduceRunState(targetState, {
+  run_id: "target-test",
+  seq: 1,
+  type: "behavior_profile",
+  source: "fixture",
+  payload: behaviorProfilePayload,
+});
+assert.equal(fixtureProfileState.target.resolvedSha, null, "fixture ref must not masquerade as a resolved live SHA");
 
 const labReportPayload = {
   agent: {

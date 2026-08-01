@@ -109,6 +109,7 @@
             <article>
               <small>OBSERVED BEHAVIOR PROFILE</small>
               <strong id="reportAgent">Agent 정보 없음</strong>
+              <p id="reportSourceRef">pinned source event 대기</p>
               <p id="reportCapabilities">capability evidence 대기</p>
             </article>
             <article>
@@ -117,7 +118,8 @@
               <p id="reportPermissions">permission evidence 대기</p>
             </article>
           </div>
-          <div class="claim-grid">
+          <div id="behaviorAssessments" class="assessment-grid" aria-label="BehaviorProfile 판정" hidden></div>
+          <div id="claimGrid" class="claim-grid">
             <article data-claim="observed">
               <small>01 · OBSERVED</small>
               <strong>측정된 사실</strong>
