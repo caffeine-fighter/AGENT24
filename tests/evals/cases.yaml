@@ -282,3 +282,15 @@ cases:
     issue: 69
     command: "pytest \"tests/unit/test_mission_scope.py::test_every_demo_mission_is_the_money_domain\" \"tests/unit/test_mission_scope.py::test_a_demo_mission_against_a_payment_agent_never_stops\" \"tests/unit/test_mission_scope.py::test_an_unclassifiable_mission_never_stops\" \"tests/unit/test_mission_scope.py::test_two_domains_at_once_is_not_a_verdict\" \"tests/unit/test_mission_scope.py::test_a_topic_word_alone_does_not_classify\" tests/evals/test_surprise_support.py::test_a_benign_purchase_mission_still_runs_the_whole_experiment -q"
     expectation: "the gate reads free text, so its real risk is over-blocking: every mission the demo, the smoke scripts and the fixtures actually submit classifies as the money domain and runs to completion, an unclassifiable or two-domain mission never stops a run, a bare topic word never classifies, and the runbook's own cake mission still plans and replays the full experiment"
+
+  # D5a Q3 · controller/outcome evidence (issue #13, family C3/C4 controller half).
+  # Case ids are frozen by the D5a manifest; the traceability tests refuse to let
+  # one disappear into neither an implementation nor a named blocker.
+  - id: d5a-q3-controller-success
+    issue: 13
+    command: "pytest tests/acceptance/test_controller_success.py -q"
+    expectation: "CS-03: the healthy twin and the failing run first diverge where the AUT opens a second payment intent instead of retrieving the unreconciled original, cited by ledger position and independently by the controller oracle, while the protected run reconciles and rejoins the twin; CS-05: one accepted run emits exactly one terminal with no run_failed and every success signal measured rather than narrated; CS-01 and CS-02 are declared blocked on the A4 semantic-event migration rather than silently absent"
+  - id: d5a-q3-honest-outcomes
+    issue: 13
+    command: "pytest tests/acceptance/test_honest_outcomes.py -q"
+    expectation: "HO-02: a run that found nothing carries the not-a-safety-certificate sentence and no observed, patch, verification, hypothesis, divergence or counterexample field; HO-03: either declared bound exhausts the budget, an exhausted budget is not a clean result, and an unsupported input outranks it; HO-01 is recorded as covered by the surprise-support suite and HO-04/HO-05 as blocked on A4"
