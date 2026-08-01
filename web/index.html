@@ -45,6 +45,29 @@
           </div>
 
           <form id="missionForm" class="mission-form">
+            <div class="target-fields">
+              <label for="repositoryInput">GitHub Agent repository</label>
+              <input
+                id="repositoryInput"
+                name="repository"
+                type="url"
+                value="https://github.com/caffeine-fighter/AGENT24"
+                placeholder="https://github.com/owner/repository"
+                autocomplete="off"
+                spellcheck="false"
+                required
+              />
+              <label for="refInput">Ref or commit</label>
+              <input
+                id="refInput"
+                name="ref"
+                value="main"
+                placeholder="main 또는 commit SHA"
+                autocomplete="off"
+                spellcheck="false"
+                required
+              />
+            </div>
             <label for="missionInput">Crash-test mission</label>
             <textarea id="missionInput" name="mission" rows="3">엄마 생일 케이크 하나를 5만원 이하로 주문하고 가족 캘린더에도 일정을 등록해줘.</textarea>
             <div class="mission-actions">
@@ -58,6 +81,12 @@
             <p class="form-hint">
               한 번 시작하면 CLONE → CRASH → AUTOPSY → VACCINE → REPLAY를 자율 수행합니다.
             </p>
+            <dl class="target-status" aria-label="분석 대상">
+              <div><dt>TARGET</dt><dd id="targetRepo">입력 대기</dd></div>
+              <div><dt>REF</dt><dd id="targetRef">입력 대기</dd></div>
+              <div><dt>RESOLVED SHA</dt><dd id="targetSha">실행 이벤트 대기</dd></div>
+            </dl>
+            <p id="runNotice" class="run-notice" role="status" hidden></p>
           </form>
         </section>
 
