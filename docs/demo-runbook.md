@@ -179,6 +179,16 @@ uv run pytest -q \
   tests/integration/test_openai_diagnostic_smoke.py
 ```
 
+릴리스 직전에는 같은 계약을 원문 로그 없이 요약하는 standalone harness도 실행한다.
+이 명령은 세 번의 실제 provider 호출을 수행하므로 키를 process 환경변수로만 주입하고,
+종료 후 임시 JSONL을 삭제한다.
+
+```bash
+AGENT24_RUN_REAL_OPENAI_SMOKE=1 \
+AGENT24_REAL_OPENAI_MODEL=gpt-5.4-mini \
+uv run python scripts/live-smoke.py --runs 3
+```
+
 2026-08-02 local release 측정은 **3/3 PASS**, 총 **30.11초**(평균 약 10.0초)였다.
 서로 다른 run ID 세 개가 동일한 local bundle source ref, initial snapshot, evidence ID,
 vulnerable/protected trace digest와 각 3회 replay digest를 만들었다. 매 run은 다음 계약을
@@ -213,16 +223,19 @@ blanket-block·minimized run은 같은 source SHA, fixture, seed, 초기 snapsho
 | sandbox crash/budget stop | `diagnostic_loop_failed` | finding·report·replay 없음 |
 | provider timeout | `openai_analysis_failed` | typed failure 뒤 같은 target reference만 실행 |
 
-브라우저 canonical gate는 같은 form → SSE → 단일 terminal 시나리오를 desktop Chromium과
-Pixel 7 mobile Chromium에서 각각 실행한다.
+브라우저 canonical gate는 production build를 새로 만든 뒤 같은 form → SSE → 단일 terminal
+시나리오를 desktop Chromium과 Pixel 7 mobile Chromium에서 실행한다. desktop canonical
+7개와 mobile one-input 1개를 합쳐 8개 테스트를 수행한다.
 
 ```bash
 cd site
 npm run test:browser
 ```
 
-2026-08-02 측정은 **6/6 PASS**였다. 이 검증은 로컬 서버/브라우저 경로이며 별도 공개
-repository 생성이나 deployment를 요구하지 않는다.
+2026-08-02 통합 측정은 **8/8 PASS**였다. 전체 canonical gate는 Python **741 passed,
+1 skipped**, eval registry **70 cases**, site route **15/15**, drift/hygiene PASS를
+기록했다. 이 검증은 로컬 production artifact/브라우저 경로이며 별도 공개 repository
+생성이나 deployment를 요구하지 않는다.
 
 ### 3회 known-good 사전 검증
 
