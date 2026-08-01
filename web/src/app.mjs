@@ -2,6 +2,7 @@ import {
   PHASES,
   createCakeCrashFixture,
   createInitialState,
+  formatRunInput,
   reduceRunState,
 } from "./core.mjs";
 
@@ -20,7 +21,7 @@ let timers = [];
 let eventSource = null;
 let runStartedAt = null;
 let clockTimer = null;
-let lastMission = state.mission;
+let lastTarget = { ...state.target };
 let receivedLiveEvent = false;
 
 function setText(selector, value) {
@@ -46,7 +47,7 @@ function renderPhases() {
   $$("#phaseRail li").forEach((item) => {
     const phase = item.dataset.phase;
     item.classList.toggle("active", phase === state.phase && state.status !== "complete");
-    item.classList.toggle("done", state.completedPhases.includes(phase) || state.status === "complete");
+    item.classList.toggle("done", state.completedPhases.includes(phase));
   });
 }
 
@@ -137,6 +138,18 @@ function render() {
   renderPatch();
   renderChecks();
   renderStream();
+  setText("#targetRepo", state.target.repositoryUrl || "입력 대기");
+  setText("#targetRef", state.target.requestedRef || "입력 대기");
+  setText(
+    "#targetSha",
+    state.target.resolvedSha || (state.source === "fixture" && state.status !== "idle"
+      ? "FIXTURE · source 미조회"
+      : "실행 이벤트 대기"),
+  );
+  const notice = $("#runNotice");
+  notice.hidden = !state.terminalNotice;
+  notice.dataset.kind = state.terminalNotice?.kind || "";
+  notice.textContent = state.terminalNotice?.message || "";
   setText("#runId", state.runId ? `RUN ${state.runId}` : "RUN —");
   const liveMode = state.mode === "offline_demo" ? "API / OFFLINE FALLBACK" : "LIVE API";
   setText("#modeBadge", state.source === "live" ? liveMode : "AUTO / FIXTURE");
@@ -178,14 +191,13 @@ function startClock() {
   clockTimer = setInterval(update, 1000);
 }
 
-function playFixture(mission, { speed = 360 } = {}) {
+function playFixture(target, { speed = 360 } = {}) {
   clearRun();
-  state = createInitialState();
-  state.mission = mission;
-  lastMission = mission;
+  state = createInitialState(target);
+  lastTarget = { ...target };
   render();
   startClock();
-  const events = createCakeCrashFixture(mission);
+  const events = createCakeCrashFixture(target.mission, target);
   events.forEach((fixtureEvent, index) => {
     timers.push(setTimeout(() => {
       dispatch(fixtureEvent);
@@ -194,14 +206,14 @@ function playFixture(mission, { speed = 360 } = {}) {
   });
 }
 
-async function startLiveRun(mission) {
+async function startLiveRun(target) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1600);
   try {
     const response = await fetch(apiUrl("/api/runs"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ input: mission }),
+      body: JSON.stringify({ input: formatRunInput(target) }),
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`Run API returned ${response.status}`);
@@ -210,11 +222,10 @@ async function startLiveRun(mission) {
     if (!runId) throw new Error("Run API response has no run_id");
     clearTimeout(timeout);
     clearRun();
-    state = createInitialState();
+    state = createInitialState(target);
     state.source = "live";
     state.mode = payload.mode || "live";
-    state.mission = mission;
-    lastMission = mission;
+    lastTarget = { ...target };
     receivedLiveEvent = false;
     render();
     startClock();
@@ -227,7 +238,7 @@ async function startLiveRun(mission) {
     };
     eventSource.onerror = () => {
       eventSource?.close();
-      if (!receivedLiveEvent) playFixture(mission);
+      if (!receivedLiveEvent) playFixture(target);
       else setText("#connectionStatus", "SSE CLOSED · EVENTS PRESERVED");
     };
     return true;
@@ -237,9 +248,9 @@ async function startLiveRun(mission) {
   }
 }
 
-async function runMission(mission) {
-  const live = await startLiveRun(mission);
-  if (!live) playFixture(mission);
+async function runMission(target) {
+  const live = await startLiveRun(target);
+  if (!live) playFixture(target);
 }
 
 function escapeHtml(value) {
@@ -248,19 +259,26 @@ function escapeHtml(value) {
 
 $("#missionForm").addEventListener("submit", (event) => {
   event.preventDefault();
-  const mission = $("#missionInput").value.trim();
-  if (mission) runMission(mission);
+  const target = {
+    repositoryUrl: $("#repositoryInput").value.trim(),
+    requestedRef: $("#refInput").value.trim(),
+    resolvedSha: null,
+    mission: $("#missionInput").value.trim(),
+  };
+  if (target.repositoryUrl && target.requestedRef && target.mission) runMission(target);
 });
 
 $("#resetButton").addEventListener("click", () => {
   clearRun();
-  state = createInitialState();
-  $("#missionInput").value = lastMission;
+  state = createInitialState(lastTarget);
+  $("#repositoryInput").value = lastTarget.repositoryUrl;
+  $("#refInput").value = lastTarget.requestedRef;
+  $("#missionInput").value = lastTarget.mission;
   setText("#runClock", "00:00");
   render();
 });
 
-$("#replayButton").addEventListener("click", () => playFixture(lastMission, { speed: 270 }));
+$("#replayButton").addEventListener("click", () => playFixture(lastTarget, { speed: 270 }));
 
 $("#copyStreamButton").addEventListener("click", async () => {
   const raw = state.events.map((event) => JSON.stringify(event.raw)).join("\n");
