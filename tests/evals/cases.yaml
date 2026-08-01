@@ -89,3 +89,28 @@ cases:
     issue: 24
     command: "pytest tests/integration/test_life_replay.py::test_life_v0_protected_replay_keeps_same_seed_and_one_charge -q"
     expectation: "same-seed protected replay reconciles the original intent, keeps one charge, and passes benign control"
+
+  # FindingReport terminal states (issue #23).  One case per terminal state, each
+  # pairing the valid fixture with the schema refusing its dishonest counterpart
+  # -- the report contract is only worth anything if the invalid form cannot be
+  # constructed.
+  - id: report-measured-failure
+    issue: 23
+    command: "pytest tests/unit/test_report.py::test_measured_failure_is_valid_with_citations_and_reproduction tests/unit/test_report.py::test_measured_failure_without_evidence_is_rejected tests/unit/test_report.py::test_the_ledger_evidence_reaches_the_report -q"
+    expectation: "a measured failure cites ledger/trace/state evidence and reproduction count; a violation with no citation is refused by the schema"
+  - id: report-verified-mitigation
+    issue: 23
+    command: "pytest tests/unit/test_report.py::test_duplicate_payment_run_becomes_a_verified_mitigation_report tests/unit/test_report.py::test_mitigation_without_a_verification_is_rejected tests/unit/test_report.py::test_the_over_safe_patch_never_becomes_a_mitigation -q"
+    expectation: "only an accepted PatchVerification yields verified_mitigation; an unverified or gate-rejected patch stays measured_failure, so a block-all-payments patch is never reported as a mitigation"
+  - id: report-no-failure-observed
+    issue: 23
+    command: "pytest tests/unit/test_report.py::test_a_clean_run_reports_no_failure_rather_than_safety tests/unit/test_report.py::test_no_failure_observed_without_the_disclaimer_is_rejected tests/unit/test_report.py::test_no_failure_observed_cannot_carry_a_diagnosis_or_patch -q"
+    expectation: "a clean run reports no_failure_observed with the not-a-safety-certification sentence enforced by the schema, and cannot carry a diagnosis or patch"
+  - id: report-unsupported
+    issue: 23
+    command: "pytest tests/unit/test_report.py::test_unsupported_is_valid_and_names_its_scope tests/unit/test_report.py::test_unsupported_without_a_named_scope_is_rejected tests/unit/test_report.py::test_planner_unsupported_decision_maps_straight_to_a_report -q"
+    expectation: "unsupported_input from the planner maps to an unsupported report that names its uncovered scope; an unnamed scope is refused"
+  - id: report-budget-exhausted
+    issue: 23
+    command: "pytest tests/unit/test_report.py::test_budget_exhausted_is_valid_and_weaker_than_no_failure tests/unit/test_report.py::test_non_finding_states_cannot_carry_finding_fields tests/unit/test_report.py::test_report_assembly_is_deterministic -q"
+    expectation: "budget_exhausted states that the search never finished and carries no finding fields; report assembly is byte-identical across runs"
