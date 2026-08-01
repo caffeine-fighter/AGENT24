@@ -309,12 +309,12 @@ def test_the_detector_reports_a_substitution_with_the_events_that_prove_it() -> 
 def test_an_off_domain_mission_against_a_payment_manifest_terminates_unsupported(
     monkeypatch, tmp_path: Path
 ) -> None:
-    """The product requirement, asserted as a requirement rather than as a bug.
+    """The product requirement, now enforced by the controller.
 
-    Written to fail today on purpose.  Pinning the current behaviour as correct
-    would mean whoever fixes the route has to invert an assertion in a file they
-    do not own; a strict xfail instead turns the fix into an unexpected pass,
-    which fails loudly and says exactly what to remove.
+    This was a strict xfail while the mission text selected nothing: a judge
+    asking about a calendar loop, submitting a payment manifest, got a
+    duplicate-charge finding.  ``agent/mission_scope.py`` now stops the run
+    after routing, so the requirement holds and the marker is gone.
     """
 
     events = _run(monkeypatch, tmp_path, PAYMENT_SURFACE, TIME.text)
@@ -325,6 +325,57 @@ def test_an_off_domain_mission_against_a_payment_manifest_terminates_unsupported
     assert report.passed, report.errors
     assert report.silent_substitution is False
     assert report.terminal_status == "unsupported"
+
+
+def test_the_off_domain_run_stops_before_planning_an_experiment(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Stopping is only honest if nothing ran -- assert the absence directly.
+
+    The absent events are named rather than the whole sequence pinned.  The
+    preflight prologue grows as other issues land (``source_snapshot`` and
+    ``target_profile`` arrived with #62), and re-pinning their order here would
+    make this test fail for reasons that have nothing to do with scope, while
+    duplicating what ``test_api.py`` already owns.  What must hold is that no
+    experiment was planned, none ran, and nothing was replayed.
+    """
+
+    events = _run(monkeypatch, tmp_path, PAYMENT_SURFACE, TIME.text)
+    types = [event["type"] for event in events]
+
+    assert "experiment_plan" not in types
+    assert "protected_replay" not in types
+    assert not [kind for kind in types if kind.startswith("gym.")]
+    assert payment_evidence(events) == ()
+
+    # The routing record survives: on this path it is the only statement of
+    # which pack was considered and why nothing was run against it.
+    assert "pack.selected" in types
+    assert types[-1] == "run_completed"
+    assert types.count("run_completed") == 1
+    lab_report = _event(events, "lab_report")["payload"]
+    assert lab_report["termination"]["reason"] == UNSUPPORTED_REASON
+    assert lab_report["findings"] == []
+    assert "time" in events[-1]["payload"]["message"]
+
+
+def test_a_benign_purchase_mission_still_runs_the_whole_experiment(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The gate's real risk is over-blocking, so pin the demo path explicitly.
+
+    ``docs/demo-runbook.md``'s mission, verbatim, against the payment manifest.
+    If the marker table ever grows a phrase this sentence contains, this fails
+    before the demo does.
+    """
+
+    runbook_mission = "엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문해줘."
+    events = _run(monkeypatch, tmp_path, PAYMENT_SURFACE, runbook_mission)
+    types = [event["type"] for event in events]
+
+    assert "experiment_plan" in types
+    assert "protected_replay" in types
+    assert events[-1]["payload"]["status"] == "offline_demo"
 
 
 def test_a_supported_money_mission_passes_its_gate(monkeypatch, tmp_path: Path) -> None:
@@ -362,26 +413,32 @@ def test_a_supported_communication_mission_runs_its_own_fault(
 def test_the_mission_text_does_not_change_the_selected_pack(
     monkeypatch, tmp_path: Path
 ) -> None:
-    """Why the substitution above is possible, recorded as an observation.
+    """Where the scope gate sits, asserted from both sides.
 
-    ``preflight.py`` builds the Mission with ``family=manifest.mission_family``,
-    so routing reads the submitted repository and never the sentence a judge
-    typed.  Two different Surprise missions against one manifest therefore make
-    the same *routing* decision.
+    Routing still reads only the submitted repository: ``preflight.py`` builds
+    the Mission with ``family=manifest.mission_family``, and two different
+    missions against one manifest make the *same* routing decision -- identical
+    selection digest, same pack, still executable.
 
-    Only the routing decision is asserted, not the whole event sequence.  The
-    fix for the xfail above is expected to land as a stop *after* the router has
-    already chosen, which changes the terminal without changing this digest --
-    and an assertion that broke on the fix would be measuring the wrong thing.
+    What changed is what happens next.  ``mission_scope_stop`` runs after the
+    router has chosen and turns an out-of-scope mission into an unsupported
+    terminal without rewriting the selection.  Asserting both halves is what
+    keeps the two concerns from being confused later: the pack is fine, the
+    mission is not in its scope.
     """
 
     money = _run(monkeypatch, tmp_path, PAYMENT_SURFACE, MONEY.text)
     time_domain = _run(monkeypatch, tmp_path, PAYMENT_SURFACE, TIME.text)
 
-    assert (
-        _event(money, "pack.selected")["payload"]["selection_digest"]
-        == _event(time_domain, "pack.selected")["payload"]["selection_digest"]
-    )
+    money_pack = _event(money, "pack.selected")["payload"]
+    time_pack = _event(time_domain, "pack.selected")["payload"]
+
+    assert money_pack["selection_digest"] == time_pack["selection_digest"]
+    assert money_pack["stop"] is None
+    assert time_pack["selected"]["executable"] is True
+
+    assert money[-1]["payload"]["status"] == "offline_demo"
+    assert time_domain[-1]["payload"]["status"] == "unsupported"
 
 
 def test_the_same_fixture_and_seed_reproduce_the_same_terminal_digest(
