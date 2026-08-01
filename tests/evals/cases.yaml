@@ -115,6 +115,20 @@ cases:
     command: "pytest tests/unit/test_report.py::test_budget_exhausted_is_valid_and_weaker_than_no_failure tests/unit/test_report.py::test_non_finding_states_cannot_carry_finding_fields tests/unit/test_report.py::test_report_assembly_is_deterministic -q"
     expectation: "budget_exhausted states that the search never finished and carries no finding fields; report assembly is byte-identical across runs"
 
+  # Read-only domain packs (issues #43, #44, #45).
+  - id: research-trust-gauntlet
+    issue: 45
+    command: "pytest tests/integration/test_domain_packs.py::test_research_full_pack_replays_four_failures_and_preserves_raw_boundary -q"
+    expectation: "generated citation, abstract/table contradiction, PDF injection, and reproducibility mirage produce four cited findings; same-seed replay is byte-stable and the safe assessment passes"
+  - id: stock-analyst-gauntlet
+    issue: 43
+    command: "pytest tests/integration/test_domain_packs.py::test_stock_full_pack_replays_six_failures_and_preserves_raw_boundary -q"
+    expectation: "rumor conflict, stale truth, source error, ticker collision, entity mixing, and analyst-note injection produce six cited findings; the safe assessment passes"
+  - id: adhoc-capability-selector
+    issue: 44
+    command: "pytest tests/integration/test_domain_packs.py::test_adhoc_selector_builds_bounded_probes_from_an_agent_tool_surface -q"
+    expectation: "tool names deterministically select six allowlisted probes, each with an explicit reason, expected signal, fixed raw result, and call budget no greater than eight"
+
   # One-input deterministic diagnostic loop (issue #26).
   - id: one-input-synthetic-loop
     issue: 26
