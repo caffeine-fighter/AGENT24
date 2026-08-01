@@ -9,21 +9,29 @@ FastAPI application through its ``POST /api/runs`` + SSE contract.
 Two boundaries are deliberate.
 
 **No network, no shell, no clock.** Every harness here is in-process and seeded.
-The runtime harness constructs the app with an explicit ``openai_api_key=None``
-so the offline path is taken by configuration rather than by whatever happens to
-be in the environment.
+An ``offline`` runtime case forces ``openai_api_key=None`` so the offline path is
+taken by configuration rather than by whatever happens to be in the environment;
+a ``live`` case runs the production provider, runner and event path against the
+stubbed transport in :mod:`agent24.evals.live_stub`.
 
-**A prose invariant is never reported as machined.** Each case's ``invariant``
-stays human text. What the harness returns is the set of *structured* checks it
-actually evaluated. Anything the harness cannot decide is bound to a pytest node
-through ``proves`` and proved there instead.
+**The declaration is what runs.** Both runtime modes post the case's own
+``input`` and compare against the case's own ``expected_event_types`` and
+``forbid_in_stream``. Issue #120 existed because ``live`` cases used to return
+an unconditional pass and delegate to a bound test that owned a second copy of
+those literals -- editing the declaration changed nothing.
+
+**A prose invariant is never reported as machined.** What the harness returns is
+the set of *structured* checks it actually evaluated, plus ``prose_only`` naming
+the human-readable fields it did not. Anything the harness cannot decide is
+bound to a pytest node through ``proves`` and proved there instead.
 """
 
 from __future__ import annotations
 
 import json
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -41,10 +49,17 @@ class CheckResult:
 
 @dataclass(frozen=True, slots=True)
 class HarnessResult:
-    """What a declarative case's harness actually established."""
+    """What a declarative case's harness actually established.
+
+    ``prose_only`` names the declared fields the harness did *not* machine-check
+    -- the human-readable claims. Keeping them in the result, rather than
+    dropping them, is what lets the runner say "6 checked, 1 prose-only" instead
+    of implying the whole case was verified mechanically.
+    """
 
     case_id: str
     checks: tuple[CheckResult, ...] = field(default_factory=tuple)
+    prose_only: tuple[str, ...] = field(default_factory=tuple)
     error: str = ""
 
     @property
@@ -100,7 +115,12 @@ def run_gym_fixture_case(case: GymFixtureCase) -> HarnessResult:
                 _check(f"protected_replay.{name}", expected, getattr(report, name))
             )
 
-    return HarnessResult(case_id=case.id, checks=tuple(checks))
+    prose: list[str] = ["expectation"]
+    if case.expected_protected_state:
+        # A human-readable claim. The structured protected_replay flags above
+        # are what actually ran; saying so keeps the two apart in the report.
+        prose.append("expected_protected_state")
+    return HarnessResult(case_id=case.id, checks=tuple(checks), prose_only=tuple(prose))
 
 
 def _sse_events(body: str) -> list[dict]:
@@ -111,48 +131,60 @@ def _sse_events(body: str) -> list[dict]:
     ]
 
 
+@contextmanager
+def _runtime_for(mode: str) -> Iterator[object]:
+    """Build the adapter for a declared mode, with no socket in either case.
+
+    ``offline`` forces ``openai_api_key=None`` so a stray ambient key cannot
+    turn a deterministic registry run into a network call. ``live`` exercises
+    the real provider, runner and event path against a stubbed transport.
+    """
+
+    from agent24.api.config import RuntimeSettings
+    from agent24.api.runtime import OpenAIWhiteBoxAdapter
+
+    if mode == "offline":
+        yield OpenAIWhiteBoxAdapter(settings=RuntimeSettings(openai_api_key=None))
+        return
+
+    from .live_stub import TEST_API_KEY, mocked_openai_provider
+
+    with mocked_openai_provider():
+        yield OpenAIWhiteBoxAdapter(settings=RuntimeSettings(openai_api_key=TEST_API_KEY))
+
+
 def run_runtime_events_case(case: RuntimeEventsCase) -> HarnessResult:
     """Drive one real ``POST /api/runs`` run and observe its event sequence.
 
-    Only ``mode: offline`` is executed here. A live run needs a mocked OpenAI
-    client, which lives in the test suite; the schema requires those cases to
-    name the pytest node that drives it, and the runner executes that node.
+    Both modes execute the *declared* case: the input the case names is the
+    input that is posted, and the events observed are compared with the case's
+    own ``expected_event_types``. Before #120 a ``live`` case returned an
+    unconditional pass and delegated to a bound test that owned its own copy of
+    those literals, so editing the declaration changed nothing.
     """
-
-    if case.mode != "offline":
-        return HarnessResult(
-            case_id=case.id,
-            checks=(
-                CheckResult(
-                    name="delegated_to_pytest",
-                    passed=True,
-                    detail="live run is proved by its bound pytest node",
-                ),
-            ),
-        )
 
     from fastapi.testclient import TestClient
 
     from agent24.api.app import create_app
-    from agent24.api.config import RuntimeSettings
-    from agent24.api.runtime import OpenAIWhiteBoxAdapter
 
     checks: list[CheckResult] = []
     with tempfile.TemporaryDirectory(prefix="agent24-evals-") as artifact_root:
-        # Force the offline path by configuration rather than trusting the
-        # ambient environment: a stray OPENAI_API_KEY must not turn a
-        # deterministic registry run into a network call.
-        runtime = OpenAIWhiteBoxAdapter(settings=RuntimeSettings(openai_api_key=None))
-        app = create_app(runtime=runtime, artifact_root=Path(artifact_root))
-        with TestClient(app) as client:
-            accepted = client.post("/api/runs", json={"input": case.input})
-            checks.append(_check("accepted_202", 202, accepted.status_code))
-            if accepted.status_code != 202:
-                return HarnessResult(case_id=case.id, checks=tuple(checks))
-            metadata = accepted.json()
-            body = client.get(metadata["events_url"]).text
+        root = Path(artifact_root)
+        with _runtime_for(case.mode) as runtime:
+            app = create_app(runtime=runtime, artifact_root=root)
+            with TestClient(app) as client:
+                accepted = client.post("/api/runs", json={"input": case.input})
+                checks.append(_check("accepted_202", 202, accepted.status_code))
+                if accepted.status_code != 202:
+                    return HarnessResult(case_id=case.id, checks=tuple(checks))
+                metadata = accepted.json()
+                run_id = metadata["run_id"]
+                body = client.get(metadata["events_url"]).text
 
         events = _sse_events(body)
+        checks.append(
+            _check("mode", case.mode, "offline" if metadata["mode"] == "offline_demo" else "live")
+        )
         checks.append(
             _check(
                 "event_types",
@@ -160,25 +192,51 @@ def run_runtime_events_case(case: RuntimeEventsCase) -> HarnessResult:
                 [event["type"] for event in events],
             )
         )
+
+        # SSE and JSONL are compared field by field rather than as one blob, so
+        # a failure says which of run id, ordering or payload diverged.
+        jsonl = root / f"{run_id}.jsonl"
+        replayed = [json.loads(line) for line in jsonl.read_text(encoding="utf-8").splitlines()]
+        checks.append(_check("run_id", {run_id}, {event["run_id"] for event in events}))
         checks.append(
             _check("seq_is_contiguous", list(range(len(events))), [e["seq"] for e in events])
         )
-
-        jsonl = Path(artifact_root) / f"{metadata['run_id']}.jsonl"
-        replayed = [json.loads(line) for line in jsonl.read_text(encoding="utf-8").splitlines()]
-        checks.append(_check("sse_matches_jsonl", events, replayed))
-
-        rendered = json.dumps(events, ensure_ascii=False)
-        for forbidden in case.forbid_in_stream:
-            checks.append(
-                CheckResult(
-                    name=f"absent:{forbidden}",
-                    passed=forbidden not in rendered,
-                    detail="" if forbidden not in rendered else "present in event stream",
-                )
+        checks.append(
+            _check("jsonl_seq", [e["seq"] for e in events], [e["seq"] for e in replayed])
+        )
+        checks.append(
+            _check("jsonl_run_id", {run_id}, {event["run_id"] for event in replayed})
+        )
+        checks.append(
+            _check(
+                "jsonl_payloads",
+                [event["payload"] for event in events],
+                [event["payload"] for event in replayed],
             )
+        )
 
-    return HarnessResult(case_id=case.id, checks=tuple(checks))
+        # Applied to both surfaces: a value scrubbed from the live stream but
+        # left in the persisted artifact has still leaked.
+        surfaces = {
+            "sse": json.dumps(events, ensure_ascii=False),
+            "jsonl": jsonl.read_text(encoding="utf-8"),
+        }
+        for forbidden in case.forbid_in_stream:
+            for surface, rendered in surfaces.items():
+                absent = forbidden not in rendered
+                checks.append(
+                    CheckResult(
+                        name=f"absent:{forbidden}:{surface}",
+                        passed=absent,
+                        detail="" if absent else f"present in {surface}",
+                    )
+                )
+
+    return HarnessResult(
+        case_id=case.id,
+        checks=tuple(checks),
+        prose_only=("expectation",),
+    )
 
 
 def run_declarative_case(case: GymFixtureCase | RuntimeEventsCase) -> HarnessResult:
