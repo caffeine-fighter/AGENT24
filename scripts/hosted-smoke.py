@@ -20,7 +20,6 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
-DEFAULT_BASE_URL = "https://nightmare-lab-agent24.conceivability.chatgpt.site"
 DEFAULT_MISSION = "엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문해줘."
 DEFAULT_REPOSITORY = "https://github.com/caffeine-fighter/AGENT24"
 EXPECTED_PHASES = ("CLONE", "CRASH", "AUTOPSY", "VACCINE", "REPLAY")
@@ -29,7 +28,14 @@ FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
+    parser.add_argument(
+        "--base-url",
+        required=True,
+        help=(
+            "Dynamic NIGHTMARE LAB server URL. "
+            "GitHub Pages is a static demo and is not valid here."
+        ),
+    )
     parser.add_argument("--repository", default=DEFAULT_REPOSITORY)
     parser.add_argument("--ref", default="main")
     parser.add_argument("--mission", default=DEFAULT_MISSION)
