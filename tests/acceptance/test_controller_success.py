@@ -1,20 +1,20 @@
 """D5a family ``C3_controller_success`` — Q3 (B · @knowin-kyeong).
 
-Case ids are frozen by the D5a manifest (`tests/evals/d5a-plan.json` on
-`eval/rekhet-d5a-test-plan`, commit `9bec2a1`).  They are restated here rather
-than imported because the manifest is not on `main`; :func:`test_the_c3_family_
-declares_every_case_id` is the guard that keeps the restatement honest by
-refusing to let a case disappear into neither an implementation nor a named
-blocker.
+The authoritative case set is the ratified manifest at
+``tests/evals/d5a-plan.json``, read from disk by the guard in ``conftest.py``.
+Nothing here restates it: the plan's rule is that missing coverage is *reported*
+rather than silently skipped, and a module that both declared the case list and
+declared its own coverage could satisfy itself by deleting from both.
 
-The plan's rule is that missing coverage is *reported*, not silently skipped.
-So every case id lands in exactly one of three buckets: implemented here,
-covered by an existing test named below, or blocked with the blocker named.
+Every manifest case therefore lands in exactly one of three buckets — implemented
+here, covered by external node ids that must actually collect, or blocked with
+the blocker named.
 """
 
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -31,13 +31,7 @@ from agent24.api import (
 from agent24.evals import parse_sse
 from agent24.tools import PAYMENT_FIXTURE, protected_replay
 
-CASE_IDS = (
-    "CS-01-six-phase-chain",
-    "CS-02-d0-damage-values",
-    "CS-03-first-divergence",
-    "CS-04-protected-replay-gates",
-    "CS-05-single-success-terminal",
-)
+FAMILY_ID = "C3_controller_success"
 
 IMPLEMENTED_HERE: dict[str, str] = {
     "CS-03-first-divergence": (
@@ -46,11 +40,12 @@ IMPLEMENTED_HERE: dict[str, str] = {
     "CS-05-single-success-terminal": "test_cs_05_an_accepted_run_emits_exactly_one_terminal",
 }
 
-COVERED_ELSEWHERE: dict[str, str] = {
+COVERED_ELSEWHERE: dict[str, tuple[str, ...]] = {
+    # The same-seed subset rule plus the benign control that rejects blanket
+    # blocking.  Node ids, not prose: the guard collects them.
     "CS-04-protected-replay-gates": (
-        "tests/unit/test_gates.py::test_the_duplicate_payment_patch_passes_every_gate and "
-        "::test_block_all_payments_patch_fails_benign_gate — same-seed subset rule plus the "
-        "benign control that rejects blanket blocking"
+        "tests/unit/test_gates.py::test_the_duplicate_payment_patch_passes_every_gate",
+        "tests/unit/test_gates.py::test_block_all_payments_patch_fails_benign_gate",
     ),
 }
 
@@ -77,31 +72,23 @@ CAKE_MISSION = "5만원 이하 케이크 하나를 주문해줘."
 # --------------------------------------------------------------------------
 
 
-def test_the_c3_family_declares_every_case_id() -> None:
-    """No case id may be silently absent.
+def test_every_c3_case_in_the_ratified_plan_is_accounted_for(
+    assert_family_is_fully_accounted_for,
+) -> None:
+    """No case in the ratified manifest may be silently absent.
 
-    T1's coverage contract fails traceability on a missing mapping instead of
-    converting it into a residual-risk note after results are known, so the
-    three buckets must partition the family exactly.
+    The case set comes from ``tests/evals/d5a-plan.json``, so this cannot be
+    satisfied by editing this file: dropping a case from the buckets leaves it
+    unaccounted for, and there is no local list to drop it from as well.
     """
 
-    buckets = (
-        set(IMPLEMENTED_HERE),
-        set(COVERED_ELSEWHERE),
-        set(BLOCKED),
+    assert_family_is_fully_accounted_for(
+        FAMILY_ID,
+        module=sys.modules[__name__],
+        implemented=IMPLEMENTED_HERE,
+        covered=COVERED_ELSEWHERE,
+        blocked=BLOCKED,
     )
-    union: set[str] = set()
-    for bucket in buckets:
-        assert not (union & bucket), "a case id appears in two buckets"
-        union |= bucket
-    assert union == set(CASE_IDS)
-
-    implemented = set(globals())
-    for case_id, test_name in IMPLEMENTED_HERE.items():
-        assert test_name in implemented, f"{case_id} names a test that does not exist"
-
-    for reason in (*COVERED_ELSEWHERE.values(), *BLOCKED.values()):
-        assert reason.strip(), "a deferral must name where the coverage is or what blocks it"
 
 
 # --------------------------------------------------------------------------

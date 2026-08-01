@@ -5,13 +5,15 @@ covers what the controller must guarantee before a reducer can render it: that a
 run which found nothing, ran out of budget, or could not be staged says so, and
 that none of those states borrows a finding's evidence or a safety claim.
 
-Case ids are frozen by the D5a manifest (`tests/evals/d5a-plan.json` on
-`eval/rekhet-d5a-test-plan`, commit `9bec2a1`) and restated here because the
-manifest is not on `main`; the traceability test below refuses to let one go
-missing.
+The authoritative case set is the ratified manifest at
+``tests/evals/d5a-plan.json``, read from disk by the guard in ``conftest.py``.
+Nothing here restates it, so this file cannot make itself consistent by deleting
+a case.
 """
 
 from __future__ import annotations
+
+import sys
 
 from agent24.agent.models import StopDecision
 from agent24.agent.prompts import LoopBudget, LoopState, should_stop
@@ -21,26 +23,23 @@ from agent24.agent.report import (
     build_report,
 )
 
-CASE_IDS = (
-    "HO-01-unsupported",
-    "HO-02-no-failure-observed",
-    "HO-03-budget-exhausted",
-    "HO-04-source-failure-separate-fallback",
-    "HO-05-explanation-offline-keeps-submitted-evidence",
-)
+FAMILY_ID = "C4_honest_outcomes"
 
 IMPLEMENTED_HERE: dict[str, str] = {
     "HO-02-no-failure-observed": "test_ho_02_a_run_that_found_nothing_does_not_claim_safety",
     "HO-03-budget-exhausted": "test_ho_03_an_exhausted_budget_is_not_a_clean_result",
 }
 
-COVERED_ELSEWHERE: dict[str, str] = {
+COVERED_ELSEWHERE: dict[str, tuple[str, ...]] = {
+    # One typed unsupported terminal with no experiment_plan, no
+    # protected_replay and zero payment evidence, plus the classification that
+    # produces it.  Node ids, not prose: the guard collects them.
     "HO-01-unsupported": (
         "tests/evals/test_surprise_support.py::"
-        "test_an_off_domain_mission_against_a_payment_manifest_terminates_unsupported and "
-        "::test_the_off_domain_run_stops_before_planning_an_experiment — one typed unsupported "
-        "terminal with no experiment_plan, no protected_replay and zero payment evidence; "
-        "tests/unit/test_mission_scope.py covers the classification that produces it"
+        "test_an_off_domain_mission_against_a_payment_manifest_terminates_unsupported",
+        "tests/evals/test_surprise_support.py::"
+        "test_the_off_domain_run_stops_before_planning_an_experiment",
+        "tests/unit/test_mission_scope.py::test_an_off_domain_mission_against_a_payment_agent_stops",
     ),
 }
 
@@ -63,17 +62,22 @@ BLOCKED: dict[str, str] = {
 # --------------------------------------------------------------------------
 
 
-def test_the_c4_family_declares_every_controller_case_id() -> None:
-    buckets = (set(IMPLEMENTED_HERE), set(COVERED_ELSEWHERE), set(BLOCKED))
-    union: set[str] = set()
-    for bucket in buckets:
-        assert not (union & bucket), "a case id appears in two buckets"
-        union |= bucket
-    assert union == set(CASE_IDS)
+def test_every_c4_case_in_the_ratified_plan_is_accounted_for(
+    assert_family_is_fully_accounted_for,
+) -> None:
+    """The controller half must still account for the whole family.
 
-    implemented = set(globals())
-    for case_id, test_name in IMPLEMENTED_HERE.items():
-        assert test_name in implemented, f"{case_id} names a test that does not exist"
+    ``HO-04`` and ``HO-05`` are shared with the reducer surface, so they are
+    blocked here with the blocker named rather than quietly handed to A.
+    """
+
+    assert_family_is_fully_accounted_for(
+        FAMILY_ID,
+        module=sys.modules[__name__],
+        implemented=IMPLEMENTED_HERE,
+        covered=COVERED_ELSEWHERE,
+        blocked=BLOCKED,
+    )
 
 
 # --------------------------------------------------------------------------

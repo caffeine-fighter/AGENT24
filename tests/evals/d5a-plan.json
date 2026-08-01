@@ -1,0 +1,293 @@
+{
+  "schema_version": "nightmare.d5a.plan.v1",
+  "status": "ratified",
+  "ratified_at": "2026-08-01",
+  "scope": {
+    "accepted_slice": "D4 same-origin production web to local FastAPI to controller/SSE to production reducer",
+    "p0_package": "payment.commit_then_timeout",
+    "fixture_id": "life.payment_intent_timeout.v1",
+    "seed": 42,
+    "excluded_as_acceptance_evidence": [
+      "participant_static_profile",
+      "research_pack",
+      "stock_pack",
+      "ticket_pack",
+      "adhoc_pack",
+      "hosted_prebuilt_sequence",
+      "browser_fixture_only"
+    ]
+  },
+  "coverage_families": [
+    {
+      "id": "C1_start_boundary",
+      "owners": ["C"],
+      "implementation_surfaces": ["tests/acceptance/test_start_boundary.py"],
+      "contracts": ["D1", "D3", "D4.I1", "D4.I3"],
+      "layers": ["unit", "api_integration"],
+      "case_ids": [
+        "SB-01-canonical-accepted",
+        "SB-02-invalid-json",
+        "SB-03-missing-required-target",
+        "SB-04-conflicting-legacy-mission",
+        "SB-05-unknown-field",
+        "SB-06-legacy-deprecation-only"
+      ],
+      "required_assertions": [
+        "canonical external_target.v1 has no duplicate input",
+        "invalid or conflicting submissions return typed 422 and create no run",
+        "accepted response is run.accepted.v1",
+        "legacy input is compatibility-only and emits a deprecation"
+      ]
+    },
+    {
+      "id": "C2_source_provenance",
+      "owners": ["C"],
+      "implementation_surfaces": ["tests/acceptance/test_source_provenance.py"],
+      "contracts": ["D1", "D4.I1", "D4.I4"],
+      "layers": ["unit", "api_integration", "github_read_only"],
+      "case_ids": [
+        "SP-01-independent-public-pin",
+        "SP-02-private-source-unsupported",
+        "SP-03-manifest-missing",
+        "SP-04-manifest-invalid",
+        "SP-05-ref-conflict",
+        "SP-06-submitted-code-trap-not-executed"
+      ],
+      "required_assertions": [
+        "expected full SHA is recorded before resolver execution",
+        "manifest path and hash match independently retained bytes",
+        "private visibility is not expanded by server credentials",
+        "submitted code is never cloned installed imported or executed"
+      ]
+    },
+    {
+      "id": "C3_controller_success",
+      "owners": ["B"],
+      "implementation_surfaces": ["tests/acceptance/test_controller_success.py"],
+      "contracts": ["D0", "D1", "D2", "D3", "D4.I2", "D4.I4"],
+      "layers": ["unit", "controller_integration", "api_integration"],
+      "case_ids": [
+        "CS-01-six-phase-chain",
+        "CS-02-d0-damage-values",
+        "CS-03-first-divergence",
+        "CS-04-protected-replay-gates",
+        "CS-05-single-success-terminal"
+      ],
+      "required_assertions": [
+        "PIN PROFILE CRASH AUTOPSY VACCINE REPLAY occur in order",
+        "unprotected and protected values match D0 controller evidence",
+        "first divergence cites the unreconciled original payment intent",
+        "same-seed replay retains task success and rejects blanket blocking",
+        "one run_completed terminal reports accepted verified_mitigation completed submitted"
+      ]
+    },
+    {
+      "id": "C4_honest_outcomes",
+      "owners": ["B", "A"],
+      "implementation_surfaces": [
+        "tests/acceptance/test_honest_outcomes.py",
+        "web/tests/event-protocol.test.mjs"
+      ],
+      "contracts": ["D1", "D2.R4", "D3", "D4.I3"],
+      "layers": ["controller_integration", "api_integration", "reducer"],
+      "case_ids": [
+        "HO-01-unsupported",
+        "HO-02-no-failure-observed",
+        "HO-03-budget-exhausted",
+        "HO-04-source-failure-separate-fallback",
+        "HO-05-explanation-offline-keeps-submitted-evidence"
+      ],
+      "required_assertions": [
+        "non-finding states carry no finding fields or safety certificate",
+        "operational issues are nonterminal",
+        "fixture fallback has a distinct fingerprint and zero submitted-provenance carryover",
+        "explanation degradation is not fixture fallback",
+        "each accepted run emits exactly one terminal"
+      ]
+    },
+    {
+      "id": "C5_event_transport",
+      "owners": ["C", "A"],
+      "implementation_surfaces": [
+        "tests/acceptance/test_event_transport.py",
+        "web/tests/event-protocol.test.mjs"
+      ],
+      "contracts": ["D3", "D4.I4"],
+      "layers": ["event_unit", "api_integration", "reducer_mutation"],
+      "case_ids": [
+        "ET-01-version-origin-and-order",
+        "ET-02-openai-raw-value-identity",
+        "ET-03-last-event-id-resume",
+        "ET-04-exact-duplicate-is-idempotent",
+        "ET-05-conflicting-duplicate-is-protocol-error",
+        "ET-06-gap-is-protocol-error",
+        "ET-07-unknown-type-is-projection-neutral",
+        "ET-08-unknown-major-is-raw-only"
+      ],
+      "required_assertions": [
+        "SSE id equals seq and Last-Event-ID replays only greater sequences",
+        "JSONL SSE and reducer retain the same published OpenAI payload value",
+        "duplicates gaps and unknown versions follow D3",
+        "controller and fixture events never claim OpenAI Raw identity"
+      ]
+    },
+    {
+      "id": "C6_browser_journey",
+      "owners": ["A"],
+      "implementation_surfaces": ["site/tests/acceptance/journey.spec.ts"],
+      "contracts": ["D2", "D4.I1", "D4.I2", "D4.I3"],
+      "layers": ["playwright_chromium"],
+      "case_ids": [
+        "UI-01-r1-entry-mobile",
+        "UI-02-r1-entry-desktop",
+        "UI-03-r2-running-mobile",
+        "UI-04-r2-running-desktop",
+        "UI-05-r3-result-mobile",
+        "UI-06-r3-result-desktop",
+        "UI-07-r4-honest-nonresult-mobile",
+        "UI-08-r4-honest-nonresult-desktop",
+        "UI-09-keyboard-console-and-overflow"
+      ],
+      "required_assertions": [
+        "the normal browser path uses the same-origin production API and reducer",
+        "R1 through R4 preserve the ratified hierarchy copy and state distinctions",
+        "mobile 320 by 800 and desktop 1440 by 1000 have no horizontal overflow",
+        "keyboard order landmarks and visible focus remain usable",
+        "browser console and unexpected network requests are empty"
+      ]
+    },
+    {
+      "id": "C7_safety_privacy",
+      "owners": ["C", "A"],
+      "implementation_surfaces": [
+        "tests/acceptance/test_safety_boundaries.py",
+        "site/tests/acceptance/journey.spec.ts"
+      ],
+      "contracts": ["AGENTS", "D1", "D3", "D4.I4"],
+      "layers": ["unit", "api_integration", "browser_network"],
+      "case_ids": [
+        "SA-01-no-credential-or-pii-publication",
+        "SA-02-no-real-side-effect",
+        "SA-03-no-submitted-code-execution",
+        "SA-04-no-path-or-host-expansion",
+        "SA-05-no-raw-log-or-media-commit"
+      ],
+      "required_assertions": [
+        "credentials personal data unsafe exceptions and user files never cross publication",
+        "all world effects remain synthetic",
+        "source access stays within the submitted public target and allowlisted metadata",
+        "Git never contains raw run logs or generated media"
+      ]
+    }
+  ],
+  "heldout": {
+    "materialize_after": [
+      "A4 migration complete",
+      "A5 visible-case initial measurements complete",
+      "D5b repetitions thresholds and completion ratified",
+      "scorers and family manifest committed",
+      "implementation and runner commits frozen"
+    ],
+    "one_use": true,
+    "burn_after_execution": true,
+    "cleartext_committed_before_run": false,
+    "quotas": {
+      "independently_pinned_public_target": 1,
+      "boundary_source_manifest_shapes": 6,
+      "honest_terminal_degradation_shapes": 5,
+      "event_protocol_mutations": 5,
+      "browser_surface_viewport_pairs": 8
+    },
+    "commitment_fields": [
+      "plan_schema_version",
+      "implementation_commit",
+      "runner_commit",
+      "case_set_sha256",
+      "expected_reference_sha256",
+      "scorer_sha256",
+      "materialized_at"
+    ],
+    "after_failure": [
+      "publish the failed case as visible regression evidence",
+      "fix against the regression suite",
+      "freeze a new implementation commit",
+      "materialize a fresh heldout set"
+    ]
+  },
+  "environments": [
+    {
+      "id": "E1_deterministic_ci",
+      "os": "ubuntu-24.04",
+      "python": "3.12.x",
+      "node": "22.13.0",
+      "timezone": "UTC",
+      "network": "denied",
+      "openai": "absent or mocked",
+      "purpose": "unit integration controller and regression gates"
+    },
+    {
+      "id": "E2_github_source_pin",
+      "os": "ubuntu-24.04",
+      "python": "3.12.x",
+      "node": "22.13.0",
+      "timezone": "UTC",
+      "network": "allow api.github.com read-only for the submitted public target",
+      "openai": "absent",
+      "purpose": "record expected SHA and manifest bytes before the production resolver run"
+    },
+    {
+      "id": "E3_sdk_raw_identity",
+      "os": "ubuntu-24.04",
+      "python": "3.12.x",
+      "node": "22.13.0",
+      "timezone": "UTC",
+      "network": "denied",
+      "openai": "official SDK adapter with deterministic mocked Responses client",
+      "purpose": "compare producer JSONL SSE and reducer Raw values"
+    },
+    {
+      "id": "E4_browser",
+      "os": "ubuntu-24.04",
+      "python": "3.12.x",
+      "node": "22.13.0",
+      "timezone": "UTC",
+      "network": "localhost only",
+      "browser": "Playwright Chromium pinned by site/package-lock.json",
+      "viewports": ["320x800", "1440x1000"],
+      "purpose": "same-origin production R1 through R4 browser evidence"
+    }
+  ],
+  "evidence": {
+    "ci_retention_days": 7,
+    "ci_only_artifacts": [
+      "sanitized JUnit and JSON results",
+      "normalized expected-versus-actual digests",
+      "DOM accessibility console and network capture",
+      "browser screenshots",
+      "heldout commitment and burn record"
+    ],
+    "committed_summary": "docs/acceptance-results.md",
+    "never_commit": [
+      "raw run logs",
+      "generated media",
+      "credentials",
+      "personal data",
+      "heldout cleartext before execution"
+    ]
+  },
+  "leakage_controls": [
+    "controller state ledger trace and oracles are independent of model prose and UI fixtures",
+    "fallback uses a distinct target fingerprint and carries zero submitted provenance",
+    "GitHub CI runs the frozen scorer after commitment publication",
+    "existing cases.yaml and review fixtures are regression inputs only",
+    "a consumed heldout set cannot become the final set after rework"
+  ],
+  "d5b_deferred": [
+    "repetition count",
+    "timing limit",
+    "variance tolerance",
+    "pass-rate threshold",
+    "stop rule",
+    "final completion rule"
+  ]
+}
