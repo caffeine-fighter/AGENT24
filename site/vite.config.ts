@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import vinext from "vinext";
 import { defineConfig } from "vite";
 import hostingConfig from "./.openai/hosting.json";
@@ -7,6 +9,23 @@ const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
 
 const { d1, r2 } = hostingConfig;
+const fullSha = /^[a-f0-9]{40}$/i;
+
+function resolveBuildCommit(): string {
+  try {
+    const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim().toLowerCase();
+    return fullSha.test(commit) ? commit : "";
+  } catch {
+    return "";
+  }
+}
+
+const buildCommit = resolveBuildCommit();
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
@@ -44,6 +63,9 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
+    define: {
+      __AGENT24_BUILD_COMMIT__: JSON.stringify(buildCommit),
+    },
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,
