@@ -117,8 +117,29 @@ function githubCoordinates(repositoryUrl: string): { owner: string; repository: 
 
 async function resolveGitHubRef(repositoryUrl: string, requestedRef: string) {
   const coordinates = githubCoordinates(repositoryUrl);
-  if (!coordinates) return { resolvedSha: null, resolver: "invalid-github-url", retrievedAt: new Date().toISOString() };
+  const retrievedAt = new Date().toISOString();
+  if (!coordinates) return { resolvedSha: null, resolver: "invalid-github-url", retrievedAt };
   const token = process.env.GITHUB_TOKEN?.trim();
+  const configuredBaseUrl = process.env.AGENT24_GITHUB_API_BASE_URL?.trim();
+  let apiBaseUrl = "https://api.github.com";
+  if (configuredBaseUrl) {
+    try {
+      const candidate = new URL(configuredBaseUrl);
+      const loopback = candidate.hostname === "127.0.0.1" || candidate.hostname === "localhost";
+      if (
+        candidate.protocol !== "http:"
+        || !loopback
+        || candidate.username
+        || candidate.password
+        || candidate.search
+        || candidate.hash
+        || !["", "/"].includes(candidate.pathname)
+      ) return { resolvedSha: null, resolver: "github-test-base-invalid" };
+      apiBaseUrl = candidate.origin;
+    } catch {
+      return { resolvedSha: null, resolver: "github-test-base-invalid" };
+    }
+  }
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
     "User-Agent": "nightmare-lab-hosted",
@@ -128,10 +149,9 @@ async function resolveGitHubRef(repositoryUrl: string, requestedRef: string) {
 
   try {
     const response = await fetch(
-      `https://api.github.com/repos/${encodeURIComponent(coordinates.owner)}/${encodeURIComponent(coordinates.repository)}/commits/${encodeURIComponent(requestedRef)}`,
+      `${apiBaseUrl}/repos/${encodeURIComponent(coordinates.owner)}/${encodeURIComponent(coordinates.repository)}/commits/${encodeURIComponent(requestedRef)}`,
       { headers, signal: AbortSignal.timeout(5_000) },
     );
-    const retrievedAt = new Date().toISOString();
     if (!response.ok) return { resolvedSha: null, resolver: `github-http-${response.status}`, retrievedAt };
     const payload = (await response.json()) as { sha?: unknown };
     const sha = typeof payload.sha === "string" && /^[a-f0-9]{40}$/i.test(payload.sha) ? payload.sha.toLowerCase() : null;
