@@ -1143,18 +1143,15 @@ class LocalSandboxRunner:
                             break
                 if failure is not None:
                     break
-                if os.name == "nt" and process.poll() is not None:
-                    # Windows pipe EOF and process-handle reaping are not
-                    # ordered.  Give the reader threads a short grace period
-                    # to drain frames written just before process exit.
+                if process.poll() is not None:
+                    # Pipe EOF and process-handle reaping are not ordered.
+                    # Give readers a short grace period to drain frames
+                    # written just before process exit; an exit without a
+                    # result then becomes a typed runner crash.
                     if process_exit_deadline is None:
                         process_exit_deadline = time.monotonic() + 0.5
                     if not selector.get_map() or time.monotonic() >= process_exit_deadline:
                         break
-                if result is not None and process.poll() is not None and os.name != "nt":
-                    break
-                if process.poll() is not None and not selector.get_map():
-                    break
         finally:
             selector.close()
 
