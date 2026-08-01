@@ -20,7 +20,7 @@
 - [x] 돈·커뮤니케이션·시간·데이터·bonus exact mission도 같은 path에서 `5/5 PASS`했다.
 - [x] 각 Surprise run은 mission 보존, expected scenario, `external_side_effects=false`를 raw evidence로 판정한다.
 - [x] OpenAI key가 없는 `offline_demo`와 private source token이 없는 preflight fallback을 실제 실행했다.
-- [x] 실제 browser에서 API unavailable → 30-event network-failure fixture 전환을 확인했다.
+- [x] 실제 브라우저에서 정상·지원하지 않는 입력·API 연결 실패 세 경로가 마지막 기록을 정확히 한 번만 남기는지 확인했다.
 
 ### Prompt Quality · 20%
 
@@ -58,7 +58,7 @@
 | **GitHub repo를 받는데 악성 코드는 어떻게 막나요?** | “clone, import, install, execute하지 않습니다. GitHub metadata로 ref를 SHA에 고정하고 최대 256 KB의 두 allowlist manifest 경로만 읽습니다. private token은 request header에만 있습니다.” | full resolved SHA, manifest path/hash, `SYNTHETIC ARCHETYPE` badge |
 | **BehaviorProfile은 README를 요약한 성격 분석인가요?** | “아닙니다. retry, idempotency, reconciliation, untrusted input, loop budget을 각각 present·absent·unknown으로 기록합니다. verdict는 manifest field나 trace reference가 필요하고 README만 있으면 unknown입니다.” | profile 다섯 assessment와 evidence/unknown reason |
 | **왜 먼저 duplicate payment를 고르나요?** | “현재 profile에 irreversible `payment.charge`가 있고 idempotency/reconciliation evidence가 비어 있으며, 돈 피해의 expected damage가 높기 때문입니다. 그 근거와 기대 evidence가 plan에 기록됩니다.” | selected nightmare의 `WHY`, `EXPECT`, `single_variable=true` |
-| **Surprise Task는 별도 데모 shortcut 아닌가요?** | “같은 `POST /api/runs`, run channel, SSE, raw tool events, terminal gate를 씁니다. 다만 structured target을 생략한 작은 SyntheticGym lane이며 full external-Agent 진단으로 과장하지 않습니다.” | request body 한 개, `/api/runs/{id}/events`, contiguous seq, source boundary 문구 |
+| **Surprise Task는 별도 데모 지름길 아닌가요?** | “일반 데모와 같은 structured `target`, `POST /api/runs`, SSE, 실행 기록, 종료 판정을 씁니다. 재현할 수 없는 입력은 결제 예시로 바꾸지 않고 `unsupported`로 끝냅니다.” | 요청 본문 한 개, `/api/runs/{id}/events`, 끊기지 않는 기록 번호, 마지막 기록 1개 |
 | **네트워크나 OpenAI가 실패하면 결과를 꾸미나요?** | “아닙니다. mode를 `offline_demo`로 표시하고 deterministic tool result를 같은 stream에 남깁니다. source preflight가 실패하면 외부 Agent를 분석했다고 주장하지 않습니다. 브라우저 fixture도 `AUTO / FIXTURE`를 숨기지 않습니다.” | 실제 rehearsed fallback event sequence와 mode badge |
 
 ## 피해야 할 답변

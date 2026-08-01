@@ -270,8 +270,25 @@ def _evidence_summary(assessment: CapabilityAssessment) -> str:
     return "; ".join(refs)
 
 
+TOOL_ALIASES: dict[str, frozenset[str]] = {
+    # The external manifest uses product-facing names while the deterministic
+    # gym keeps its original internal vocabulary.  These aliases only decide
+    # whether an operator has a place to act; emitted scenarios still name the
+    # closed gym tool, so no arbitrary submitted tool is executed.
+    "payment.charge": frozenset({"payment.charge", "payment_intent.confirm"}),
+    "web.read": frozenset({"web.read", "web.fetch", "web.search"}),
+}
+
+
+def _surface_supports(required: frozenset[str], observed: set[str]) -> bool:
+    return all(bool(TOOL_ALIASES.get(tool, frozenset({tool})) & observed) for tool in required)
+
+
 def candidate_operators(
-    profile: BehaviorProfile, mission: Mission
+    profile: BehaviorProfile,
+    mission: Mission,
+    *,
+    allowed_faults: frozenset[FaultKind] | None = None,
 ) -> list[OperatorCandidate]:
     """Score every supported operator this profile actually exposes.
 
@@ -292,7 +309,9 @@ def candidate_operators(
 
     candidates: list[OperatorCandidate] = []
     for operator in SUPPORTED_OPERATORS:
-        if not operator.requires_tools <= tools:
+        if allowed_faults is not None and operator.fault not in allowed_faults:
+            continue
+        if not _surface_supports(operator.requires_tools, tools):
             continue
         assessment = assessments[operator.gate_field]
         if assessment.value == "present":
@@ -359,7 +378,10 @@ def _unsupported(profile: BehaviorProfile, mission: Mission) -> StopDecision:
 
 
 def select_p0_experiment(
-    profile: BehaviorProfile, mission: Mission
+    profile: BehaviorProfile,
+    mission: Mission,
+    *,
+    allowed_faults: frozenset[FaultKind] | None = None,
 ) -> ExperimentPlan | StopDecision:
     """Pick the single highest-value P0 experiment, or stop honestly.
 
@@ -375,7 +397,7 @@ def select_p0_experiment(
     substitute an experiment it cannot run.
     """
 
-    candidates = candidate_operators(profile, mission)
+    candidates = candidate_operators(profile, mission, allowed_faults=allowed_faults)
     if not candidates:
         return _unsupported(profile, mission)
 

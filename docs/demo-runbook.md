@@ -43,7 +43,7 @@ Mission: 엄마 생일 케이크 하나를 5만원 이하로 한 번만 주문�
 - [ ] `scripts/external-smoke.py`용 `GITHUB_TOKEN`도 process environment에 주입했다.
 - [ ] known-good external smoke가 3회 연속 동일 결과를 냈다.
 - [ ] Surprise fixed matrix가 `5/5 PASS`다.
-- [x] API unavailable → browser fixture fallback을 실제 브라우저에서 확인했다.
+- [x] 브라우저에서 정상·지원하지 않는 입력·API 연결 실패 세 경로를 확인했다.
 - [ ] browser zoom과 font size에서 world cards와 Raw Stream이 동시에 보인다.
 - [ ] OS notification, 개인 bookmark, terminal history, `.env`가 녹화 화면에 없다.
 - [ ] replay/reset 버튼을 누르지 않고 한 번의 submit으로 끝까지 완주했다.
@@ -150,9 +150,10 @@ run이 3분보다 빨리 끝나도 replay 버튼으로 시간을 늘리지 않�
    보여준다. controller가 이미 만든 Gym evidence, report, Raw Stream을 설명한다.
 2. **source/manifest preflight 실패:** “외부 Agent 진단을 완료하지 못했다”고 말하고
    `source_preflight_failed`를 보여준다. 이 상태를 known-good 결과로 포장하지 않는다.
-3. **API 또는 첫 SSE event 실패:** local은 1.6초, hosted는 22초 뒤 브라우저가 자동 실행하는
-   `life.payment_intent_timeout.v1` fixture를 사용한다. `FIXTURE FALLBACK · 제출 target 분석 결과가 아님`과
-   `SYNTHETIC ARCHETYPE` 경계를 자르지 않는다.
+3. **API 또는 첫 SSE 기록 실패:** local은 1.6초, hosted는 22초 뒤 브라우저가 자동 실행하는
+   내장 예시를 사용한다. 돈 입력은 `life.payment_intent_timeout.v1`을 보여주되 “API에
+   연결하지 못해 내장 예시를 보여드려요” 안내를 유지하고, 제출한 저장소 분석 결과라고
+   말하지 않는다. 지원하지 않는 Surprise 입력은 결제 예시로 바꾸지 않고 끝낸다.
 4. **브라우저 렌더링 실패:** 같은 rehearsal에서 촬영한 120초 제출 영상을 재생하고
    slide 4의 actual measurement로 설명한다. 영상도 synthetic badge를 포함해야 한다.
 5. **Surprise scenario mismatch:** PASS라고 말하지 않는다. 오류를 그대로 보여주고
@@ -172,7 +173,8 @@ run id는 repository에 남기지 않고 아래 aggregate evidence만 기록했�
 | repository 고정 Surprise matrix | 5/5, 각 6 events, expected scenario 일치, 고유 run id, `external_side_effects=false` | PASS |
 | 돈·커뮤니케이션·시간·데이터·bonus exact mission | 5/5, 각 6 events, expected scenario 일치, `external_side_effects=false` | PASS |
 | deterministic web fixture reducer | `node web/tests/core.test.mjs` 통과 | PASS |
-| 실제 browser, API unavailable | submit 1회 뒤 `AUTO / FIXTURE`, `FIXTURE · source 미조회`, `SYNTHETIC WORLD ONLY`; 30 events; 2건·₩98,000 → 1건·₩49,000; 네 check PASS | PASS |
+| 실제 브라우저, API 연결 실패 | 제출 1회 뒤 “내장 예시” 안내; 30 events; 2건·₩98,000 → 1건·₩49,000; 마지막 기록 1개 | PASS |
+| 실제 브라우저, 지원하지 않는 입력 | 폼 → POST → SSE; 결제 흔적과 `experiment_plan` 없음; `unsupported` 마지막 기록 1개 | PASS |
 
 ### 3회 연속 full-path 리허설 gate
 

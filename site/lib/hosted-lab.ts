@@ -18,6 +18,11 @@ export type HostedRunContext = {
   resolvedSha: string | null;
   runId: string;
   sourceResolver: string;
+  supportDetail: string;
+  supportDomain: "money" | "communication" | "time" | "data" | "cross_domain" | "unclassified";
+  supportMissionId: string | null;
+  supportReason: "" | "unsupported_input";
+  supportStatus: "supported" | "unsupported" | "unclassified";
 };
 
 type LabEvent = {
@@ -292,7 +297,123 @@ function labReport(context: HostedRunContext) {
   };
 }
 
+function unsupportedEvents(context: HostedRunContext): LabEvent[] {
+  const descriptor = sourceDescriptor(context);
+  const profile = {
+    agent_name: context.resolvedSha ? "submitted-github-agent" : "unresolved-submission",
+    source_ref: context.resolvedSha
+      ? `${context.repositoryUrl}@${context.resolvedSha}`
+      : context.repositoryUrl,
+    analysis_scope: "support_gate",
+    mission_family: "unknown",
+    protected_assets: [],
+    side_effect_tools: [],
+    permissions: {},
+    capabilities: [],
+    risk_paths: [],
+    retry_behavior: { value: "unknown", evidence: [], unknown_reason: "실험을 시작하지 않았어요." },
+    idempotency_usage: { value: "unknown", evidence: [], unknown_reason: "실험을 시작하지 않았어요." },
+    reconciliation_usage: { value: "unknown", evidence: [], unknown_reason: "실험을 시작하지 않았어요." },
+    untrusted_input_handling: { value: "unknown", evidence: [], unknown_reason: "실험을 시작하지 않았어요." },
+    loop_budget: { value: "unknown", evidence: [], unknown_reason: "실험을 시작하지 않았어요." },
+    baseline_observed: false,
+  };
+  const stop = {
+    stop: true,
+    reason: "unsupported_input",
+    detail: context.supportDetail,
+  };
+  const finding = {
+    finding_id: `unsupported-${context.supportMissionId ?? "mission"}`,
+    status: "unsupported",
+    bounded_summary: context.supportDetail,
+    observed: null,
+    diagnosis_hypothesis: null,
+    proposed_patch: null,
+    verification: null,
+    residual_risk: [],
+    unsupported_scope: [context.supportDetail],
+    experiments_run: 0,
+    cost_units_used: 0,
+  };
+  const report = {
+    agent: {
+      name: profile.agent_name,
+      system_prompt: "지원 여부를 먼저 확인하고, 실행할 수 없는 실험은 다른 실험으로 바꾸지 않습니다.",
+      tools: [],
+      permissions: {},
+    },
+    mission: { text: context.mission, family: "unknown", constraints: {} },
+    capabilities: [],
+    invariants: [],
+    experiments_run: 0,
+    cost_units_used: 0,
+    findings: [],
+    termination: stop,
+    unsupported_scope: [context.supportDetail],
+    no_failure_statement: "실험하지 않았으므로 안전 여부를 판단할 수 없습니다.",
+  };
+  const items: Array<Omit<LabEvent, "seq" | "timestamp">> = [
+    event(context.runId, 1, "run.started", "CLONE", {
+      mission: context.mission,
+      mode: context.openaiUsed ? "openai_hosted" : "offline_demo",
+      target: {
+        repositoryUrl: context.repositoryUrl,
+        requestedRef: context.requestedRef,
+        resolvedSha: context.resolvedSha,
+        mission: context.mission,
+      },
+      safety_boundary: "SIMULATION_ONLY",
+    }),
+    event(context.runId, 2, "phase.changed", "CLONE", { phase: "CLONE" }),
+    event(
+      context.runId,
+      3,
+      "tool_call",
+      "CLONE",
+      { tool: "github.resolve_ref" },
+      { type: "tool_call", name: "github.resolve_ref", arguments: { repository_url: context.repositoryUrl, requested_ref: context.requestedRef } },
+    ),
+    event(
+      context.runId,
+      4,
+      "tool_result",
+      "CLONE",
+      { tool: "github.resolve_ref", status: context.resolvedSha ? "resolved" : "unresolved" },
+      { type: "tool_result", name: "github.resolve_ref", output: { resolved_sha: context.resolvedSha, resolver: context.sourceResolver } },
+    ),
+    event(context.runId, 5, "source_descriptor", "CLONE", descriptor, descriptor),
+    event(context.runId, 6, "behavior_profile", "CLONE", profile, profile),
+    event(context.runId, 7, "pack.selected", "CLONE", {
+      registry_version: "hosted-support-gate.v1",
+      selected: null,
+      candidates: [],
+      why: context.supportDetail,
+      expect: "실험을 시작하지 않습니다.",
+      evidence: [],
+      budget: null,
+      fallback: "다른 영역의 실험으로 바꾸지 않습니다.",
+      stop,
+      selection_digest: `unsupported:${context.supportDomain}`,
+    }),
+    event(context.runId, 8, "finding_report", "CLONE", finding, finding),
+    event(context.runId, 9, "lab_report", "CLONE", report, report),
+    event(context.runId, 10, "run.completed", "CLONE", {
+      status: "unsupported",
+      mode: context.openaiUsed ? "openai_hosted" : "offline_demo",
+      message: context.supportDetail,
+      safety_boundary: "SIMULATION_ONLY",
+    }),
+  ];
+  return items.map((item, index) => ({
+    ...item,
+    seq: index + 1,
+    timestamp: new Date(Date.now() + index * 1_000).toISOString(),
+  })) as LabEvent[];
+}
+
 export function buildHostedEvents(context: HostedRunContext): LabEvent[] {
+  if (context.supportStatus === "unsupported") return unsupportedEvents(context);
   const patch = [
     "payment.charge:",
     "  require_idempotency_key: true",
