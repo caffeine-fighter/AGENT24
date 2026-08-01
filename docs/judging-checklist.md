@@ -45,6 +45,15 @@
 - [x] 모든 수치는 actual fixture rehearsal에서 왔고 synthetic badge와 함께 표시된다.
 - [ ] 최종 PDF, 120초 영상, 7분 발표를 발표 장비에서 time-box rehearsal했다.
 
+### Canonical verification · release gate
+
+- [ ] clean checkout에서 [`verification.md`](verification.md)의 canonical entrypoint가
+  Python·web·site·browser gate를 `skipped=0`으로 통과했다.
+- [ ] normal hosted, typed unsupported, explicit fallback path가 같은 CI run과 commit에서
+  통과하고 bounded browser summary 한 파일만 남겼다.
+- [ ] CI artifact와 job log에 credential, 개인 데이터, generated media, raw SSE/API
+  payload, run log, screenshot, video, trace 또는 rendered HTML이 없다.
+
 ## 핵심 Q&A
 
 | 예상 질문 | 20초 답변 | 바로 보여줄 evidence |
