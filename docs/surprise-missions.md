@@ -19,10 +19,17 @@ Surprise Task는 별도 hidden runner가 아니라 일반 데모와 같은 `POST
 
 `예상 synthetic scenario` 열은 아래 one-field 경로의 결과이고, `D1 structured 경로`
 열은 실제 form이 쓰는 structured `target` 경로에서 D1이 정직하게 재현할 수 있는지다.
-두 열이 다른 이유는 transport가 다르기 때문이며, 판정 근거는
-`agent24.evals.surprise_support.classify_support`가 domain pack registry에서 계산한다
-(hand-written 목록이 아니다). unsupported 영역은 실행 가능한 pack 중 그 fault family를
-등록한 pack이 없어서 unsupported이므로, 나중에 pack이 추가되면 이 표도 함께 바뀐다.
+두 열이 다른 이유는 transport가 다르기 때문이다.
+
+**이 열은 문서가 아니라 강제 사항이다.** `agent24.agent.mission_scope`가 제출된 mission
+텍스트의 실패 도메인을 판정하고, 선택된 pack이 그 도메인을 재현할 수 없으면 실험을 돌리지
+않고 typed `unsupported`로 종료한다. 판정 근거는 domain pack registry에서 계산하므로
+(hand-written 목록이 아니다) 나중에 pack이 추가되면 이 표도 함께 바뀐다.
+
+gate는 **fail-open**이다. 텍스트가 도메인을 하나로 특정하지 못하면(0개 매칭이든 2개
+이상이든) 아무것도 막지 않고 기존과 동일하게 진행한다. 오분류의 최악은 오늘의 동작이지
+실행 거부가 아니다. 라우팅 결정 자체는 건드리지 않는다 — pack은 여전히 정상 선택되고
+`executable`로 남으며, 달라지는 것은 terminal뿐이다.
 
 요청 shape은 항상 하나다.
 
@@ -84,13 +91,23 @@ LLM이 pass/fail을 채점하지 않는다.
 structured `target` 경로의 수치가 아니고, 임의 Agent 다섯 개를 실제로 공격했다는 뜻도
 아니다. 두 matrix 모두 raw run log나 run id는 commit하지 않고 요약 결과만 기록했다.
 
-structured 경로에서 아직 남은 gap: pack routing은 `manifest.mission_family`만 보고
-제출된 mission 텍스트는 보지 않는다(`api/preflight.py`). 그래서 payment manifest에
-시간·데이터·교차 영역 mission을 넣으면 cake 실험이 끝까지 돌고 `offline_demo`로 종료해
-요청한 도메인을 시험한 적이 없다는 사실이 stream 어디에도 남지 않는다.
-`tests/evals/test_surprise_support.py::test_a_surprise_mission_answered_with_a_payment_finding_fails_the_gate`
-가 이 상황을 증거 index와 함께 실패로 판정한다. 발표에서는 unsupported 영역을
-supported처럼 말하지 않는다.
+payment manifest에 시간·데이터·교차 영역 mission을 넣으면 preflight prologue 뒤에 바로
+종료한다.
+
+```
+… → pack.selected → finding_report(unsupported) → lab_report(unsupported_input)
+→ run_completed(status=unsupported)
+```
+
+`experiment_plan`도 `protected_replay`도 `gym.*`도 없고 payment 증거는 0건이다.
+`pack.selected`는 그대로 남는다 — 아무것도 실행하지 않았을 때 무엇을 고려했는지 알려주는
+유일한 기록이다. prologue의 event 목록 자체는 다른 이슈가 소유하므로(예: #62가
+`source_snapshot`·`target_profile`을 추가) 여기서 고정하지 않고, 실행되지 않았다는 사실만
+검사한다.
+발표에서는 unsupported 영역을 supported처럼 말하지 않는다.
+
+hosted `site/`는 별개의 TypeScript 구현(`site/lib/hosted-lab.ts`)이라 이 gate가 적용되지
+않는다. 모든 hosted run이 `status:"verified"`로 끝나며 mission 텍스트는 echo만 된다.
 
 ## 2분 Surprise 진행
 

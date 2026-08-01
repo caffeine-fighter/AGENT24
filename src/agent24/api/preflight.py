@@ -23,6 +23,7 @@ from urllib.request import Request, urlopen
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent24.agent.manifest import ALLOWED_MANIFEST_PATHS, load_manifest
+from agent24.agent.mission_scope import mission_scope_stop
 from agent24.agent.models import ExperimentPlan, Mission, StopDecision
 from agent24.agent.packs import PackSelection, select_domain_pack
 from agent24.agent.participant_intake import (
@@ -227,9 +228,17 @@ class ExternalAgentPreflight:
         pack_selection = select_domain_pack(
             manifest=manifest, profile=profile, mission=mission
         )
+        # Which gym, then whether the submitted mission is inside that gym's
+        # scope, then which fault.  The scope check runs after routing and never
+        # rewrites the selection: the pack really is executable, and folding
+        # this into the router would make ``selection_digest`` depend on prose.
+        # A routing stop that already fired keeps its own reason.
+        scope_stop = mission_scope_stop(mission, pack_selection)
         decision: ExperimentPlan | StopDecision
         if pack_selection.stop is not None:
             decision = pack_selection.stop
+        elif scope_stop is not None:
+            decision = scope_stop
         else:
             decision = select_p0_experiment(profile, mission)
 
