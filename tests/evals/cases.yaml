@@ -681,6 +681,7 @@ cases:
     targets:
       - tests/integration/test_local_demo.py::test_live_local_demo_uses_five_controller_tools_over_actual_sandbox
       - tests/integration/test_local_demo.py::test_local_demo_runs_example_participant_local_bundle
+      - tests/unit/test_sandbox_runner.py::test_cpu_and_memory_budgets_end_as_typed_failures
       - tests/integration/test_api.py::test_source_preflight_failure_stops_without_target_claims
       - tests/integration/test_local_demo.py::test_target_runner_crash_or_budget_stop_never_becomes_a_finding
       - tests/integration/test_api.py::test_external_timeout_preserves_controller_evidence_without_fixture_events
