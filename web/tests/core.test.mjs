@@ -4,12 +4,14 @@ import {
   createCakeBehaviorProfile,
   createCakeExperimentPlan,
   createCakeLabReport,
+  createCakeSourceDescriptor,
   createInitialState,
   formatRunInput,
   normalizeEvent,
   projectBehaviorProfile,
   projectExperimentPlan,
   projectLabReport,
+  projectSourceDescriptor,
   reduceRunState,
   replayDeterministically,
 } from "../src/core.mjs";
@@ -35,6 +37,11 @@ assert.equal(first[0].type, "run.started");
 assert.equal(first.at(-1).type, "run.completed");
 assert.ok(first.some((event) => event.type === "tool_call"));
 assert.ok(first.some((event) => event.type === "tool_result"));
+assert.deepEqual(
+  first.find((event) => event.type === "source_descriptor").raw,
+  createCakeSourceDescriptor(),
+  "fixture SourceDescriptor payload must remain unedited",
+);
 assert.deepEqual(
   first.find((event) => event.type === "behavior_profile").raw,
   createCakeBehaviorProfile(),
@@ -63,6 +70,9 @@ assert.deepEqual(completed.checks, { budget: true, count: true, task: true, beni
 assert.equal(completed.reportView.profile.agentName, "cake-buyer");
 assert.equal(completed.behaviorProfileView.agentName, "cake-buyer");
 assert.equal(completed.behaviorProfileView.assessments.length, 5);
+assert.equal(completed.sourceDescriptorView.resolver, "fixture");
+assert.equal(completed.sourceDescriptorView.resolvedSha.length, 40);
+assert.equal(completed.target.resolvedSha, null, "fixture descriptor must not promote a synthetic SHA");
 assert.equal(completed.experimentPlanView.faults[0].kind, "commit_then_timeout");
 assert.equal(completed.experimentPlanView.faults[0].targetTool, "payment.charge");
 assert.equal(completed.experimentPlanView.maxTurns, 8);
@@ -101,6 +111,49 @@ const unsupportedState = reduceRunState(targetState, {
 assert.equal(unsupportedState.status, "complete");
 assert.equal(unsupportedState.terminalNotice.kind, "unsupported");
 assert.ok(unsupportedState.terminalNotice.message.includes("안전 인증이 아닙니다"));
+
+const sourceDescriptorPayload = createCakeSourceDescriptor();
+const projectedSource = projectSourceDescriptor(sourceDescriptorPayload);
+assert.equal(projectedSource.repository, "caffeine-fighter/AGENT24");
+assert.equal(projectedSource.sourceRef, `caffeine-fighter/AGENT24@${sourceDescriptorPayload.resolved_sha}`);
+assert.equal(projectedSource.resolver, "fixture");
+
+const liveSourceState = reduceRunState(targetState, {
+  run_id: "target-test",
+  seq: 1,
+  type: "source_descriptor",
+  source: "live",
+  payload: {
+    ...sourceDescriptorPayload,
+    repository: "example/agent",
+    repository_url: "https://github.com/example/agent",
+    requested_ref: "release-v1",
+    resolver: "github-api",
+  },
+});
+assert.equal(liveSourceState.target.repositoryUrl, "https://github.com/example/agent");
+assert.equal(liveSourceState.target.requestedRef, "release-v1");
+assert.equal(liveSourceState.target.resolvedSha, sourceDescriptorPayload.resolved_sha);
+assert.deepEqual(liveSourceState.events.at(-1).raw.resolver, "github-api");
+
+const shortSourceState = reduceRunState(targetState, {
+  run_id: "target-test",
+  seq: 1,
+  type: "source_descriptor",
+  source: "live",
+  payload: { ...sourceDescriptorPayload, resolved_sha: "abcdef0" },
+});
+assert.equal(shortSourceState.target.resolvedSha, null, "non-immutable SHA must not be promoted");
+
+const fixtureSourceState = reduceRunState(targetState, {
+  run_id: "target-test",
+  seq: 1,
+  type: "source_descriptor",
+  source: "fixture",
+  payload: sourceDescriptorPayload,
+});
+assert.equal(fixtureSourceState.target.resolvedSha, null, "fixture descriptor must not masquerade as live provenance");
+assert.equal(fixtureSourceState.unknownEvents.length, 0, "source_descriptor is a supported semantic event");
 
 const behaviorProfilePayload = createCakeBehaviorProfile();
 const projectedProfile = projectBehaviorProfile(behaviorProfilePayload);
