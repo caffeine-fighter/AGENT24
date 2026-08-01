@@ -108,6 +108,7 @@ const RESOLVER_LABELS = Object.freeze({
 });
 const configuredApiBase = new URLSearchParams(window.location.search).get("api");
 const apiBase = configuredApiBase ? new URL(configuredApiBase, window.location.href) : new URL(window.location.origin);
+const RUN_ACCEPT_TIMEOUT_MS = 10_000;
 let runtimeStatus = { kind: "unknown", configured: null, mode: null };
 
 function apiUrl(path) {
@@ -1933,7 +1934,7 @@ function playFixture(target, { speed = 360 } = {}) {
 
 async function startLiveRun(target) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 1600);
+  const timeout = setTimeout(() => controller.abort(), RUN_ACCEPT_TIMEOUT_MS);
   try {
     const response = await fetch(apiUrl("/api/runs"), {
       method: "POST",
@@ -1968,15 +1969,28 @@ async function startLiveRun(target) {
     startClock();
     const eventsPath = payload.events_url || `/api/runs/${encodeURIComponent(runId)}/events`;
     eventSource = new EventSource(apiUrl(eventsPath));
+    const firstEventTimeout = setTimeout(() => {
+      if (!receivedLiveEvent) {
+        eventSource?.close();
+        eventSource = null;
+        playFixture(target);
+      }
+    }, RUN_ACCEPT_TIMEOUT_MS);
     eventSource.onmessage = ({ data }) => {
+      clearTimeout(firstEventTimeout);
       receivedLiveEvent = true;
       try { dispatch({ ...JSON.parse(data), source: "live" }); }
       catch (error) { dispatch({ run_id: runId, type: "client.parse_error", source: "live", data: { message: error.message }, raw: data }); }
     };
     eventSource.onerror = () => {
+      if (!receivedLiveEvent) {
+        setText("#connectionStatus", "연결을 다시 시도하고 있어요");
+        return;
+      }
+      clearTimeout(firstEventTimeout);
       eventSource?.close();
-      if (!receivedLiveEvent) playFixture(target);
-      else setText("#connectionStatus", "연결이 끊겼어요 · 받은 기록은 그대로 남겼어요");
+      eventSource = null;
+      setText("#connectionStatus", "연결이 끊겼어요 · 받은 기록은 그대로 남겼어요");
     };
     return "started";
   } catch {
