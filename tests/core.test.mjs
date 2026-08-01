@@ -37,7 +37,7 @@ assert.equal(
     requestedRef: "main",
     mission: "test",
   }).message,
-  "주소를 확인해 주세요. 지금은 공개된 GitHub 저장소만 확인할 수 있으며, 저장소 코드를 직접 실행하지는 않아요.",
+  "공개된 GitHub 저장소 주소인지 확인해 주세요. 저장소 코드는 직접 실행하지 않아요.",
 );
 assert.equal(validateTargetInput({
   repositoryUrl: "https://github.com/example/agent?token=secret",

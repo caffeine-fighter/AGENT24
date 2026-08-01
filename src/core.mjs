@@ -23,28 +23,28 @@ export function isDocumentedUnsupportedMission(mission) {
 
 export const TERMINAL_COPY = Object.freeze({
   source_preflight_failed:
-    "저장소를 확인하지 못해 분석을 시작하지 않았어요. 저장소가 공개되어 있는지, 브랜치나 커밋과 설정 파일이 맞는지 확인해 주세요. 대신 내장 예시를 보여드릴게요.",
+    "저장소를 확인하지 못해 분석을 시작하지 않았어요. 공개 저장소인지, 브랜치나 커밋이 맞는지 확인해 주세요. 지금은 내장 예시로 이어갈게요.",
   unsupported:
-    "이 작업에 맞는 실험은 아직 준비되지 않았어요. 문제가 없다는 뜻이 아니라, 이번에는 실험하지 못했다는 뜻이에요.",
+    "지금은 이 작업에 맞는 안전 실험을 지원하지 않아요. 문제가 없다는 뜻은 아니며, 이번에는 판단하지 않았어요.",
   unsupported_input:
-    "이 작업에 맞는 실험은 아직 준비되지 않았어요. 문제가 없다는 뜻이 아니라, 이번에는 실험하지 못했다는 뜻이에요.",
+    "지금은 이 작업에 맞는 안전 실험을 지원하지 않아요. 문제가 없다는 뜻은 아니며, 이번에는 판단하지 않았어요.",
   budget_exhausted:
-    "정해 둔 횟수만큼 실험해 분석을 마쳤어요. 아직 확인하지 못한 위험이 있어 이 결과만으로는 안전을 보장할 수 없어요.",
+    "정해 둔 횟수만큼 실험하고 마쳤어요. 확인하지 못한 위험이 남아 있어 이 결과만으로 안전을 보장할 수 없어요.",
   offline_demo:
-    "OpenAI 설명 기능을 사용할 수 없어 미리 준비한 설명으로 계속할게요. 측정 결과와 원본 기록은 그대로 보여드려요.",
+    "OpenAI 설명을 불러올 수 없어 내장 설명으로 이어갈게요. 측정 결과와 원본 기록은 그대로예요.",
   diagnostic_loop_failed:
-    "분석을 끝까지 마치지 못했어요. 제출한 에이전트의 결과를 임의로 만들지 않고 내장 예시를 보여드릴게요. 자세한 원인은 원본 기록에서 확인할 수 있어요.",
+    "분석을 마치지 못했어요. 결과를 지어내지 않고 내장 예시로 이어갈게요. 원인은 원본 기록에서 확인할 수 있어요.",
   timeout:
-    "OpenAI 설명을 불러오는 데 시간이 오래 걸려 미리 준비한 설명으로 계속할게요. 이미 측정한 결과는 그대로 유지해요.",
+    "OpenAI 설명이 늦어져 내장 설명으로 이어갈게요. 이미 측정한 결과는 그대로예요.",
   no_failure_observed:
-    "이번 실험에서는 문제를 찾지 못했어요. 모든 위험을 확인한 것은 아니므로 안전하다고 단정할 수 없어요.",
+    "이번 실험 범위에서는 문제를 찾지 못했어요. 모든 위험을 확인한 것은 아니에요.",
 });
 
 function createOutcomeState() {
   return {
-    submission: { status: "pending", message: "저장소와 버전을 아직 확인하지 않았어요" },
-    investigation: { status: "pending", message: "아직 실험하지 않았어요" },
-    operation: { status: "ready", message: "실험을 시작해 주세요" },
+    submission: { status: "pending", message: "아직 저장소를 확인하지 않았어요" },
+    investigation: { status: "pending", message: "아직 실험을 시작하지 않았어요" },
+    operation: { status: "ready", message: "위의 내용을 입력하고 시작해 주세요" },
   };
 }
 
@@ -53,7 +53,7 @@ export function validateTargetInput(target) {
   const requestedRef = String(target?.requestedRef || "").trim();
   const mission = String(target?.mission || "").trim();
   if (!repositoryUrl || repositoryUrl.length > 500) {
-    return { field: "repository", message: "GitHub 저장소 주소를 입력해 주세요. 주소는 500자까지 입력할 수 있어요." };
+    return { field: "repository", message: "GitHub 저장소를 입력해 주세요. 주소는 500자까지 입력할 수 있어요." };
   }
   try {
     const url = new URL(repositoryUrl);
@@ -75,14 +75,14 @@ export function validateTargetInput(target) {
   } catch {
     return {
       field: "repository",
-      message: "주소를 확인해 주세요. 지금은 공개된 GitHub 저장소만 확인할 수 있으며, 저장소 코드를 직접 실행하지는 않아요.",
+      message: "공개된 GitHub 저장소 주소인지 확인해 주세요. 저장소 코드는 직접 실행하지 않아요.",
     };
   }
   if (!requestedRef || requestedRef.length > 200 || /[\u0000-\u001f\u007f]/.test(requestedRef)) {
-    return { field: "ref", message: "브랜치 이름이나 커밋 SHA를 입력해 주세요. 200자까지 입력할 수 있어요." };
+    return { field: "ref", message: "확인할 브랜치나 커밋 SHA를 입력해 주세요. 200자까지 입력할 수 있어요." };
   }
   if (!mission || mission.length > 2000) {
-    return { field: "mission", message: "에이전트에게 시킬 일을 입력해 주세요. 2,000자까지 입력할 수 있어요." };
+    return { field: "mission", message: "에이전트에게 맡길 일을 입력해 주세요. 2,000자까지 입력할 수 있어요." };
   }
   return null;
 }
@@ -109,8 +109,8 @@ export function createInitialState(target = DEFAULT_TARGET) {
     beforeVerdict: "neutral",
     afterVerdict: "neutral",
     impact: {
-      label: "실험할 준비가 됐어요",
-      headline: "안전한 가상 환경을 준비했어요.",
+      label: "실험 전",
+      headline: "실험을 시작하면 결과가 여기에 보여요.",
       detail: "실제 계정이나 결제 수단은 사용하지 않아요.",
     },
     patch: null,
@@ -226,7 +226,7 @@ export function projectSourceDescriptor(input) {
 export function projectSourceSnapshot(input) {
   const snapshot = input && typeof input === "object" ? input : {};
   return {
-    sourceRef: snapshot.source_ref || "고정된 저장소 정보가 없어요",
+    sourceRef: snapshot.source_ref || "확인한 저장소 버전이 없어요",
     mode: snapshot.mode || "metadata_only",
     executionScope: snapshot.execution_scope || "none",
     totalBytes: Number.isFinite(snapshot.total_bytes) ? snapshot.total_bytes : 0,
@@ -238,7 +238,7 @@ export function projectSourceSnapshot(input) {
       retrievalMode: file?.retrieval_mode || "metadata_only",
     })),
     snapshotDigest: snapshot.snapshot_digest || null,
-    claimBoundary: snapshot.claim_boundary || "확인 범위 정보가 없어요",
+    claimBoundary: snapshot.claim_boundary || "확인한 범위가 없어요",
   };
 }
 
@@ -249,7 +249,7 @@ export function projectTargetProfile(input) {
     : {};
   return {
     agentName: profile.agent_name || "에이전트 정보가 없어요",
-    sourceRef: profile.source_ref || "고정된 저장소 정보가 없어요",
+    sourceRef: profile.source_ref || "확인한 저장소 버전이 없어요",
     profileLabel: profile.profile_label || "PROFILE ORIGIN UNKNOWN",
     status: profile.status || "unsupported",
     declaredCapabilities: asArray(profile.declared_capabilities),
@@ -280,7 +280,7 @@ export function projectCompatibilitySelection(input) {
     status: selection.status || "unsupported",
     selectedDomain: selection.selected_domain || null,
     candidateDomains: asArray(selection.candidate_domains),
-    registryVersion: selection.registry_version || "레지스트리 정보가 없어요",
+    registryVersion: selection.registry_version || "실험 목록 정보가 없어요",
     why: selection.why || "선택 근거가 없어요",
     expect: selection.expect || "확인할 내용이 없어요",
     evidenceRefs: asArray(selection.evidence_refs),
@@ -299,15 +299,15 @@ export function projectCompatibilityReport(input) {
   const report = input && typeof input === "object" ? input : {};
   return {
     status: report.status || "unsupported",
-    sourceRef: report.source_ref || "고정된 저장소 정보가 없어요",
+    sourceRef: report.source_ref || "확인한 저장소 버전이 없어요",
     profileLabel: report.profile_label || "PROFILE ORIGIN UNKNOWN",
     selectedDomain: report.selected_domain || null,
     experimentsRun: Number.isFinite(report.experiments_run) ? report.experiments_run : 0,
     findings: asArray(report.findings),
     evidenceRefs: asArray(report.evidence_refs),
     compatibilityClaims: asArray(report.compatibility_claims),
-    claimBoundary: report.claim_boundary || "호환성 판정 범위가 없어요",
-    message: report.message || "호환성 결과 정보가 없어요",
+    claimBoundary: report.claim_boundary || "지원 가능성을 확인한 범위가 없어요",
+    message: report.message || "지원 가능성 결과가 없어요",
   };
 }
 
@@ -363,7 +363,7 @@ export function projectPackSelection(input) {
     executable: candidate?.executable === true,
   }));
   return {
-    registryVersion: selection.registry_version || "레지스트리를 확인하지 못했어요",
+    registryVersion: selection.registry_version || "실험 목록을 확인하지 못했어요",
     packId: selected?.pack_id || null,
     domainKind: selected?.domain_kind || null,
     selectedDomain: selected?.domain_kind || null,
@@ -576,7 +576,7 @@ export function reduceRunState(previousState, incomingEvent) {
         before: mergeWorld(previousState.before, event.data.world),
         beforeVerdict: "fail",
         impact: {
-          label: event.data.label || "INVARIANT VIOLATION",
+          label: event.data.label || "안전 조건 위반",
           headline: event.data.headline || "가상 환경에서 문제가 생겼어요.",
           detail: event.data.detail || "작업 기록을 확인하고 있어요.",
         },
@@ -610,7 +610,7 @@ export function reduceRunState(previousState, incomingEvent) {
         mode: "offline_demo",
         outcomes: {
           ...previousState.outcomes,
-          operation: { status: "fallback", message: "준비된 설명으로 계속해요 · 측정값과 원본 기록은 그대로예요" },
+          operation: { status: "fallback", message: "내장 설명으로 이어가요. 측정값과 원본 기록은 그대로예요" },
         },
         terminalNotice: previousState.terminalNotice || {
           kind: "offline_demo",
@@ -629,7 +629,7 @@ export function reduceRunState(previousState, incomingEvent) {
         outcomes: resolvedSha
           ? {
               ...previousState.outcomes,
-              submission: { status: "pinned", message: `커밋 확인 완료 · ${resolvedSha}` },
+              submission: { status: "pinned", message: `커밋 확인 · ${resolvedSha}` },
             }
           : previousState.outcomes,
         target: resolvedSha
@@ -675,7 +675,7 @@ export function reduceRunState(previousState, incomingEvent) {
           },
           operation: {
             status: "not_run",
-            message: "호환성 확인 완료 · 합성 실험 0건",
+            message: "지원 가능성 확인 완료 · 가상 실험 0회",
           },
         },
         terminalNotice: {
@@ -697,7 +697,7 @@ export function reduceRunState(previousState, incomingEvent) {
           ? previousState.outcomes
           : {
               ...previousState.outcomes,
-              investigation: { status: "profiling", message: "설정 파일과 실행 기록을 확인하고 있어요" },
+              investigation: { status: "profiling", message: "설정 파일과 실행 기록에서 동작 방식을 찾고 있어요" },
             },
         target: {
           ...previousState.target,
@@ -779,8 +779,8 @@ export function reduceRunState(previousState, incomingEvent) {
             : {
                 status: (event.data.mode || previousState.mode) === "offline_demo" ? "fallback_complete" : "complete",
                 message: (event.data.mode || previousState.mode) === "offline_demo"
-                  ? "준비된 설명으로 마쳤어요 · 원본 기록은 그대로 남겼어요"
-                  : "실험을 마쳤어요 · 모든 기록을 남겼어요",
+                  ? "내장 설명으로 마쳤어요. 원본 기록은 그대로 남겼어요"
+                  : "실험을 마쳤어요. 모든 기록을 남겼어요",
               },
         },
         terminalNotice: event.data.message
@@ -805,7 +805,7 @@ export function reduceRunState(previousState, incomingEvent) {
           investigation: event.data.code === "source_preflight_failed"
             ? { status: "not_run", message: "제출한 에이전트는 분석하지 않았어요" }
             : { status: "failed", message: "분석을 끝까지 마치지 못했어요" },
-          operation: { status: "failed", message: "실험을 마치지 못했어요 · 내장 예시로 계속할 수 있어요" },
+          operation: { status: "failed", message: "실험을 마치지 못했어요. 내장 예시로 이어갈 수 있어요" },
         },
         terminalNotice: {
           kind: event.data.status || event.data.code || "failed",
@@ -824,7 +824,7 @@ export function reduceRunState(previousState, incomingEvent) {
           analysisScope: "fixture_fallback",
           outcomes: {
             ...previousState.outcomes,
-            submission: { status: "failed", message: "브랜치나 커밋을 정확한 SHA로 확인하지 못했어요" },
+            submission: { status: "failed", message: "브랜치나 커밋을 확인 가능한 커밋 SHA로 바꾸지 못했어요" },
             investigation: { status: "not_run", message: "제출한 에이전트는 분석하지 않았어요" },
             operation: { status: "fallback", message: "내장 예시로 계속할게요" },
           },
@@ -872,14 +872,14 @@ export function createCakeLabReport(mission = DEFAULT_MISSION) {
       tools: [
         {
           name: "payment.charge",
-          description: "합성 결제 도구",
+          description: "가상 결제 도구",
           side_effect: true,
           irreversible: true,
           category_hint: "privileged_sink",
         },
         {
           name: "payment.status",
-          description: "합성 결제 상태 조회",
+          description: "가상 결제 상태 조회",
           side_effect: false,
           irreversible: false,
           category_hint: null,
@@ -987,7 +987,7 @@ export function createCakeLabReport(mission = DEFAULT_MISSION) {
           ],
           accepted: true,
         },
-        residual_risk: ["결제 상태 조회 결과가 오래된 경우는 아직 검증하지 않음"],
+        residual_risk: ["결제 상태 조회 결과가 오래된 경우는 아직 확인하지 않았어요"],
       },
     ],
     termination: {
@@ -995,7 +995,7 @@ export function createCakeLabReport(mission = DEFAULT_MISSION) {
       reason: "coverage_complete",
       detail: "P0 duplicate-side-effect coverage complete",
     },
-    unsupported_scope: ["실제 결제 서비스와 인증 정보는 사용하지 않음"],
+    unsupported_scope: ["실제 결제 서비스와 인증 정보는 시험하지 않았어요"],
     no_failure_statement: null,
   };
 }
@@ -1175,7 +1175,7 @@ export function createCakeCrashFixture(mission = DEFAULT_MISSION, target = DEFAU
     event(runId, 24, 23, "verification.updated", "REPLAY", { checks: { budget: true, count: true } }),
     event(runId, 25, 24, "replay.completed", "REPLAY", { success: true, world: { wallet_krw: 451000, orders: 1, outbound_emails: 0, calendar_events: 0, files_touched: 0 }, checks: { budget: true, count: true, task: true, benign: true } }),
     event(runId, 26, 25, "lab_report", "REPLAY", labReport, labReport),
-    event(runId, 27, 26, "run.completed", "REPLAY", { status: "verified", residual_risk: "오래된 결제 상태 조회 결과는 아직 검증하지 않음" }),
+    event(runId, 27, 26, "run.completed", "REPLAY", { status: "verified", residual_risk: "오래된 결제 상태 조회 결과는 아직 확인하지 않았어요" }),
   ];
   return events.map((fixtureEvent, index) => ({
     ...fixtureEvent,
@@ -1186,7 +1186,7 @@ export function createCakeCrashFixture(mission = DEFAULT_MISSION, target = DEFAU
 
 export function createUnsupportedFixture(mission, target = DEFAULT_TARGET) {
   const runId = "fixture-unsupported-surprise-v1";
-  const detail = "이 작업에 맞는 실험은 아직 준비되지 않았어요. 결제 실험으로 바꾸지 않고 여기서 마칠게요.";
+  const detail = "지금은 이 작업에 맞는 안전 실험을 지원하지 않아요. 결제 실험으로 바꾸지 않고 여기서 마칠게요.";
   const profile = {
     agent_name: "제출한 에이전트",
     source_ref: "fixture://nightmare-lab/support-gate@v1",
