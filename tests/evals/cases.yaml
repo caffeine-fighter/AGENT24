@@ -128,3 +128,13 @@ cases:
     issue: 44
     command: "pytest tests/integration/test_domain_packs.py::test_adhoc_selector_builds_bounded_probes_from_an_agent_tool_surface -q"
     expectation: "tool names deterministically select six allowlisted probes, each with an explicit reason, expected signal, fixed raw result, and call budget no greater than eight"
+
+  # One-input deterministic diagnostic loop (issue #26).
+  - id: one-input-synthetic-loop
+    issue: 26
+    command: "pytest tests/unit/test_loop.py::test_loop_measures_reproduces_and_verifies_the_selected_synthetic_archetype tests/integration/test_api.py::test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl -q"
+    expectation: "one structured target produces pinned provenance, a 3/3 deterministic Life-v0 failure, cited oracle report, accepted patch gates, SandboxGym protected replay, and both report contracts in one ordered SSE/JSONL run"
+  - id: one-input-openai-scope-boundary
+    issue: 26
+    command: "pytest tests/integration/test_api.py::test_live_target_passes_bounded_synthetic_evidence_to_openai tests/integration/test_api.py::test_diagnostic_failure_is_sanitized_and_falls_back -q"
+    expectation: "OpenAI receives bounded controller evidence labelled synthetic_archetype and never a target-code execution claim; diagnostic failures emit a sanitized explicit fallback without leaking the exception"

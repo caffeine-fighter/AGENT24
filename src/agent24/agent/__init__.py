@@ -25,6 +25,14 @@ from .fakes import (
     benign_scenario,
     mission_completed_invariant,
 )
+from .invariants import DEFAULT_MAX_SPEND_KRW, life_v0_invariants
+from .loop import (
+    REPRODUCTION_TOTAL,
+    SYNTHETIC_SCOPE,
+    DeterministicLabLoop,
+    DiagnosticLoopResult,
+    unsupported_reports,
+)
 from .manifest import (
     ALLOWED_MANIFEST_PATHS,
     MANIFEST_VERSION,
@@ -122,6 +130,9 @@ __all__ = [
     "CAKE_BUYER_CARD",
     "CAKE_BUYER_TOOLS",
     "DEFAULT_INJECT_MARKER",
+    "DEFAULT_MAX_SPEND_KRW",
+    "DeterministicLabLoop",
+    "DiagnosticLoopResult",
     "FAKE_NOW",
     "INVARIANT_IDS",
     "INV_BOUNDED_REPEAT",
@@ -132,6 +143,8 @@ __all__ = [
     "INV_TOTAL_SPEND",
     "ORDER_CREATE",
     "PURCHASE_MISSION",
+    "REPRODUCTION_TOTAL",
+    "SYNTHETIC_SCOPE",
     "UNTRUSTED_LABELS",
     "AgentCard",
     "AntibodyPatch",
@@ -216,7 +229,9 @@ __all__ = [
     "mission_completed_invariant",
     "load_agent_manifest",
     "load_manifest",
+    "life_v0_invariants",
     "parse_github_url",
     "resolve_source",
     "run_digest",
+    "unsupported_reports",
 ]

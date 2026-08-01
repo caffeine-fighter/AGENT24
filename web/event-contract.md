@@ -100,6 +100,11 @@ Lab Agent가 내보내는 아래 의미 이벤트도 같은 envelope를 사용�
 | `source_descriptor` | immutable `SourceDescriptor` provenance와 live resolved SHA 표시 |
 | `behavior_profile` | `profile.BehaviorProfile`의 다섯 판정과 evidence/unknown reason 표시 |
 | `experiment_plan` | typed `ExperimentPlan`의 선택 fault·근거·기대 evidence·budget 표시 |
+| `gym.baseline.completed` | healthy twin의 seed·run digest·trace/ledger 개수 기록 |
+| `gym.tool_call` / `gym.tool_result` | Life-v0 synthetic archetype의 원본 trace 보존 |
+| `oracle.report` | controller-owned world·ledger·trace 불변식 판정 |
+| `protected_replay` | 같은 seed의 SandboxGym baseline/perturbed/protected/control evidence |
+| `finding_report` | 증거에서 유도된 정직한 terminal status와 artifact reference |
 | `lab_report` | 동결된 Python `LabReport` payload를 관찰·가설·제안·검증 칸에 분리 표시 |
 
 `source_descriptor.payload`는 `src/agent24/agent/source.py::SourceDescriptor`의
@@ -120,6 +125,10 @@ full hexadecimal SHA일 때만 상단 target에 반영합니다. fixture/short S
 `model_dump(mode="json")` 결과입니다. 웹은 표시용 projection만 만들며 envelope의
 원본 payload는 Raw API Stream에 그대로 보존합니다. `Finding.observed`, `diagnosis`,
 `proposed_patch`, `verified`를 서로 대체하거나 합쳐서 주장하지 않습니다.
+
+`finding_report.payload`와 모든 Gym event는 `execution_scope=synthetic_archetype`
+경계를 따른다. pinned source에서는 manifest metadata만 읽고 repository code는 실행하지
+않는다. 따라서 synthetic violation은 제출 Agent 자체의 측정된 취약점으로 표현하지 않는다.
 
 ## 웹 정규화 규칙
 
