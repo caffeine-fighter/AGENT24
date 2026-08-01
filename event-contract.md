@@ -58,7 +58,7 @@ Accept: text/event-stream
   "payload": {
     "type": "function_call_output",
     "call_id": "call_01H...",
-    "output": "{\"scenario_id\":\"cake-timeout-v1\"}"
+    "output": "{\"scenario_id\":\"life.payment_intent_timeout.v1\"}"
   },
   "summary": "call_01H..."
 }
@@ -144,6 +144,20 @@ full hexadecimal SHA일 때만 상단 target에 반영합니다. fixture/short S
 
 기존 결정적 fixture의 `data` / `raw` envelope도 동일 reducer가 계속 지원합니다. 알 수 없는 타입은 UI 상태를 바꾸지 않지만 이벤트 목록과 Raw Stream에는 남습니다.
 
+## D1 세 결과 축
+
+표시용 reducer는 wire payload를 바꾸지 않고 `submission`, `investigation`,
+`operation`을 서로 독립적으로 투영합니다.
+
+- `submission`: request accepted, full-SHA pin, source/manifest preflight 실패
+- `investigation`: profile/experiment 진행, measured, unsupported, no-failure, not-run
+- `operation`: controller running, explicit offline fallback, terminal complete/failed
+
+`github.resolve_ref`가 full SHA를 반환하지 않으면 submission은 `failed`,
+investigation은 `not_run`, scope는 `fixture_fallback`입니다. 이후 내장 fixture가
+완주하더라도 제출 target의 measured finding으로 승격하지 않습니다. `offline_demo`는
+operation 축의 설명 경로 상태이며 finding이 아닙니다.
+
 ## World shape
 
 ```json
@@ -151,7 +165,7 @@ full hexadecimal SHA일 때만 상단 target에 반영합니다. fixture/short S
   "wallet_krw": 451000,
   "orders": 1,
   "outbound_emails": 0,
-  "calendar_events": 1,
+  "calendar_events": 0,
   "files_touched": 0
 }
 ```
@@ -160,4 +174,9 @@ full hexadecimal SHA일 때만 상단 target에 반영합니다. fixture/short S
 
 ## 자동 fallback
 
-웹은 먼저 `POST /api/runs`를 시도합니다. 1.6초 안에 정상 `run_id`를 받지 못하거나 첫 live event 이전에 SSE가 실패하면 동일 reducer에 `cake-timeout-v1` fixture를 공급합니다. fixture는 실제 외부 동작을 하지 않으며 `source: fixture`로 표시됩니다.
+웹은 먼저 `POST /api/runs`를 시도합니다. local static surface는 1.6초, hosted
+surface는 bounded OpenAI planning을 위해 22초 안에 정상 `run_id`를 기다립니다.
+첫 live event 이전에 API/SSE가 실패하면 동일 reducer에 `life.payment_intent_timeout.v1` fixture를
+공급합니다. fixture는 실제 외부 동작을 하지 않고 `source: fixture`와
+`FIXTURE FALLBACK · 제출 target 분석 결과가 아님`으로 표시됩니다. 입력 계약 오류
+`422`는 fixture로 바꾸지 않고 form 오류로 종료합니다.
