@@ -615,3 +615,25 @@ cases:
       - tests/unit/test_packs.py::test_ticket_spec_matches_the_ticket_pack
       - tests/unit/test_packs.py::test_the_registry_agrees_with_the_metadata_each_pack_publishes
       - tests/unit/test_packs.py::test_a_real_ticket_agent_routes_to_the_ticket_pack
+
+  # Live case binding (issue #120).  A `mode: live` case used to return an
+  # unconditional pass and delegate to a bound test that owned its own copy of
+  # the literals, so editing the declaration changed nothing.
+  - id: live-case-declaration-binding
+    runner: pytest
+    issue: 120
+    expectation: a mode:live runtime case runs the mocked app with its own declared input, compares observed events against its own expected_event_types, applies forbid_in_stream to both SSE and the persisted JSONL, and reports which fields stayed prose; mutating the declaration fails the run
+    targets:
+      - tests/evals/test_registry.py::test_a_live_case_runs_the_mocked_app_instead_of_delegating
+      - tests/evals/test_registry.py::test_mutating_a_live_declaration_changes_the_result
+      - tests/evals/test_registry.py::test_the_declared_input_is_what_reaches_the_model
+      - tests/evals/test_registry.py::test_forbid_in_stream_is_checked_against_the_persisted_jsonl_too
+      - tests/evals/test_registry.py::test_a_mutated_expected_event_fails_the_whole_registry_run
+      - tests/evals/test_registry.py::test_a_live_case_reports_which_fields_stayed_prose
+  - id: live-stub-stays-offline
+    runner: pytest
+    issue: 120
+    expectation: the shared stub replaces only the AsyncOpenAI transport inside the production provider, restores it afterwards, and puts the ambient OPENAI_API_KEY/OPENAI_MODEL back exactly as they were
+    targets:
+      - tests/evals/test_registry.py::test_the_live_stub_never_reaches_the_network
+      - tests/evals/test_registry.py::test_the_live_stub_restores_the_ambient_environment

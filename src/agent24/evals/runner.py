@@ -59,6 +59,10 @@ class CaseOutcome:
     runner: str
     passed: bool
     detail: str = ""
+    checked: int = 0
+    """How many structured assertions actually ran."""
+    prose_only: tuple[str, ...] = ()
+    """Declared fields that stayed human-readable and were not machine-checked."""
     unavailable: bool = False
     """Prerequisite absent (no node, no site build). Never silent: it prints,
     and it fails the run unless the caller passed --skip-unavailable."""
@@ -66,7 +70,15 @@ class CaseOutcome:
     def line(self) -> str:
         if self.unavailable:
             return f"  [SKIP] {self.case_id} ({self.runner}) -- {self.detail}"
-        return f"  [{'PASS' if self.passed else 'FAIL'}] {self.case_id} ({self.runner})"
+        head = f"  [{'PASS' if self.passed else 'FAIL'}] {self.case_id} ({self.runner})"
+        if not self.checked and not self.prose_only:
+            return head
+        # Say plainly how much was machined and what stayed prose, so a green
+        # line is never read as "every word of this case was verified".
+        note = f"{self.checked} checked"
+        if self.prose_only:
+            note += f", prose-only: {', '.join(self.prose_only)}"
+        return f"{head} -- {note}"
 
 
 def _pytest(args: Sequence[str], *, repo_root: Path) -> subprocess.CompletedProcess[str]:
@@ -192,12 +204,13 @@ def _run_declarative(case: Case, *, repo_root: Path) -> CaseOutcome:
         if completed.returncode != 0:
             tail = "\n".join(completed.stdout.strip().splitlines()[-FAILURE_TAIL_LINES:])
             return CaseOutcome(case.id, case.runner, False, f"bound test failed:\n{tail}")
+    checked, prose = len(result.checks), result.prose_only
     if result.passed:
-        return CaseOutcome(case.id, case.runner, True)
+        return CaseOutcome(case.id, case.runner, True, "", checked, prose)
     if result.error:
-        return CaseOutcome(case.id, case.runner, False, result.error)
+        return CaseOutcome(case.id, case.runner, False, result.error, checked, prose)
     detail = "; ".join(f"{c.name}: {c.detail}" for c in result.failures())
-    return CaseOutcome(case.id, case.runner, False, detail)
+    return CaseOutcome(case.id, case.runner, False, detail, checked, prose)
 
 
 def run_cases(cases: Sequence[Case], *, repo_root: Path) -> list[CaseOutcome]:
