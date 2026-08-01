@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   createCakeCrashFixture,
   createInitialState,
+  normalizeEvent,
   reduceRunState,
   replayDeterministically,
 } from "../src/core.mjs";
@@ -39,5 +40,51 @@ const unknownState = reduceRunState(createInitialState(), unknown);
 assert.equal(unknownState.events.length, 1, "unknown event must remain in Raw Stream history");
 assert.equal(unknownState.unknownEvents.length, 1, "unknown event must be tracked without crashing");
 assert.deepEqual(unknownState.events[0].raw, { exact: "payload" });
+
+const runtimePayload = {
+  type: "function_call",
+  name: "inspect_synthetic_gym",
+  arguments: '{"query":"cake"}',
+};
+const normalizedRuntimeEvent = normalizeEvent({
+  run_id: "runtime-test",
+  seq: 1,
+  timestamp: "2026-08-01T07:00:00.000Z",
+  type: "tool_call",
+  payload: runtimePayload,
+  summary: "inspect_synthetic_gym",
+});
+assert.equal(normalizedRuntimeEvent.wire_type, "tool_call");
+assert.deepEqual(normalizedRuntimeEvent.raw, runtimePayload, "runtime payload must remain unedited");
+assert.deepEqual(normalizedRuntimeEvent.data, runtimePayload);
+
+let runtimeState = reduceRunState(createInitialState(), {
+  run_id: "runtime-test",
+  seq: 0,
+  timestamp: "2026-08-01T07:00:00.000Z",
+  type: "run_started",
+  payload: { mode: "live", input_received: true },
+});
+assert.equal(runtimeState.status, "running");
+assert.equal(runtimeState.phase, "CLONE");
+assert.equal(runtimeState.mode, "live");
+runtimeState = reduceRunState(runtimeState, normalizedRuntimeEvent);
+runtimeState = reduceRunState(runtimeState, {
+  run_id: "runtime-test",
+  seq: 2,
+  timestamp: "2026-08-01T07:00:01.000Z",
+  type: "final_output",
+  payload: { text: "관찰 증거를 바탕으로 진단했습니다." },
+});
+assert.equal(runtimeState.autopsy.length, 1);
+runtimeState = reduceRunState(runtimeState, {
+  run_id: "runtime-test",
+  seq: 3,
+  timestamp: "2026-08-01T07:00:02.000Z",
+  type: "run_completed",
+  payload: { status: "completed", mode: "live" },
+});
+assert.equal(runtimeState.status, "complete");
+assert.deepEqual(runtimeState.events[1].raw, runtimePayload);
 
 console.log("NIGHTMARE web core tests passed");
