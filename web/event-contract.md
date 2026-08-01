@@ -87,9 +87,15 @@ Lab Agent가 내보내는 아래 의미 이벤트도 같은 envelope를 사용�
 | `vaccine.proposed` | 최소 안전 패치 표시 |
 | `verification.updated` | 검증 조건 부분 갱신 |
 | `replay.completed` | 보호 후 상태와 목표 성공 여부 표시 |
+| `source_descriptor` | immutable `SourceDescriptor` provenance와 live resolved SHA 표시 |
 | `behavior_profile` | `profile.BehaviorProfile`의 다섯 판정과 evidence/unknown reason 표시 |
 | `experiment_plan` | typed `ExperimentPlan`의 선택 fault·근거·기대 evidence·budget 표시 |
 | `lab_report` | 동결된 Python `LabReport` payload를 관찰·가설·제안·검증 칸에 분리 표시 |
+
+`source_descriptor.payload`는 `src/agent24/agent/source.py::SourceDescriptor`의
+`model_dump(mode="json")` 결과입니다. `source: live`이면서 `resolved_sha`가 40자 이상의
+full hexadecimal SHA일 때만 상단 target에 반영합니다. fixture/short SHA는 실제 resolve
+결과로 승격하지 않고 Raw Stream에서만 감사할 수 있습니다.
 
 `behavior_profile.payload`는 `src/agent24/agent/profile.py::BehaviorProfile`의
 `model_dump(mode="json")` 결과입니다. live 이벤트의 `source_ref` 끝에 immutable hex SHA가
@@ -112,6 +118,7 @@ Lab Agent가 내보내는 아래 의미 이벤트도 같은 envelope를 사용�
 - `run_started` → `run.started`
 - `run_completed` → `run.completed`
 - `run_failed` → `run.failed`
+- `source_descriptor` → `source.descriptor`
 - `payload` → 상태 해석용 `data`
 - `payload` → Raw Stream 표시용 `raw` — 객체 내용은 변경하지 않음
 - wire 타입은 `wire_type`에 별도로 보존
