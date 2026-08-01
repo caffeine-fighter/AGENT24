@@ -4,16 +4,19 @@
 
 ## 실행
 
-먼저 저장소 루트에서 API를 실행합니다.
+권장 경로는 저장소 루트에서 웹과 API를 단일 포트로 실행하는 것입니다.
+
+```powershell
+.\scripts\demo.ps1
+```
+
+브라우저에서 <http://127.0.0.1:8000>을 엽니다. API 경로가 정적 파일보다 우선하므로 같은 origin에서 `/api/runs`, `/health`, SSE를 그대로 사용합니다.
+
+웹만 따로 개발할 때는 두 서버를 사용할 수 있습니다.
 
 ```powershell
 $env:WEB_ORIGIN="http://localhost:5173"
 uvicorn agent24.api.app:app --host 127.0.0.1 --port 8000
-```
-
-다른 터미널에서 정적 웹 서버를 실행합니다.
-
-```powershell
 python -m http.server 5173 --directory web
 ```
 
