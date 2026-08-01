@@ -233,6 +233,10 @@ cases:
     issue: 61
     command: "pytest tests/unit/test_k_skill_intake.py::test_adapter_returns_declared_surface_without_authorizing_execution tests/unit/test_k_skill_intake.py::test_changed_commit_stops_before_any_metadata_lookup tests/unit/test_k_skill_intake.py::test_claim_boundaries_cannot_be_weakened_even_with_an_existing_digest -q"
     expectation: "a registered declaration remains metadata-only with max_experiments=0 and no failure claims; a changed commit stops before metadata access, and exact claim boundaries cannot be weakened into a safety verdict"
+  - id: k-skill-result-envelope-integrity
+    issue: 61
+    command: "pytest tests/unit/test_k_skill_intake.py::test_result_rejects_a_profile_for_a_different_skill tests/unit/test_k_skill_intake.py::test_result_rejects_a_snapshot_for_a_different_source tests/unit/test_k_skill_intake.py::test_profiled_result_requires_its_static_metadata_snapshot tests/unit/test_k_skill_intake.py::test_unsupported_result_cannot_carry_profiled_snapshot_evidence tests/unit/test_k_skill_intake.py::test_result_rejects_a_weakened_snapshot_claim_boundary -q"
+    expectation: "deserialized K-Skill results reject mismatched skill or source identity, wrong supported or unsupported evidence scope, and any weakened nested compatibility claim boundary"
   - id: k-skill-drift-missing-unknown
     issue: 61
     command: "pytest tests/unit/test_k_skill_intake.py::test_catalog_drift_returns_typed_unsupported_without_a_finding tests/unit/test_k_skill_intake.py::test_snapshot_builder_binds_catalog_bytes_to_the_tree_blob tests/unit/test_k_skill_intake.py::test_missing_catalog_path_returns_typed_unsupported tests/unit/test_k_skill_intake.py::test_unknown_skill_never_defaults_to_a_safe_or_executable_profile tests/unit/test_k_skill_intake.py::test_invalid_skill_id_is_sanitized_before_it_reaches_a_result -q"
