@@ -22,7 +22,7 @@ RUN_ID = "run-1"
 PINNED_SHA = "a" * 40
 
 
-def trace(*, hosted: bool) -> list[dict[str, object]]:
+def trace(*, hosted: bool, source_pinned: bool = True) -> list[dict[str, object]]:
     phases = ["CLONE"] * 12 + ["CRASH"] * 7 + ["AUTOPSY"] * 3
     phases += ["VACCINE"] * 3 + ["REPLAY"] * 9
     events: list[dict[str, object]] = [
@@ -42,7 +42,15 @@ def trace(*, hosted: bool) -> list[dict[str, object]]:
     )
     events[4].update(
         type="source_descriptor",
-        data={"resolved_sha": PINNED_SHA},
+        data={"resolved_sha": PINNED_SHA if source_pinned else None},
+    )
+    events[8].update(
+        type="behavior_profile",
+        data={
+            "agent_name": "submitted-github-agent"
+            if source_pinned
+            else "synthetic-fixture-fallback"
+        },
     )
     events[10].update(
         type="tool_result",
@@ -68,12 +76,18 @@ def trace(*, hosted: bool) -> list[dict[str, object]]:
 def test_verify_trace_accepts_both_explicit_modes(
     mode: str, hosted: bool, response_observed: bool
 ) -> None:
-    result = SMOKE.verify_trace(trace(hosted=hosted), run_id=RUN_ID, expected_mode=mode)
+    result = SMOKE.verify_trace(
+        trace(hosted=hosted),
+        run_id=RUN_ID,
+        expected_mode=mode,
+        expected_source="pinned",
+    )
 
     assert result == {
         "event_count": 34,
         "phases": ["CLONE", "CRASH", "AUTOPSY", "VACCINE", "REPLAY"],
         "source_ref": PINNED_SHA,
+        "source_pinned": True,
         "openai_response_observed": response_observed,
         "terminal_status": "verified",
     }
@@ -84,7 +98,24 @@ def test_verify_trace_rejects_non_contiguous_sequence() -> None:
     events[20]["seq"] = 99
 
     with pytest.raises(RuntimeError, match="sequence is not contiguous"):
-        SMOKE.verify_trace(events, run_id=RUN_ID, expected_mode="openai_hosted")
+        SMOKE.verify_trace(
+            events,
+            run_id=RUN_ID,
+            expected_mode="openai_hosted",
+            expected_source="pinned",
+        )
+
+
+def test_verify_trace_accepts_explicit_unresolved_fixture_fallback() -> None:
+    result = SMOKE.verify_trace(
+        trace(hosted=False, source_pinned=False),
+        run_id=RUN_ID,
+        expected_mode="offline_demo",
+        expected_source="unresolved",
+    )
+
+    assert result["source_ref"] is None
+    assert result["source_pinned"] is False
 
 
 def test_parse_sse_accepts_crlf_frames() -> None:

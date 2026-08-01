@@ -1,9 +1,9 @@
 import {
-  PHASES,
   createCakeCrashFixture,
   createInitialState,
   formatRunInput,
   reduceRunState,
+  validateTargetInput,
 } from "./core.mjs";
 
 const $ = (selector) => document.querySelector(selector);
@@ -105,6 +105,22 @@ function renderChecks() {
     ? allPass ? "검증 완료" : hasValue ? "검증 종료" : "검증 데이터 없음"
     : hasValue ? "검증 중" : "대기 중";
   setText("#verificationStatus", label);
+}
+
+function renderOutcomes() {
+  for (const axis of ["submission", "investigation", "operation"]) {
+    const outcome = state.outcomes[axis];
+    const card = $(`[data-outcome="${axis}"]`);
+    if (!outcome || !card) continue;
+    card.dataset.status = outcome.status;
+    setText(`#${axis}Outcome`, outcome.status.toUpperCase());
+    setText(`#${axis}Detail`, outcome.message);
+  }
+  const scopeNotice = $("#scopeNotice");
+  scopeNotice.dataset.scope = state.analysisScope;
+  scopeNotice.textContent = state.analysisScope === "fixture_fallback"
+    ? "FIXTURE FALLBACK · 제출 target 분석 결과가 아닙니다. 내장 합성 archetype의 Raw Stream만 표시하며 안전 인증으로 사용하지 않습니다."
+    : "SYNTHETIC ARCHETYPE · 외부 저장소 코드를 실행하지 않습니다. 고정 source의 metadata와 allowlist manifest로 선택한 합성 행동만 측정하며, 실패 미발견은 안전 인증이 아닙니다.";
 }
 
 function compactJson(value) {
@@ -261,6 +277,7 @@ function render() {
   renderAutopsy();
   renderPatch();
   renderChecks();
+  renderOutcomes();
   renderLabReport();
   renderStream();
   setText("#targetRepo", state.target.repositoryUrl || "입력 대기");
@@ -350,6 +367,11 @@ async function startLiveRun(target) {
       }),
       signal: controller.signal,
     });
+    if (response.status === 422) {
+      clearTimeout(timeout);
+      showInputError("입력 계약을 확인하세요. repository/ref/mission이 비어 있거나 서로 충돌하면 run을 만들지 않습니다.");
+      return "rejected";
+    }
     if (!response.ok) throw new Error(`Run API returned ${response.status}`);
     const payload = await response.json();
     const runId = payload.run_id;
@@ -375,16 +397,22 @@ async function startLiveRun(target) {
       if (!receivedLiveEvent) playFixture(target);
       else setText("#connectionStatus", "SSE CLOSED · EVENTS PRESERVED");
     };
-    return true;
+    return "started";
   } catch {
     clearTimeout(timeout);
-    return false;
+    return "unavailable";
   }
 }
 
 async function runMission(target) {
-  const live = await startLiveRun(target);
-  if (!live) playFixture(target);
+  const result = await startLiveRun(target);
+  if (result === "unavailable") playFixture(target);
+}
+
+function showInputError(message = "") {
+  const error = $("#inputError");
+  error.hidden = !message;
+  error.textContent = message;
 }
 
 function escapeHtml(value) {
@@ -399,7 +427,18 @@ $("#missionForm").addEventListener("submit", (event) => {
     resolvedSha: null,
     mission: $("#missionInput").value.trim(),
   };
-  if (target.repositoryUrl && target.requestedRef && target.mission) runMission(target);
+  const validation = validateTargetInput(target);
+  showInputError(validation?.message || "");
+  if (validation) {
+    const field = validation.field === "repository"
+      ? $("#repositoryInput")
+      : validation.field === "ref"
+        ? $("#refInput")
+        : $("#missionInput");
+    field?.focus();
+    return;
+  }
+  runMission(target);
 });
 
 $("#resetButton").addEventListener("click", () => {
@@ -408,6 +447,7 @@ $("#resetButton").addEventListener("click", () => {
   $("#repositoryInput").value = lastTarget.repositoryUrl;
   $("#refInput").value = lastTarget.requestedRef;
   $("#missionInput").value = lastTarget.mission;
+  showInputError();
   setText("#runClock", "00:00");
   render();
 });
