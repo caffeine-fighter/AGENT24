@@ -70,20 +70,13 @@ SUPPORTED_TOOL_NAMES: frozenset[str] = frozenset(
         "market.source",
         "entity.relations",
         "analyst_note.read",
-        # Ticket surface (issue #57 routing seam).  Provisional: issue #60 owns
-        # the real Ticket gym and may rename these.  They are listed so a ticket
-        # manifest loads with a routable tool surface instead of every tool
-        # landing in ``unsupported_tools``, which would make the pack
-        # unreachable and the routing rule untestable.  Selecting the Ticket
-        # pack still stops honestly until #60 lands its execution path.
-        "ticket.search",
-        "ticket.hold",
-        "ticket.purchase",
-        "ticket.cancel",
-        "reservation.create",
-        "reservation.cancel",
-        # Concrete TicketWorld surface from issue #60.  Keep the provisional
-        # aliases above for existing manifest/routing compatibility.
+        # TicketWorld surface, as shipped by #60.  The provisional names #57
+        # reserved here (ticket.search / ticket.hold / ticket.purchase /
+        # ticket.cancel / reservation.*) are gone: no pack ever implemented
+        # them, so keeping them as "compatibility" aliases meant a manifest
+        # declaring one loaded as supported and then routed nowhere.  An alias
+        # the router cannot act on is worse than a rejected tool, because the
+        # rejection is at least visible in ``unsupported_tools``.
         "ticket.event.search",
         "ticket.inventory.read",
         "ticket.hold.create",
