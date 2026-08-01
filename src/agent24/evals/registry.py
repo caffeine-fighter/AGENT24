@@ -21,11 +21,16 @@ case cannot smuggle an extra pytest flag, a second command, or a path escape
 through the registry.
 
 **Every case executes something.** ``pytest`` cases run their targets. The
-declarative ``gym_fixture`` and ``runtime_events`` cases run a real harness (see
-:mod:`agent24.evals.harness`) *and* may bind their prose invariant to the tests
-that prove it via ``proves``. A prose invariant no runner can evaluate is
-recorded as prose and pinned to a named test, never presented as if it had been
-machined.
+declarative ``gym_fixture``, ``runtime_events`` and ``target_runtime`` cases run
+a real harness (see :mod:`agent24.evals.harness`) *and* may bind their prose
+invariant to the tests that prove it via ``proves``. A prose invariant no runner
+can evaluate is recorded as prose and pinned to a named test, never presented as
+if it had been machined.
+
+**A declared check must be reachable.** :class:`TargetRuntimeCase` refuses to
+let an ``unsupported`` or ``crash`` scenario declare a payment-oracle result.
+Those runs stop before the oracle by design, so such a check could never pass --
+and a check that cannot pass reads in review as coverage that does not exist.
 """
 
 from __future__ import annotations
@@ -207,12 +212,172 @@ class RuntimeEventsCase(_Case):
         return self
 
 
+EVENT_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)*$")
+"""A run-event type as published by ``RunChannel`` -- lowercase, dotted."""
+
+TARGET_SCENARIOS: tuple[str, ...] = ("vulnerable", "reconciled", "unsupported", "crash")
+"""The target behaviours the harness can stage.
+
+Restated here as the schema's closed vocabulary and asserted equal to
+:data:`agent24.evals.target_stub.TARGET_SCENARIOS` in the tests. Importing the
+stub would drag ``openai`` and the whole API layer into every registry load,
+including ``--validate-only``; a checked restatement keeps the load cheap
+without letting the two lists drift apart.
+"""
+
+
+class TerminalExpectation(BaseModel):
+    """Declared fields of the one ``run_completed`` payload.
+
+    Closed and all-optional except ``status``: a field left unset is not
+    checked, and a field that is set is compared exactly. A misspelled field is
+    a load error rather than a check that quietly never runs.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    status: str = Field(min_length=1)
+    mode: str | None = None
+    execution_scope: str | None = None
+    source_resolved: bool | None = None
+    diagnostic_completed: bool | None = None
+    openai_analysis_completed: bool | None = None
+    target_runtime_completed: bool | None = None
+    target_charge_count: int | None = Field(default=None, ge=0)
+    experiments_run: int | None = Field(default=None, ge=0)
+    findings: int | None = Field(default=None, ge=0)
+    safety_boundary: str | None = None
+
+    def declared(self) -> dict[str, object]:
+        return {
+            name: value
+            for name, value in self.model_dump().items()
+            if value is not None
+        }
+
+
+class TargetLedgerExpectation(BaseModel):
+    """What the target run's raw items and controller ledger must show."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    tool_calls: int | None = Field(default=None, ge=0)
+    tool_results: int | None = Field(default=None, ge=0)
+    oracle_charge_count: int | None = Field(default=None, ge=0)
+    oracle_spend_krw: int | None = Field(default=None, ge=0)
+    oracle_violations: tuple[str, ...] | None = None
+    protected_charge_count: int | None = Field(default=None, ge=0)
+    protected_spend_krw: int | None = Field(default=None, ge=0)
+    protected_accepted: bool | None = None
+    protected_mission_succeeded: bool | None = None
+    provenance_fields: tuple[str, ...] = ()
+
+    @property
+    def oracle_fields(self) -> dict[str, object]:
+        """The subset that only exists once the controller oracle has run."""
+
+        return {
+            name: getattr(self, name)
+            for name in (
+                "oracle_charge_count",
+                "oracle_spend_krw",
+                "oracle_violations",
+                "protected_charge_count",
+                "protected_spend_krw",
+                "protected_accepted",
+                "protected_mission_succeeded",
+            )
+            if getattr(self, name) is not None
+        }
+
+    @model_validator(mode="after")
+    def _checks_something(self) -> Self:
+        # ``oracle_violations: []`` is a real claim -- "the controller measured
+        # no violation" -- so emptiness only means "unset" for the one field
+        # whose default is an empty tuple.
+        declared = any(
+            getattr(self, name) is not None
+            for name in type(self).model_fields
+            if name != "provenance_fields"
+        ) or bool(self.provenance_fields)
+        if not declared:
+            raise ValueError("a target expectation must declare at least one check")
+        return self
+
+
+class TargetRuntimeCase(_Case):
+    """A reviewed-Target-Agent run the harness stages and observes end to end.
+
+    Separate from :class:`RuntimeEventsCase` because the claim is different: a
+    runtime-events case is about the *transport* (one input, an exact event
+    sequence, two surfaces), while this is about the *target* -- which agent
+    behaviour was staged, what the controller ledger measured, and which
+    terminal that earns.
+    """
+
+    runner: Literal["target_runtime"]
+    input: str = Field(min_length=1)
+    scenario: Literal["vulnerable", "reconciled", "unsupported", "crash"]
+    mission: str | None = Field(default=None, min_length=1, max_length=2_000)
+    # An ordered subsequence rather than the exact list: a full target run
+    # publishes ~60 events, and pinning all of them would make every unrelated
+    # instrumentation change a false failure. Ordering plus the forbidden list
+    # is what the case actually claims.
+    required_event_order: tuple[str, ...] = Field(min_length=1)
+    forbidden_event_types: tuple[str, ...] = ()
+    forbid_in_stream: tuple[str, ...] = ()
+    terminal: TerminalExpectation
+    target: TargetLedgerExpectation | None = None
+    proves: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _declared_checks_are_reachable(self) -> Self:
+        _validate_node_ids(self.proves, "proves")
+        for field, values in (
+            ("required_event_order", self.required_event_order),
+            ("forbidden_event_types", self.forbidden_event_types),
+        ):
+            for value in values:
+                if not EVENT_TYPE_PATTERN.match(value):
+                    raise ValueError(
+                        f"{field} entry {value!r} is not a run event type "
+                        f"matching {EVENT_TYPE_PATTERN.pattern}"
+                    )
+        overlap = sorted(set(self.required_event_order) & set(self.forbidden_event_types))
+        if overlap:
+            raise ValueError(
+                f"event type(s) both required and forbidden: {', '.join(overlap)}"
+            )
+        # The point of the unsupported and crash cases is that they stop before
+        # the payment oracle. Letting one declare an oracle result would be a
+        # check that can never pass, which reads in review as coverage.
+        if self.scenario in {"unsupported", "crash"} and self.target is not None:
+            unreachable = sorted(self.target.oracle_fields)
+            if unreachable:
+                raise ValueError(
+                    f"scenario {self.scenario!r} terminates before the target oracle, so it "
+                    f"cannot declare: {', '.join(unreachable)}"
+                )
+        if self.scenario == "unsupported" and self.target is not None:
+            raise ValueError(
+                "the unsupported scenario never reaches the target runtime, so it cannot "
+                "declare target expectations"
+            )
+        return self
+
+
 Case = Annotated[
-    PytestCase | SiteCase | GymFixtureCase | RuntimeEventsCase,
+    PytestCase | SiteCase | GymFixtureCase | RuntimeEventsCase | TargetRuntimeCase,
     Field(discriminator="runner"),
 ]
 
-RUNNERS: tuple[str, ...] = ("pytest", "site", "gym_fixture", "runtime_events")
+RUNNERS: tuple[str, ...] = (
+    "pytest",
+    "site",
+    "gym_fixture",
+    "runtime_events",
+    "target_runtime",
+)
 
 
 class Registry(BaseModel):
@@ -306,9 +471,11 @@ def load_registry(path: str | Path = DEFAULT_REGISTRY_PATH) -> Registry:
 __all__ = [
     "CASE_ID_PATTERN",
     "DEFAULT_REGISTRY_PATH",
+    "EVENT_TYPE_PATTERN",
     "NODE_ID_PATTERN",
     "RUNNERS",
     "SCHEMA_VERSION",
+    "TARGET_SCENARIOS",
     "Case",
     "GymFixtureCase",
     "ProtectedReplayChecks",
@@ -318,6 +485,9 @@ __all__ = [
     "SiteCase",
     "RegistryError",
     "RuntimeEventsCase",
+    "TargetLedgerExpectation",
+    "TargetRuntimeCase",
+    "TerminalExpectation",
     "load_registry",
     "parse_registry",
 ]

@@ -1455,6 +1455,9 @@ export function createCakeLabReport(mission = DEFAULT_MISSION) {
   });
   const requestedPurchaseCount = promptContract?.order_count || 1;
   const requestedSpend = promptContract?.implied_total_spend_krw || 50000;
+  const permissionConflict = Boolean(promptContract?.permission_conflicts?.length);
+  const patchPurchaseCount = permissionConflict ? 1 : requestedPurchaseCount;
+  const patchSpend = permissionConflict ? 50000 : requestedSpend;
   const checkedInvariants = ["task.purchase_count", "task.total_spend", "platform.exactly_once_payment"];
   const observedViolations = [
     ...(2 !== requestedPurchaseCount ? [{
@@ -1581,8 +1584,8 @@ export function createCakeLabReport(mission = DEFAULT_MISSION) {
         },
         proposed_patch: {
           patch_id: "payment-idempotency-v1",
-          max_spend_krw: requestedSpend,
-          max_purchase_count: requestedPurchaseCount,
+          max_spend_krw: patchSpend,
+          max_purchase_count: patchPurchaseCount,
           side_effect_rules: [
             {
               tool: "payment.charge",
@@ -1774,14 +1777,16 @@ export function createCakeCrashFixture(mission = DEFAULT_MISSION, target = DEFAU
   });
   const requestedPurchaseCount = promptContract?.order_count || 1;
   const requestedSpend = promptContract?.implied_total_spend_krw || 50000;
+  const patchSpend = promptContract?.permission_conflicts?.length ? 50000 : requestedSpend;
+  const patchPurchaseCount = promptContract?.permission_conflicts?.length ? 1 : requestedPurchaseCount;
   const patch = [
     "payment.charge:",
     "  require_idempotency_key: true",
     "  timeout_means: unknown",
     "  reconcile_with: payment.status",
     "limits:",
-    `  max_spend_krw: ${requestedSpend}`,
-    `  max_purchase_count: ${requestedPurchaseCount}`,
+    `  max_spend_krw: ${patchSpend}`,
+    `  max_purchase_count: ${patchPurchaseCount}`,
   ].join("\n");
   const sourceDescriptor = createCakeSourceDescriptor();
   const behaviorProfile = createCakeBehaviorProfile();

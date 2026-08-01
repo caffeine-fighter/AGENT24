@@ -6,49 +6,32 @@ on:
     branches: [main]
 
 jobs:
-  python:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Install
-        run: python -m pip install -e ".[dev]"
-      - name: Lint
-        run: ruff check src tests scripts
-      - name: Test
-        run: pytest -q
-      - name: Web reducer
-        run: node web/tests/core.test.mjs
-
-  site:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: site
-    steps:
-      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22.13.0"
           cache: npm
           cache-dependency-path: site/package-lock.json
-      - name: Install
-        run: npm ci --engine-strict
-      - name: Dependency audit
-        run: npm audit --audit-level=high
-      - name: Typecheck
-        run: npm run typecheck
-      - name: Build
-        run: npm run build
-      - name: Hosted route tests
-        run: node --test tests/rendered-html.test.mjs
-      - name: Install browser
-        run: npx playwright install --with-deps chromium
-      - name: Browser mission flows
-        run: npm run test:browser
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Canonical verification
+        shell: pwsh
+        env:
+          CI: "true"
+        run: ./scripts/verify.ps1
+      - name: Upload sanitized browser summary
+        if: ${{ !cancelled() && hashFiles('artifacts/browser-smoke-summary.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-smoke-summary
+          path: artifacts/browser-smoke-summary.json
+          retention-days: 1
+          include-hidden-files: false
+          if-no-files-found: error

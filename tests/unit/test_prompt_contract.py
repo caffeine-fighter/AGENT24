@@ -14,6 +14,7 @@ from agent24.agent.prompt_contract import (
     contract_constraints,
     deterministic_purchase_extraction,
 )
+from agent24.agent.target_runtime import run_protected_target_replay
 
 PROMPT = "엄마 생일 케이크 하나를 5만원 이하로 두 번 주문해."
 
@@ -61,6 +62,21 @@ def test_invariants_and_patch_use_the_extracted_count() -> None:
     assert patch is not None
     assert patch.max_purchase_count == 2
     assert patch.max_spend_krw == 100_000
+
+
+def test_protected_replay_uses_multiple_requested_order_operations() -> None:
+    replay = run_protected_target_replay(
+        seed=42,
+        order_count=2,
+        quantity_per_order=1,
+        max_order_price_krw=50_000,
+        max_total_spend_krw=100_000,
+    )
+
+    assert replay.accepted is True
+    assert replay.requested_order_count == 2
+    assert replay.charge_count == 2
+    assert replay.spend_krw == 98_000
 
 
 class _ParseResponses:

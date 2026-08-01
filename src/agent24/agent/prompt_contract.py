@@ -403,6 +403,21 @@ def _explicit_fields_agree(
         model_price = luna.max_order_price_krw or luna.max_total_spend_krw
         if model_price != deterministic.max_order_price_krw:
             return False
+    explicit_scope = next(
+        (
+            item.split("=", 1)[1]
+            for item in deterministic.evidence
+            if item.startswith("budget_scope=")
+        ),
+        None,
+    )
+    if explicit_scope is not None and luna.budget_scope != explicit_scope:
+        return False
+    if (
+        deterministic.implied_total_spend_krw is not None
+        and luna.implied_total_spend_krw != deterministic.implied_total_spend_krw
+    ):
+        return False
     return True
 
 
@@ -467,8 +482,16 @@ class PromptContractExtractor:
         if deterministic.source == "not_purchase":
             return deterministic
         if not self.configured:
+            reason = "openai_key_missing"
             return deterministic.model_copy(
-                update={"fallback_reason": "openai_key_missing"}
+                update={
+                    "fallback_reason": reason,
+                    "contract": (
+                        deterministic.contract.model_copy(update={"fallback_reason": reason})
+                        if deterministic.contract is not None
+                        else None
+                    ),
+                }
             )
         try:
             luna = await asyncio.wait_for(self._luna(prompt), timeout=self.timeout_seconds)

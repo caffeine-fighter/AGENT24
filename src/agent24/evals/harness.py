@@ -4,7 +4,10 @@ The point of issue #107 is that a declarative case must actually run something.
 So ``gym_fixture`` cases load the real synthetic world through
 :func:`agent24.tools.load_fixture` and, when they declare it, replay it through
 :func:`agent24.tools.protected_replay`; ``runtime_events`` cases drive the real
-FastAPI application through its ``POST /api/runs`` + SSE contract.
+FastAPI application through its ``POST /api/runs`` + SSE contract; and
+``target_runtime`` cases (issue #124) stage one reviewed Target Agent behaviour
+against the real Agents SDK runner and sandbox, then machine-check the raw
+target items, the controller ledger and the single terminal on both surfaces.
 
 Two boundaries are deliberate.
 
@@ -35,7 +38,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .registry import GymFixtureCase, RuntimeEventsCase
+from .registry import GymFixtureCase, RuntimeEventsCase, TargetRuntimeCase
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,9 +242,215 @@ def run_runtime_events_case(case: RuntimeEventsCase) -> HarnessResult:
     )
 
 
-def run_declarative_case(case: GymFixtureCase | RuntimeEventsCase) -> HarnessResult:
+def _is_ordered_subsequence(required: Sequence[str], observed: Sequence[str]) -> str:
+    """Return "" when every required type appears, in order, in ``observed``.
+
+    A subsequence rather than an exact match: the target path publishes tens of
+    events and pinning all of them would turn any unrelated instrumentation
+    change into a false failure. What the case claims -- these happened, in this
+    order -- is exactly what is checked.
+    """
+
+    remaining = list(observed)
+    for wanted in required:
+        try:
+            remaining = remaining[remaining.index(wanted) + 1 :]
+        except ValueError:
+            return f"{wanted!r} did not occur after the preceding required events"
+    return ""
+
+
+def _terminal_events(events: Sequence[dict]) -> list[dict]:
+    return [event for event in events if event["type"] == "run_completed"]
+
+
+def _target_checks(
+    case: TargetRuntimeCase, events: Sequence[dict]
+) -> list[CheckResult]:
+    """Machine-check the raw target items and the controller-owned ledger."""
+
+    expectation = case.target
+    checks: list[CheckResult] = []
+    if expectation is None:
+        return checks
+
+    if expectation.tool_calls is not None:
+        checks.append(
+            _check(
+                "target.tool_call_count",
+                expectation.tool_calls,
+                sum(event["type"] == "target.tool_call" for event in events),
+            )
+        )
+    if expectation.tool_results is not None:
+        checks.append(
+            _check(
+                "target.tool_result_count",
+                expectation.tool_results,
+                sum(event["type"] == "target.tool_result" for event in events),
+            )
+        )
+
+    if not expectation.oracle_fields and not expectation.provenance_fields:
+        return checks
+
+    oracle = next(
+        (event["payload"] for event in events if event["type"] == "target.oracle"),
+        None,
+    )
+    if oracle is None:
+        checks.append(
+            CheckResult(
+                name="target.oracle",
+                passed=False,
+                detail="the run published no target.oracle event",
+            )
+        )
+        return checks
+
+    protected = oracle.get("protected_replay", {})
+    observed = {
+        "oracle_charge_count": oracle.get("charge_count"),
+        "oracle_spend_krw": oracle.get("spend_krw"),
+        "oracle_violations": tuple(oracle.get("violations", ())),
+        "protected_charge_count": protected.get("charge_count"),
+        "protected_spend_krw": protected.get("spend_krw"),
+        "protected_accepted": protected.get("accepted"),
+        "protected_mission_succeeded": protected.get("mission_succeeded"),
+    }
+    for name, expected in sorted(expectation.oracle_fields.items()):
+        checks.append(_check(f"target.{name}", expected, observed[name]))
+
+    # Provenance is what lets a reader re-derive the run: without it the ledger
+    # numbers are unattributable to a source, manifest or prompt.
+    for name in expectation.provenance_fields:
+        value = oracle.get(name)
+        present = isinstance(value, str) and bool(value.strip())
+        checks.append(
+            CheckResult(
+                name=f"target.provenance.{name}",
+                passed=present,
+                detail="" if present else f"missing or empty in target.oracle: {value!r}",
+            )
+        )
+    return checks
+
+
+def run_target_runtime_case(case: TargetRuntimeCase) -> HarnessResult:
+    """Stage one reviewed-target scenario and observe both event surfaces.
+
+    The declaration is what runs: the case names the target behaviour to stage,
+    the input to post, the events that must occur in order, the values that must
+    never appear, and the terminal it expects -- and every one of those is
+    compared against a real ``POST /api/runs`` run of the production adapter.
+    There is no delegated pass; a case that names a bound pytest node in
+    ``proves`` still executes here first.
+    """
+
+    from fastapi.testclient import TestClient
+
+    from agent24.api.app import create_app
+    from agent24.api.config import RuntimeSettings
+    from agent24.api.runtime import OpenAIWhiteBoxAdapter
+
+    from .target_stub import client_for, preflight_for, target_payload
+
+    checks: list[CheckResult] = []
+    with tempfile.TemporaryDirectory(prefix="agent24-target-") as artifact_root:
+        root = Path(artifact_root)
+        runtime = OpenAIWhiteBoxAdapter(
+            preflight=preflight_for(case.scenario),
+            openai_client=client_for(case.scenario),
+            # The injected client is the only provider. Forcing the setting to
+            # None keeps an ambient OPENAI_API_KEY from deciding anything.
+            settings=RuntimeSettings(openai_api_key=None),
+        )
+        app = create_app(runtime=runtime, artifact_root=root)
+        with TestClient(app) as client:
+            accepted = client.post(
+                "/api/runs",
+                json={
+                    "input": case.input,
+                    "target": target_payload(case.scenario, mission=case.mission),
+                },
+            )
+            checks.append(_check("accepted_202", 202, accepted.status_code))
+            if accepted.status_code != 202:
+                return HarnessResult(case_id=case.id, checks=tuple(checks))
+            metadata = accepted.json()
+            run_id = metadata["run_id"]
+            body = client.get(metadata["events_url"]).text
+
+        events = _sse_events(body)
+        jsonl = root / f"{run_id}.jsonl"
+        replayed = [json.loads(line) for line in jsonl.read_text(encoding="utf-8").splitlines()]
+
+        observed_types = [event["type"] for event in events]
+        order_failure = _is_ordered_subsequence(case.required_event_order, observed_types)
+        checks.append(
+            CheckResult(
+                name="required_event_order",
+                passed=not order_failure,
+                detail=order_failure,
+            )
+        )
+        for forbidden in case.forbidden_event_types:
+            absent = forbidden not in observed_types
+            checks.append(
+                CheckResult(
+                    name=f"no_event:{forbidden}",
+                    passed=absent,
+                    detail="" if absent else "the run published this event type",
+                )
+            )
+
+        # Exactly one terminal, on both surfaces, and it is the last event.
+        # "Exactly one" is the honesty property: a second run_completed would
+        # let a reader pick whichever verdict they preferred.
+        for surface, stream in (("sse", events), ("jsonl", replayed)):
+            terminals = _terminal_events(stream)
+            checks.append(_check(f"one_terminal:{surface}", 1, len(terminals)))
+            checks.append(
+                _check(
+                    f"terminal_is_last:{surface}",
+                    "run_completed",
+                    stream[-1]["type"] if stream else None,
+                )
+            )
+
+        checks.append(_check("sse_matches_jsonl", events, replayed))
+
+        terminal = events[-1]["payload"] if events else {}
+        for name, expected in sorted(case.terminal.declared().items()):
+            checks.append(_check(f"terminal.{name}", expected, terminal.get(name)))
+
+        checks.extend(_target_checks(case, events))
+
+        surfaces = {
+            "sse": json.dumps(events, ensure_ascii=False),
+            "jsonl": jsonl.read_text(encoding="utf-8"),
+        }
+        for forbidden in case.forbid_in_stream:
+            for surface, rendered in surfaces.items():
+                absent = forbidden not in rendered
+                checks.append(
+                    CheckResult(
+                        name=f"absent:{forbidden}:{surface}",
+                        passed=absent,
+                        detail="" if absent else f"present in {surface}",
+                    )
+                )
+
+    return HarnessResult(case_id=case.id, checks=tuple(checks), prose_only=("expectation",))
+
+
+def run_declarative_case(
+    case: GymFixtureCase | RuntimeEventsCase | TargetRuntimeCase,
+) -> HarnessResult:
     if isinstance(case, GymFixtureCase):
         return run_gym_fixture_case(case)
+    if isinstance(case, TargetRuntimeCase):
+        return run_target_runtime_case(case)
     return run_runtime_events_case(case)
 
 
@@ -256,5 +465,6 @@ __all__ = [
     "run_declarative_case",
     "run_gym_fixture_case",
     "run_runtime_events_case",
+    "run_target_runtime_case",
     "summarize",
 ]

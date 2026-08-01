@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from agent24.agent.sandbox_diagnostic import LocalSandboxDiagnosticLoop
 from agent24.agent.sandbox_runner import SandboxFailure, SandboxRunResult
+from agent24.evals.target_stub import ScriptedDiagnosticClient
 
 
 def _launcher_module():
@@ -17,16 +18,6 @@ def _launcher_module():
     spec = importlib.util.spec_from_file_location("agent24_demo_local", path)
     if spec is None or spec.loader is None:
         raise AssertionError("could not load local demo launcher")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def _api_test_module():
-    path = Path(__file__).with_name("test_api.py")
-    spec = importlib.util.spec_from_file_location("agent24_api_test_support", path)
-    if spec is None or spec.loader is None:
-        raise AssertionError("could not load API integration support")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -293,12 +284,11 @@ def test_local_demo_runs_example_participant_local_bundle() -> None:
 
 
 def test_live_local_demo_uses_five_controller_tools_over_actual_sandbox() -> None:
-    api_support = _api_test_module()
     launcher = _launcher_module()
     repository_root = Path(__file__).resolve().parents[2]
     bundle_sha = launcher._example_bundle_files(repository_root)[-1]
     source_ref = f"{launcher.EXAMPLE_SOURCE_URL}@sha256:{bundle_sha}"
-    client = api_support._MockedDiagnosticOpenAIClient(target_ref=source_ref)
+    client = ScriptedDiagnosticClient(target_ref=source_ref)
     app = launcher.build_app(
         repository_root,
         example_agent=True,

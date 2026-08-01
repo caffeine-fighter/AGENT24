@@ -46,4 +46,7 @@
 | 2026-08-02 | Research·Stock도 one-input 경로에서 host-owned LLM target Agent가 동일 domain Gym의 read-only tool surface를 먼저 사용하도록 연결 | manifest/profile routing으로 선택한 도구만 대상 Agent에 주입하고 `target.observation.*` raw trace·structured assessment에서 초기 finding을 산출한 뒤, 같은 fixture/seed의 controller-owned protected replay를 별도 검증한다. 제출 repository code·network·trade side effect는 실행하지 않는다 | A + C / domain runtime | Ticket·Adhoc에 동일한 target sandbox와 report bridge를 추가할 때 |
 | 2026-08-02 | 자연어 구매 mission은 Luna Structured Outputs + host deterministic fallback으로 typed contract를 만들고 manifest permission ceiling과 분리 | 사용자 prompt의 count/quantity/budget scope를 invariant·patch·target instruction·replay가 동일하게 써야 하며, model output 또는 사용자 요청이 manifest cap을 넘으면 side effect 전에 멈춰야 함 | C / runtime + safety | 새로운 mission family가 contract schema를 추가할 때 |
 
+| 2026-08-02 | target runtime 증거는 `runner: target_runtime` registry case가 직접 실행하고, Responses 이중체·preflight는 `src/agent24/evals/target_stub.py` 한 곳에만 둔다 | 선언이 pytest literal에 위임되면 편집해도 실행이 바뀌지 않는다(#120과 같은 seam). 동시에 stub을 test와 src에 이중으로 두면 두 벌을 동기화해야 한다 | B / ci | target contract가 여러 개가 되어 scenario script를 pack별로 분리해야 할 때 |
+| 2026-08-02 | schema가 `unsupported`/`crash` scenario에 oracle 기대치 선언 자체를 거부한다 | 그 경로는 설계상 oracle 전에 종료하므로 해당 check는 통과할 수 없다. 통과할 수 없는 check는 리뷰에서 존재하지 않는 coverage로 읽힌다 | B / ci | 실패 경로에도 부분 oracle을 남기게 될 때 |
+
 Keep entries short. Record choices that affect architecture, model/tool selection, scope, cost, privacy, or the demo path.

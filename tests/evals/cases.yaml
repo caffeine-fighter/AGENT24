@@ -10,6 +10,9 @@
 #                     checks; `proves` binds the prose invariant to its tests
 #   runtime_events  - the harness drives a real POST /api/runs run and compares
 #                     the observed event sequence
+#   target_runtime  - the harness stages one reviewed Target Agent behaviour and
+#                     machine-checks the raw target items, the controller ledger
+#                     and the single terminal on both SSE and JSONL
 
 version: agent24.evals.v1
 
@@ -736,6 +739,38 @@ cases:
       - tests/evals/test_registry.py::test_the_live_stub_never_reaches_the_network
       - tests/evals/test_registry.py::test_the_live_stub_restores_the_ambient_environment
 
+  # Demo-5 (issue #102).  The SandboxGym evidence and gate contract: what a
+  # protected replay has to prove before the word "verified" is earned.  The
+  # acceptance checks themselves are vendored at issue-102-acceptance.json and
+  # read by tests/acceptance/test_sandbox_e2e.py rather than restated there.
+  - id: demo5-sandbox-evidence-contract
+    runner: pytest
+    issue: 102
+    expectation: 'every arm of a protected replay is bound to one source revision, fixture version, seed and initial snapshot, including the blanket-block control it argues against; the duplicate charge is measured as committed rows of the append-only ledger rather than a summary field; and the first divergence, the minimized counterexample and the violated invariant all resolve to the same two ledger rows, so a reader following any one of them lands where the others do'
+    targets:
+      - tests/acceptance/test_sandbox_e2e.py::test_ac_02_every_arm_is_bound_to_one_revision_fixture_seed_and_world
+      - tests/acceptance/test_sandbox_e2e.py::test_ac_03_two_charges_before_the_policy_and_one_after_read_from_the_ledger
+      - tests/acceptance/test_sandbox_e2e.py::test_ac_04_divergence_counterexample_and_violation_cite_ledger_rows
+      - tests/integration/test_life_replay.py::test_the_whole_report_is_bound_to_one_revision_fixture_and_starting_world
+      - tests/integration/test_life_replay.py::test_the_duplicate_charge_is_measured_from_the_ledger_before_and_after
+      - tests/integration/test_life_replay.py::test_divergence_counterexample_and_violation_all_cite_the_same_rows
+      - tests/unit/test_replay.py::test_charge_and_fulfillment_counts_agree_with_the_append_only_ledger
+      - tests/unit/test_replay.py::test_the_counterexample_keeps_only_conditions_verified_necessary
+
+  - id: demo5-mitigation-three-gates
+    runner: pytest
+    issue: 102
+    expectation: 'a mitigation counts as verified only after the same-seed replay, the neighbour gate and the benign control all pass, and refusing to pay is rejected rather than counted as a fix; the neighbour gate additionally requires that at least one neighbour actually reproduced the duplicate charge, because a perturbation that moves the fault out of reach passes for free and would otherwise make the gate vacuous; three replays of one seed produce one digest, and a run the sandbox cannot stage raises instead of returning a report anything could be promoted from'
+    targets:
+      - tests/acceptance/test_sandbox_e2e.py::test_ac_05_a_mitigation_needs_same_seed_neighbour_and_benign_control
+      - tests/acceptance/test_sandbox_e2e.py::test_ac_06_refusing_to_pay_is_rejected_rather_than_counted_as_a_fix
+      - tests/acceptance/test_sandbox_e2e.py::test_ac_07_three_replays_of_one_seed_produce_one_digest
+      - tests/acceptance/test_sandbox_e2e.py::test_ac_09_a_sandbox_crash_produces_no_report_to_promote
+      - tests/acceptance/test_sandbox_e2e.py::test_every_acceptance_check_is_proved_or_handed_off
+      - tests/unit/test_replay.py::test_the_mitigation_holds_on_a_different_seed_and_a_different_error_string
+      - tests/unit/test_replay.py::test_a_neighbour_whose_fault_never_fires_reports_that_it_reproduced_nothing
+      - tests/unit/test_replay.py::test_the_gate_requires_at_least_one_neighbour_that_actually_reproduced
+      - tests/integration/test_life_replay.py::test_a_mitigation_is_verified_only_after_same_seed_neighbour_and_benign
   # Reviewed Target Agent runtime (issue #122).
   - id: target-agent-runner-sandbox-oracle
     runner: pytest
