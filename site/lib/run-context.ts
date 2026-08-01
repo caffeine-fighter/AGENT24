@@ -87,7 +87,12 @@ function validContext(value: unknown, runId: string): value is HostedRunContext 
     && boundedString(context.repositoryUrl, 500)
     && boundedString(context.requestedRef, 200)
     && (context.resolvedSha === null || (typeof context.resolvedSha === "string" && /^[a-f0-9]{40}$/.test(context.resolvedSha)))
-    && boundedString(context.sourceResolver, 80);
+    && boundedString(context.sourceResolver, 80)
+    && boundedString(context.supportDetail, 500)
+    && ["money", "communication", "time", "data", "cross_domain", "unclassified"].includes(String(context.supportDomain))
+    && (context.supportMissionId === null || boundedString(context.supportMissionId, 80))
+    && ["", "unsupported_input"].includes(String(context.supportReason))
+    && ["supported", "unsupported", "unclassified"].includes(String(context.supportStatus));
 }
 
 export async function sealRunContext(

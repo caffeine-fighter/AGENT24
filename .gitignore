@@ -21,6 +21,8 @@ build/
 # JavaScript
 node_modules/
 web/dist/
+site/playwright-report/
+site/test-results/
 .vite/
 *.tsbuildinfo
 

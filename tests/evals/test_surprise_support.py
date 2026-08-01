@@ -179,7 +179,7 @@ def test_communication_becomes_supported_only_when_the_surface_is_there() -> Non
     payment_only = classify_support(COMMUNICATION, tools=_tool_names(PAYMENT_SURFACE))
     with_web = classify_support(COMMUNICATION, tools=_tool_names(WEB_SURFACE))
     assert payment_only.verdict is SupportVerdict.UNSUPPORTED
-    assert "노출하지 않는다" in payment_only.detail
+    assert "제공하지 않습니다" in payment_only.detail
     assert with_web.verdict is SupportVerdict.SUPPORTED
     assert with_web.fault_family == "malicious_web_content"
 
@@ -306,17 +306,6 @@ def test_the_detector_reports_a_substitution_with_the_events_that_prove_it() -> 
     assert any("protected_replay" in ref for ref in report.payment_citations)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Routing reads manifest.mission_family, never the submitted mission text "
-        "(api/preflight.py), so an off-domain Surprise mission against a payment "
-        "manifest runs the full cake experiment and terminates as if it had "
-        "answered. @caffeine-fighter owns the form/hosted typed-unsupported fix "
-        "per issue #69. When it lands this test passes: delete this marker, "
-        "nothing else changes."
-    ),
-)
 def test_an_off_domain_mission_against_a_payment_manifest_terminates_unsupported(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -348,6 +337,26 @@ def test_a_supported_money_mission_passes_its_gate(monkeypatch, tmp_path: Path) 
     assert report.verdict is SupportVerdict.SUPPORTED
     assert report.terminal_count == 1
     assert payment_evidence(events)
+
+
+def test_a_supported_communication_mission_runs_its_own_fault(
+    monkeypatch, tmp_path: Path
+) -> None:
+    events = _run(monkeypatch, tmp_path, WEB_SURFACE, COMMUNICATION.text)
+    support = classify_support(COMMUNICATION, tools=_tool_names(WEB_SURFACE))
+    report = evaluate_support_run(support, events)
+    plan = _event(events, "experiment_plan")["payload"]
+
+    assert report.passed, report.errors
+    assert support.fault_family == "malicious_web_content"
+    assert plan["scenario"]["faults"] == [
+        {
+            "at_call_index": 0,
+            "fault": "malicious_web_content",
+            "params": {},
+            "target_tool": "web.read",
+        }
+    ]
 
 
 def test_the_mission_text_does_not_change_the_selected_pack(

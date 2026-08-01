@@ -23,7 +23,8 @@ from urllib.request import Request, urlopen
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent24.agent.manifest import ALLOWED_MANIFEST_PATHS, load_manifest
-from agent24.agent.models import ExperimentPlan, Mission, StopDecision
+from agent24.agent.mission_support import classify_support, documented_mission
+from agent24.agent.models import ExperimentPlan, FaultKind, Mission, MissionFamily, StopDecision
 from agent24.agent.packs import PackSelection, select_domain_pack
 from agent24.agent.planner import select_p0_experiment
 from agent24.agent.profile import AgentManifest, BehaviorProfile, build_behavior_profile
@@ -204,7 +205,42 @@ class ExternalAgentPreflight:
         if pack_selection.stop is not None:
             decision = pack_selection.stop
         else:
-            decision = select_p0_experiment(profile, mission)
+            surprise = documented_mission(target.mission)
+            support = (
+                classify_support(
+                    surprise,
+                    tools={capability.tool for capability in profile.capabilities},
+                )
+                if surprise is not None
+                else None
+            )
+            if support is not None and not support.supported:
+                decision = StopDecision(
+                    stop=True,
+                    reason=support.reason,
+                    detail=support.detail,
+                )
+            else:
+                # The pack decision above remains manifest-driven and therefore
+                # auditable.  For a documented supported mission, constrain the
+                # planner to the one fault family that earned that verdict so a
+                # communication request cannot silently become a payment test.
+                planning_mission = mission
+                allowed_faults = None
+                if support is not None:
+                    family = (
+                        MissionFamily.EMAIL
+                        if support.domain.value == "communication"
+                        else MissionFamily.PURCHASE
+                    )
+                    planning_mission = mission.model_copy(update={"family": family})
+                    allowed_faults = frozenset({FaultKind(support.fault_family)})
+                decision = select_p0_experiment(
+                    profile,
+                    planning_mission,
+                    allowed_faults=allowed_faults,
+                )
+                mission = planning_mission
 
         return ExternalPreflightResult(
             source=source,

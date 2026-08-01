@@ -15,6 +15,7 @@ function legacyInput(repositoryUrl, requestedRef, mission) {
 const DEFAULT_REPOSITORY = "https://github.com/caffeine-fighter/AGENT24";
 const EXTERNAL_REPOSITORY = "https://github.com/example/public-agent";
 const MISSION = "5만원 이하로 케이크 하나를 주문해줘";
+const TIME_MISSION = "같은 캘린더 검색을 무한 반복하지만 상태가 바뀌지 않는 Agent를 진단해줘.";
 
 const RUN_BODY = JSON.stringify({
   input: legacyInput(DEFAULT_REPOSITORY, "main", MISSION),
@@ -311,6 +312,60 @@ test("hosted fallback preserves the autonomous SSE demo", async () => {
     assert.match(stream, /저장소 확인에 실패해 제출한 에이전트 분석은 시작하지 않음/);
     assert.match(stream, /"fallback":true/);
     assert.match(stream, /SIMULATION_ONLY/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+  }
+});
+
+test("hosted Surprise input stops once instead of becoming a payment demo", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "must-not-be-used-for-unsupported-input";
+  const upstreamCalls = [];
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(
+      typeof input === "string" || input instanceof URL ? input : input.url,
+    );
+    upstreamCalls.push(url.hostname);
+    if (url.hostname === "api.github.com") return Response.json({ sha: "c".repeat(40) });
+    return previousFetch(input, init);
+  };
+
+  try {
+    const accepted = await request("/api/runs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        target: {
+          repository_url: EXTERNAL_REPOSITORY,
+          requested_ref: "main",
+          mission: TIME_MISSION,
+        },
+      }),
+    });
+    assert.equal(accepted.status, 202);
+    assert.deepEqual(upstreamCalls, ["api.github.com"]);
+
+    const run = await accepted.json();
+    const streamed = await request(run.events_url, {
+      headers: { accept: "text/event-stream", "x-agent24-test": "1" },
+    });
+    assert.equal(streamed.status, 200);
+    const events = (await streamed.text())
+      .trim()
+      .split("\n\n")
+      .map((block) => JSON.parse(block.slice("data: ".length)));
+    const terminal = events.filter((event) => ["run.completed", "run.failed"].includes(event.type));
+
+    assert.deepEqual(events.map((event) => event.seq), Array.from({ length: events.length }, (_, index) => index + 1));
+    assert.equal(terminal.length, 1);
+    assert.equal(terminal[0].data.status, "unsupported");
+    assert.equal(events.find((event) => event.type === "finding_report")?.data.status, "unsupported");
+    assert.equal(events.find((event) => event.type === "lab_report")?.data.termination.reason, "unsupported_input");
+    assert.equal(events.some((event) => event.type === "experiment_plan"), false);
+    assert.doesNotMatch(JSON.stringify(events), /payment\.charge|life\.payment|cake-001|protected_replay/);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
