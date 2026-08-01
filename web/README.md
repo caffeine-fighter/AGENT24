@@ -38,6 +38,8 @@ python -m http.server 5173 --directory web
 - 우측 Raw API Stream은 각 envelope의 `raw` 값을 그대로 렌더링합니다.
 - 알 수 없는 이벤트 타입은 UI 상태를 바꾸지 않지만 Raw Stream에는 남습니다.
 - `unsupported`와 `budget_exhausted`는 과장된 안전 판정 없이 종료 사유를 표시합니다.
+- `behavior_profile`의 retry/idempotency/reconciliation/untrusted-input/loop-budget 판정을 근거와 함께 표시합니다.
+- `experiment_plan`의 선택 fault, 대상 tool, 선택 이유, 기대 evidence, seed/turn budget을 별도 카드로 표시합니다.
 - `lab_report`가 도착하면 동결된 `LabReport`의 관찰·가설·제안·검증을 별도 칸에 표시합니다.
 - `초기화`와 `같은 사고 재생`은 발표 리허설용입니다.
 

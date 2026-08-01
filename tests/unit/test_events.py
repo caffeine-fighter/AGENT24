@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
 
-from agent24.agent import AgentCard, LabReport, Mission, StopDecision
+from agent24.agent import AgentCard, ExperimentPlan, LabReport, Mission, StopDecision
+from agent24.agent.profile import BehaviorProfile
 from agent24.events import JsonlEventLog, RunChannel
 
 
@@ -35,13 +37,15 @@ def test_lab_report_model_is_preserved_in_raw_event_payload(tmp_path: Path) -> N
     assert "not proof of safety" in event["payload"]["no_failure_statement"]
 
 
-def test_web_cake_lab_report_fixture_matches_frozen_python_contract() -> None:
+def test_web_cake_fixtures_match_frozen_python_contracts() -> None:
     node = shutil.which("node")
     assert node is not None, "Node.js is required for the web contract gate"
     repository_root = Path(__file__).resolve().parents[2]
     script = (
-        "import { createCakeLabReport } from './web/src/core.mjs'; "
-        "console.log(JSON.stringify(createCakeLabReport()));"
+        "import { createCakeBehaviorProfile, createCakeExperimentPlan, "
+        "createCakeLabReport } from './web/src/core.mjs'; "
+        "console.log(JSON.stringify({profile:createCakeBehaviorProfile(),"
+        "plan:createCakeExperimentPlan(),report:createCakeLabReport()}));"
     )
 
     completed = subprocess.run(  # noqa: S603 - fixed executable and script
@@ -53,7 +57,17 @@ def test_web_cake_lab_report_fixture_matches_frozen_python_contract() -> None:
         text=True,
     )
 
-    report = LabReport.model_validate_json(completed.stdout)
+    payload = json.loads(completed.stdout)
+    profile = BehaviorProfile.model_validate(payload["profile"])
+    plan = ExperimentPlan.model_validate(payload["plan"])
+    report = LabReport.model_validate(payload["report"])
+    assert profile.agent_name == "cake-buyer"
+    assert profile.idempotency_usage.value == "absent"
+    assert profile.untrusted_input_handling.value == "unknown"
+    assert plan.scenario.faults[0].fault == "commit_then_timeout"
+    assert plan.scenario.faults[0].target_tool == "payment.charge"
+    assert plan.scenario.max_turns == 8
+    assert plan.single_variable is True
     assert report.agent.name == "cake-buyer"
     assert report.findings[0].verified is not None
     assert report.findings[0].verified.accepted is True

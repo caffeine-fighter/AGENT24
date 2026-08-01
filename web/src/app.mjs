@@ -114,27 +114,93 @@ function compactJson(value) {
 function renderLabReport() {
   const panel = $("#labReportPanel");
   const report = state.reportView;
-  panel.hidden = !report;
-  if (!report) return;
+  const behavior = state.behaviorProfileView;
+  const experiment = state.experimentPlanView;
+  panel.hidden = !report && !behavior && !experiment;
+  if (!report && !behavior && !experiment) return;
 
-  const capabilityText = report.profile.capabilities.length
-    ? report.profile.capabilities
+  const profile = behavior || report?.profile || {
+    agentName: "Agent 정보 없음",
+    capabilities: [],
+    tools: [],
+    sideEffectTools: [],
+    permissions: {},
+  };
+  const capabilityText = profile.capabilities.length
+    ? profile.capabilities
         .map((capability) => `${capability.tool} [${capability.categories.join(", ") || "unknown"}]`)
         .join(" · ")
-    : report.profile.tools.join(" · ") || "관찰된 capability 없음";
-  const permissions = Object.keys(report.profile.permissions).length
-    ? compactJson(report.profile.permissions)
+    : profile.tools?.join(" · ") || profile.sideEffectTools?.join(" · ") || "관찰된 capability 없음";
+  const permissions = Object.keys(profile.permissions).length
+    ? compactJson(profile.permissions)
     : "명시된 permission 없음";
-  const termination = report.experiment.termination;
-  const observedItems = report.observed.items
+  const termination = report?.experiment.termination;
+  const observedItems = (report?.observed.items || [])
     .map((item) => `${item.invariant}: ${compactJson(item.actual)} / ${item.expected} (${item.evidence})`)
     .join("\n");
 
-  setText("#reportAgent", report.profile.agentName);
+  setText("#reportAgent", profile.agentName);
+  setText(
+    "#reportSourceRef",
+    behavior ? `${behavior.sourceRef} · ${behavior.baselineObserved ? "BASELINE OBSERVED" : "NO BASELINE"}` : "LabReport agent card",
+  );
   setText("#reportCapabilities", capabilityText);
-  setText("#reportBudget", `${report.experiment.runs} runs · ${report.experiment.costUnits} cost`);
+  setText(
+    "#reportBudget",
+    report
+      ? `${report.experiment.runs} runs · ${report.experiment.costUnits} cost`
+      : `${behavior.missionFamily} · PROFILE READY`,
+  );
   setText("#reportPermissions", permissions);
-  setText("#reportTermination", termination?.reason || "termination 정보 없음");
+  setText(
+    "#reportTermination",
+    termination?.reason || (experiment ? "experiment_plan" : behavior ? "behavior_profile" : "termination 정보 없음"),
+  );
+
+  const experimentCard = $("#selectedExperimentCard");
+  experimentCard.hidden = !experiment;
+  if (experiment) {
+    const fault = experiment.faults[0];
+    setText(
+      "#reportExperiment",
+      fault ? `${fault.kind.toUpperCase()} → ${fault.targetTool}` : "지원 가능한 fault 없음",
+    );
+    setText(
+      "#reportExperimentMeta",
+      `${experiment.scenarioId} · seed ${experiment.seed ?? "?"} · ${experiment.maxTurns ?? "?"} turns · ${experiment.singleVariable ? "SINGLE VARIABLE" : "MULTI VARIABLE"}`,
+    );
+    setText("#reportExperimentReason", `WHY · ${experiment.toolChoiceReason}`);
+    setText("#reportExperimentEvidence", `EXPECT · ${experiment.expectedEvidence}`);
+  }
+
+  const assessmentGrid = $("#behaviorAssessments");
+  assessmentGrid.hidden = !behavior;
+  if (behavior) {
+    const fragment = document.createDocumentFragment();
+    behavior.assessments.forEach((assessment) => {
+      const card = document.createElement("article");
+      card.dataset.verdict = assessment.value;
+      const header = document.createElement("div");
+      const name = document.createElement("strong");
+      const verdict = document.createElement("span");
+      const detail = document.createElement("p");
+      name.textContent = assessment.name.replaceAll("_", " ");
+      verdict.textContent = assessment.value.toUpperCase();
+      detail.textContent = assessment.evidence.length
+        ? assessment.evidence.join("\n")
+        : assessment.unknownReason || "evidence 없음";
+      header.append(name, verdict);
+      card.append(header, detail);
+      fragment.appendChild(card);
+    });
+    assessmentGrid.replaceChildren(fragment);
+  }
+
+  const claimGrid = $("#claimGrid");
+  const residualRisk = $("#reportResidualRisk");
+  claimGrid.hidden = !report;
+  residualRisk.hidden = !report;
+  if (!report) return;
   setText(
     "#reportObserved",
     observedItems ? `${report.observed.headline}\n${observedItems}` : report.observed.headline,

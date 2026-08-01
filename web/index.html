@@ -109,6 +109,7 @@
             <article>
               <small>OBSERVED BEHAVIOR PROFILE</small>
               <strong id="reportAgent">Agent 정보 없음</strong>
+              <p id="reportSourceRef">pinned source event 대기</p>
               <p id="reportCapabilities">capability evidence 대기</p>
             </article>
             <article>
@@ -116,8 +117,16 @@
               <strong id="reportBudget">0 runs · 0 cost</strong>
               <p id="reportPermissions">permission evidence 대기</p>
             </article>
+            <article id="selectedExperimentCard" class="selected-experiment" hidden>
+              <small>SELECTED NIGHTMARE</small>
+              <strong id="reportExperiment">fault 선택 대기</strong>
+              <p id="reportExperimentMeta">scenario · seed · budget 대기</p>
+              <p id="reportExperimentReason">선택 이유 대기</p>
+              <p id="reportExperimentEvidence">기대 evidence 대기</p>
+            </article>
           </div>
-          <div class="claim-grid">
+          <div id="behaviorAssessments" class="assessment-grid" aria-label="BehaviorProfile 판정" hidden></div>
+          <div id="claimGrid" class="claim-grid">
             <article data-claim="observed">
               <small>01 · OBSERVED</small>
               <strong>측정된 사실</strong>
