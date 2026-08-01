@@ -56,7 +56,12 @@ PINNED_SHA = "0123456789abcdef0123456789abcdef01234567"
 CAKE_TOOLS = ("payment.charge", "payment.status")
 RESEARCH_TOOLS = ("research.search", "paper.fetch", "pdf.page.read", "citation.resolve")
 STOCK_TOOLS = ("ticker.resolve", "market.disclosures", "market.news", "analyst_note.read")
-TICKET_TOOLS = ("ticket.search", "ticket.hold", "ticket.purchase")
+TICKET_TOOLS = (
+    "ticket.event.search",
+    "ticket.inventory.read",
+    "ticket.hold.create",
+    "ticket.purchase.confirm",
+)
 
 # One paper tool and one market tool, scoring 9 apiece. Not a contrived input:
 # an agent that reads both papers and disclosures genuinely could be either a
@@ -210,13 +215,70 @@ def test_every_routable_tool_is_loadable_from_a_manifest() -> None:
         assert not unknown, f"{spec.pack_id} routes on tools the loader drops: {sorted(unknown)}"
 
 
-def test_the_ticket_placeholder_is_registered_but_runs_nothing() -> None:
-    """Issue #60 owns the real gym; the seam must not imply it already exists."""
+def test_ticket_spec_matches_the_ticket_pack() -> None:
+    """The guard that was missing when #57 shipped, and that #60 slipped past.
+
+    #57 registered Ticket as a placeholder with an invented vocabulary because
+    there was no ``tools/ticket_pack.py`` yet to compare against. #60 then
+    shipped a gym whose tool names shared *nothing* with that placeholder, and
+    no test noticed: the placeholder assertions still held. A real ticket agent
+    routed to the Adhoc fallback instead of the Ticket pack.
+    """
+
+    from agent24.tools.ticket_pack import (
+        MAX_TICKET_TOOL_CALL_BUDGET,
+        TICKET_FAILURE_FIXTURES,
+        TICKET_FIXTURE_IDS,
+        TICKET_PACK_METADATA,
+        TICKET_TOOL_MANIFEST,
+        TicketGym,
+    )
+
+    assert TICKET_PACK.pack_id == TicketGym.pack_id == TICKET_PACK_METADATA["pack_id"]
+    assert TICKET_PACK.all_tools == {item["name"] for item in TICKET_TOOL_MANIFEST}
+    assert set(TICKET_PACK.fixture_ids) == set(TICKET_FIXTURE_IDS)
+    atoms = frozenset().union(*TICKET_FAILURE_FIXTURES.values())
+    assert TICKET_PACK.fault_families == atoms
+    assert TICKET_PACK.budget.max_tool_calls == MAX_TICKET_TOOL_CALL_BUDGET
+
+
+def test_ticket_spec_matches_the_metadata_the_pack_publishes() -> None:
+    """``TICKET_PACK_METADATA`` was written for this registry; consume it."""
+
+    from agent24.tools.ticket_pack import TICKET_PACK_METADATA as meta
+
+    assert TICKET_PACK.version == meta["version"]
+    assert TICKET_PACK.domain_kind.value == meta["domain_kind"]
+    assert {family.value for family in TICKET_PACK.mission_families} == set(
+        meta["mission_families"]
+    )
+    assert TICKET_PACK.required_tools == frozenset(meta["required_tool_capabilities"])
+    assert TICKET_PACK.optional_tools == frozenset(meta["optional_tool_capabilities"])
+    assert TICKET_PACK.supports_benign_control is meta["supports_benign_control"]
+    assert TICKET_PACK.supports_protected_replay is meta["supports_protected_replay"]
+
+
+def test_a_real_ticket_agent_routes_to_the_ticket_pack() -> None:
+    """The regression itself: this surface used to land on the Adhoc fallback."""
+
+    from agent24.tools.ticket_pack import TICKET_PACK_METADATA
+
+    selection = route(
+        *TICKET_PACK_METADATA["required_tool_capabilities"],
+        family=MissionFamily.PURCHASE,
+    )
+
+    assert selection.selected is not None
+    assert selection.selected.domain_kind is DomainKind.TICKET
+    assert selection.selected.is_fallback is False
+
+
+def test_the_ticket_pack_is_shipped_but_not_yet_controller_wired() -> None:
+    """#60 delivered the gym; the one-input wiring is still the epic's."""
 
     assert TICKET_PACK.execution is PackExecution.REGISTERED
-    assert TICKET_PACK.deferred_to == "#60"
-    assert TICKET_PACK.fixture_ids == ()
-    assert not TICKET_PACK.supports_protected_replay
+    assert TICKET_PACK.deferred_to == "#55"
+    assert TICKET_PACK.fixture_ids, "the shipped pack has fixtures; the registry must say so"
 
 
 # --------------------------------------------------------------------------
@@ -254,7 +316,8 @@ def test_normal_a_ticket_manifest_routes_to_the_ticket_pack() -> None:
     selection = route(*TICKET_TOOLS, family=MissionFamily.PURCHASE)
 
     assert selection.selected.domain_kind is DomainKind.TICKET
-    assert "#60" in selection.stop.detail
+    # #60 shipped the gym, so the remaining gap is controller wiring, not the pack.
+    assert "#55" in selection.stop.detail
 
 
 def test_normal_an_unknown_tool_surface_falls_back_to_adhoc() -> None:

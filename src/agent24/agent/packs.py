@@ -270,21 +270,72 @@ TICKET_PACK = DomainPackSpec(
     pack_id="ticket-purchase-pack.v1",
     version="v1",
     domain_kind=DomainKind.TICKET,
-    mission_families=frozenset({MissionFamily.PURCHASE, MissionFamily.CALENDAR}),
-    # Provisional vocabulary.  Issue #60 owns the real Ticket gym and may rename
-    # these; the router needs a surface to match on before then, and
-    # test_packs.py pins the placeholder so the rename is a visible change.
-    anchor_tools=frozenset({"ticket.search", "ticket.hold", "ticket.purchase"}),
-    optional_tools=frozenset({"ticket.cancel", "reservation.create", "reservation.cancel"}),
-    # Empty on purpose: declaring fixtures a pack does not have would be the
-    # exact confusion between "a fixture exists" and "a failure was measured"
-    # that epic #55 rules out.
-    fixture_ids=(),
-    fault_families=frozenset(),
+    # Mirrors tools/ticket_pack.py::TICKET_PACK_METADATA, which #60 wrote for
+    # exactly this purpose.  The placeholder vocabulary this replaced
+    # (ticket.search / ticket.hold / reservation.*) shared *nothing* with the
+    # shipped gym, so a real ticket agent fell through to the Adhoc fallback.
+    mission_families=frozenset({MissionFamily.PURCHASE}),
+    anchor_tools=frozenset(
+        {
+            "ticket.event.search",
+            "ticket.inventory.read",
+            "ticket.hold.create",
+            "ticket.purchase.confirm",
+        }
+    ),
+    # The pack declares these four as required, not merely useful: it cannot
+    # stage a hold-then-purchase failure without the whole chain.
+    required_tools=frozenset(
+        {
+            "ticket.event.search",
+            "ticket.inventory.read",
+            "ticket.hold.create",
+            "ticket.purchase.confirm",
+        }
+    ),
+    optional_tools=frozenset(
+        {
+            "ticket.hold.retrieve",
+            "ticket.booking.retrieve",
+            "ticket.hold.cancel",
+            "ticket.booking.cancel",
+        }
+    ),
+    fixture_ids=(
+        "ticket.cancel-ambiguity.clean.v1",
+        "ticket.cancel-ambiguity.v1",
+        "ticket.clean-control.v1",
+        "ticket.commit-then-timeout.clean.v1",
+        "ticket.commit-then-timeout.v1",
+        "ticket.event-identity-confusion.clean.v1",
+        "ticket.event-identity-confusion.v1",
+        "ticket.full-demo.v1",
+        "ticket.price-fee-currency-drift.clean.v1",
+        "ticket.price-fee-currency-drift.v1",
+        "ticket.quantity-adjacency-violation.clean.v1",
+        "ticket.quantity-adjacency-violation.v1",
+        "ticket.stale-availability.clean.v1",
+        "ticket.stale-availability.v1",
+    ),
+    fault_families=frozenset(
+        {
+            "cancel_ambiguity",
+            "commit_then_timeout",
+            "event_identity_confusion",
+            "price_fee_currency_drift",
+            "quantity_adjacency",
+            "stale_availability",
+        }
+    ),
     gated_capabilities=("idempotency_usage", "reconciliation_usage"),
     expected_damage=5,
-    budget=PackBudget(max_tool_calls=12, max_experiments=3, max_cost_units=6),
-    deferred_to="#60",
+    budget=PackBudget(max_tool_calls=16, max_experiments=3, max_cost_units=6),
+    supports_benign_control=True,
+    supports_protected_replay=True,
+    # #60 shipped the gym, adapter and protected replay.  What is still missing
+    # is the one-input controller wiring, which the epic owns -- the same
+    # position Adhoc is in.
+    deferred_to="#55",
 )
 
 ADHOC_PACK = DomainPackSpec(
