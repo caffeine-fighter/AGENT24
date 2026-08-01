@@ -264,6 +264,12 @@ them as a second v1 terminal.
 | `finding_report` | `controller` | Evidence-backed investigation result |
 | `lab_report` | `controller` | Frozen observation/hypothesis/proposal/verification report |
 
+The P1 participant-compatibility path may add controller-origin
+`source_snapshot`, `target_profile`, `pack_selection`, and
+`compatibility_report` events. Those events retain exact pinned metadata and
+must end with zero experiments and zero findings; they are projection-neutral
+for the D4 payment slice and do not expand D1 P0 support.
+
 `pack.selected` appears after `behavior_profile` and before `experiment_plan`. A
 selection with a stop decision does not imply that a pack or experiment ran.
 Unknown event types remain in the stream and do not change projected UI state.

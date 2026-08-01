@@ -62,7 +62,7 @@ test("server-renders the NIGHTMARE LAB shell", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>NIGHTMARE LAB — AI 에이전트 안전 실험실<\/title>/i);
+  assert.match(html, /<title>NIGHTMARE LAB \| AI 에이전트 안전성 테스트<\/title>/i);
   assert.match(html, /src="\/demo\/index\.html"/);
   assert.match(html, /NIGHTMARE LAB AI 에이전트 안전 실험 화면/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
@@ -72,18 +72,42 @@ test("static demo renders the D1 submission and three-axis truth boundary", asyn
   const html = await readFile(new URL("../public/demo/index.html", import.meta.url), "utf8");
   assert.match(html, /GitHub 저장소 주소/);
   assert.match(html, /브랜치 또는 커밋/);
-  assert.match(html, /에이전트에게 맡길 일/);
+  assert.match(html, /에이전트에게 시킬 일/);
   assert.match(html, /id="submissionOutcome"/);
   assert.match(html, /id="investigationOutcome"/);
   assert.match(html, /id="operationOutcome"/);
-  assert.match(html, /가상 환경에서만 실행합니다/);
-  assert.match(html, /문제를 찾지 못했더라도 안전하다고 단정할 수 없습니다/);
-  assert.match(html, /안전 실험 시작/);
-  assert.match(html, /원본 API 이벤트/);
+  assert.match(html, /실제 서비스에는 연결하지 않아요/);
+  assert.match(html, /문제가 보이지 않아도 안전이 보장되는 것은 아니에요/);
+  assert.match(html, /실험 시작하기/);
+  assert.match(html, /실시간 실행 기록/);
   assert.doesNotMatch(html, /SUBMISSION|INVESTIGATION|OPERATION|PENDING|READY/);
   assert.match(html, /케이크 하나를 5만원 이하로 한 번만 주문해줘/);
   assert.doesNotMatch(html, /가족 캘린더에도 일정을 등록/);
   assert.doesNotMatch(html, /class="asset-card calendar"/);
+});
+
+test("static demo uses natural Korean product copy", async () => {
+  const [html, app] = await Promise.all([
+    readFile(new URL("../public/demo/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/demo/src/app.mjs", import.meta.url), "utf8"),
+  ]);
+  const productCopy = `${html}\n${app}`;
+  for (const translatedPhrase of [
+    "입력 대기",
+    "실행 대기",
+    "보고서 대기",
+    "확인 대기",
+    "결과 대기",
+    "보호책",
+    "합성 세계",
+    "원본 API 이벤트",
+  ]) {
+    assert.doesNotMatch(productCopy, new RegExp(translatedPhrase), `remove translated UI phrase: ${translatedPhrase}`);
+  }
+  assert.doesNotMatch(html, /[가-힣](?:합니다|됩니다|있습니다|없습니다|않습니다)[.!<]/);
+  assert.match(productCopy, /실험 시작하기/);
+  assert.match(productCopy, /같은 조건으로 다시 실험/);
+  assert.match(productCopy, /다시 시도/);
 });
 
 test("hosted D1 request rejects invalid shape before upstream calls", async () => {
@@ -132,6 +156,109 @@ test("hosted D1 request rejects invalid shape before upstream calls", async () =
   }
 });
 
+test("hosted run context rejects tampering, cross-run reuse, unknown and expired runs", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousOpenAIKey = process.env.OPENAI_API_KEY;
+  const previousContextSecret = process.env.RUN_CONTEXT_SECRET;
+  const previousContextTtl = process.env.RUN_CONTEXT_TTL_MS;
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.RUN_CONTEXT_TTL_MS;
+  process.env.RUN_CONTEXT_SECRET = "test-only-run-context-secret-with-more-than-32-characters";
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(
+      typeof input === "string" || input instanceof URL ? input : input.url,
+    );
+    if (url.hostname === "api.github.com") return new Response(null, { status: 404 });
+    return previousFetch(input, init);
+  };
+
+  const restore = (name, value) => {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  };
+  const acceptRun = async () => {
+    const accepted = await request("/api/runs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: RUN_BODY,
+    });
+    assert.equal(accepted.status, 202);
+    return accepted.json();
+  };
+  const assertRejectedBeforeStream = async (path, expectedStatus) => {
+    const response = await request(path, {
+      headers: { accept: "text/event-stream", "x-agent24-test": "1" },
+    });
+    assert.equal(response.status, expectedStatus);
+    assert.doesNotMatch(response.headers.get("content-type") ?? "", /^text\/event-stream\b/i);
+    assert.doesNotMatch(await response.text(), /run\.completed|\"status\":\"verified\"/);
+  };
+
+  try {
+    const first = await acceptRun();
+    const firstUrl = new URL(first.events_url, "http://localhost");
+    assert.deepEqual([...firstUrl.searchParams.keys()], ["run_context"]);
+    assert.doesNotMatch(first.events_url, /resolved_sha|openai_response_id|openai_used|plan_rationale/);
+    const firstToken = firstUrl.searchParams.get("run_context");
+    assert.ok(firstToken);
+    assert.doesNotMatch(firstToken, /github|케이크|openai|response/i);
+
+    const valid = await request(`${firstUrl.pathname}${firstUrl.search}`, {
+      headers: { accept: "text/event-stream", "x-agent24-test": "1" },
+    });
+    assert.equal(valid.status, 200);
+    const validStream = await valid.text();
+    const validEvents = validStream.trim().split("\n\n").map((block) => JSON.parse(block.slice("data: ".length)));
+    assert.equal(validEvents.filter((event) => event.type === "run.completed").length, 1);
+    assert.equal(validEvents.filter((event) => ["run.completed", "run.failed"].includes(event.type)).length, 1);
+    assert.doesNotMatch(validStream, /test-only-run-context-secret/);
+
+    for (const [name, value] of [
+      ["resolved_sha", "b".repeat(40)],
+      ["openai_response_id", "resp_forged"],
+      ["openai_used", "1"],
+    ]) {
+      const injected = new URL(firstUrl);
+      injected.searchParams.set(name, value);
+      await assertRejectedBeforeStream(`${injected.pathname}${injected.search}`, 400);
+    }
+
+    const [version, iv, ciphertext] = firstToken.split(".");
+    const forgedCiphertext = `${ciphertext[0] === "A" ? "B" : "A"}${ciphertext.slice(1)}`;
+    const tampered = new URL(firstUrl);
+    tampered.searchParams.set("run_context", `${version}.${iv}.${forgedCiphertext}`);
+    await assertRejectedBeforeStream(`${tampered.pathname}${tampered.search}`, 401);
+
+    const unknown = new URL(firstUrl);
+    unknown.pathname = `/api/runs/${crypto.randomUUID()}/events`;
+    await assertRejectedBeforeStream(`${unknown.pathname}${unknown.search}`, 401);
+
+    const second = await acceptRun();
+    const reused = new URL(second.events_url, "http://localhost");
+    reused.searchParams.set("run_context", firstToken);
+    await assertRejectedBeforeStream(`${reused.pathname}${reused.search}`, 401);
+
+    process.env.RUN_CONTEXT_TTL_MS = "1";
+    const expiring = await acceptRun();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await assertRejectedBeforeStream(expiring.events_url, 410);
+
+    process.env.RUN_CONTEXT_SECRET = "too-short";
+    const misconfigured = await request("/api/runs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: RUN_BODY,
+    });
+    assert.equal(misconfigured.status, 503);
+    assert.doesNotMatch(await misconfigured.text(), /too-short|RUN_CONTEXT_SECRET/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    restore("OPENAI_API_KEY", previousOpenAIKey);
+    restore("RUN_CONTEXT_SECRET", previousContextSecret);
+    restore("RUN_CONTEXT_TTL_MS", previousContextTtl);
+  }
+});
+
 test("health never exposes credentials", async () => {
   const response = await request("/health", { headers: { accept: "application/json" } });
   assert.equal(response.status, 200);
@@ -141,6 +268,7 @@ test("health never exposes credentials", async () => {
   assert.match(payload.build_commit, /^[a-f0-9]{40}$/);
   assert.equal(payload.deployment_provenance, "git-build-commit");
   assert.equal(payload.default_source_resolver, "github-api");
+  assert.equal(typeof payload.run_context_secret_configured, "boolean");
   assert.equal("github_configured" in payload, false);
   assert.equal("openai_api_key" in payload, false);
 });

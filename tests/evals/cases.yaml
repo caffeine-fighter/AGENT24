@@ -157,7 +157,7 @@ cases:
   - id: one-input-synthetic-loop
     issue: 26
     command: "pytest tests/unit/test_loop.py::test_loop_measures_reproduces_and_verifies_the_selected_synthetic_archetype tests/integration/test_api.py::test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl -q"
-    expectation: "one structured target produces pinned provenance, a 3/3 deterministic Life-v0 failure, cited oracle report, accepted patch gates, SandboxGym protected replay, and both report contracts in one ordered SSE/JSONL run"
+    expectation: "one structured target produces pinned provenance plus a bounded source snapshot, a 3/3 deterministic Life-v0 failure, cited oracle report, accepted patch gates, SandboxGym protected replay, and both report contracts in one ordered SSE/JSONL run"
   - id: one-input-openai-scope-boundary
     issue: 26
     command: "pytest tests/integration/test_api.py::test_live_target_passes_bounded_synthetic_evidence_to_openai tests/integration/test_api.py::test_diagnostic_failure_is_sanitized_and_falls_back -q"
@@ -190,4 +190,45 @@ cases:
   - id: routing-lifecycle-event
     issue: 57
     command: "pytest tests/integration/test_api.py::test_structured_target_publishes_pinned_preflight_to_sse_and_jsonl tests/integration/test_api.py::test_unsupported_manifest_stops_without_inventing_an_experiment -q"
-    expectation: "pack.selected is published after behavior_profile and before experiment_plan in both SSE and JSONL, so the unsupported path -- which never reaches experiment_plan -- still records which pack was considered, why, and its budget and fallback"
+    expectation: "source_snapshot is published after source_descriptor, and pack.selected is published after behavior_profile and before experiment_plan in both SSE and JSONL, so the unsupported path -- which never reaches experiment_plan -- still records the bounded source, considered pack, why, budget and fallback"
+
+  # Hosted run evidence integrity (issue #68).
+  - id: hosted-run-context-integrity
+    issue: 68
+    command: "cd site && npm test"
+    expectation: "the event route accepts only a short-lived server-encrypted context bound to its run_id; source SHA, OpenAI response ID and mode query injection, token tampering, cross-run reuse, unknown and expired runs terminate before any SSE or verified outcome, and mission data is absent from the URL"
+
+  # Surprise-mission support on the structured-target path (issue #69, B).
+  # `test_surprise.py` already covers the legacy `{"input": ...}` transport; the
+  # cases below cover the transport `web/` actually submits, where a mission's
+  # domain can be one D1 cannot stage at all.
+  - id: surprise-support-classification
+    issue: 69
+    command: "pytest tests/evals/test_surprise_support.py::test_a_payment_agent_supports_only_the_money_domain tests/evals/test_surprise_support.py::test_communication_becomes_supported_only_when_the_surface_is_there tests/evals/test_surprise_support.py::test_the_unsupported_domains_are_unsupported_because_no_pack_stages_them tests/evals/test_surprise_support.py::test_an_unsupported_verdict_reuses_the_controller_stop_vocabulary -q"
+    expectation: "each documented Surprise mission is classified supported/unsupported from the pack registry rather than a hand-written verdict; a payment agent supports only the money domain, communication needs a web or email surface, and time/data/cross-domain are unsupported because no executable pack registers their fault family; the verdict reuses StopDecision's unsupported_input rather than minting a sixth status"
+  - id: surprise-unsupported-terminal
+    issue: 69
+    command: "pytest tests/evals/test_surprise_support.py::test_an_unsupported_mission_terminates_exactly_once_as_unsupported tests/evals/test_surprise_support.py::test_an_unsupported_terminal_carries_no_payment_or_cake_evidence tests/evals/test_surprise_support.py::test_an_unsupported_terminal_without_its_finding_report_fails -q"
+    expectation: "an unsupported Surprise mission ends in exactly one typed unsupported terminal with a matching finding_report, emits no experiment_plan or protected_replay, and carries zero payment/cake evidence; a terminal without its finding_report fails the gate"
+  - id: surprise-silent-substitution
+    issue: 69
+    command: "pytest tests/evals/test_surprise_support.py::test_the_detector_reports_a_substitution_with_the_events_that_prove_it tests/evals/test_surprise_support.py::test_an_off_domain_mission_against_a_payment_manifest_terminates_unsupported tests/evals/test_surprise_support.py::test_the_mission_text_does_not_change_the_selected_pack tests/evals/test_surprise_support.py::test_a_supported_money_mission_passes_its_gate -q"
+    expectation: "the gate reports a substituted answer with the exact event indices that prove it instead of a pass; the product requirement -- an off-domain mission against a payment manifest must terminate unsupported -- is asserted as a strict xfail that turns the form/hosted fix into an unexpected pass rather than into an inverted assertion, and routing is recorded as reading manifest.mission_family rather than the submitted mission text"
+  - id: surprise-terminal-digest
+    issue: 69
+    command: "pytest tests/evals/test_surprise_support.py::test_the_same_fixture_and_seed_reproduce_the_same_terminal_digest tests/evals/test_surprise_support.py::test_an_unsupported_route_has_its_own_stable_digest tests/evals/test_surprise_support.py::test_the_digest_ignores_run_id_and_timestamps -q"
+    expectation: "two runs of the same fixture and seed produce one terminal digest while their run ids differ; the unsupported route has its own stable digest that a silently substituted run does not share"
+
+  # Pinned participant-repository intake (issue #62).
+  - id: participant-pinned-static-profiles
+    issue: 62
+    command: "pytest tests/unit/test_participant_intake.py::test_three_pinned_participant_profiles_are_provenance_bearing_and_claim_bounded tests/unit/test_participant_intake.py::test_two_research_like_profiles_have_distinct_pinned_evidence -q"
+    expectation: "three audited sources retain full commit and path/blob/line provenance; two are Research compatibility candidates while the generic starter is unsupported, and none contains a target failure claim"
+  - id: participant-owner-priority-and-drift
+    issue: 62
+    command: "pytest tests/unit/test_participant_intake.py::test_owner_manifest_takes_priority_over_registered_lab_profile tests/unit/test_participant_intake.py::test_branch_drift_never_reuses_an_older_static_profile tests/unit/test_participant_intake.py::test_invalid_static_evidence_terminates_without_reusing_profile -q"
+    expectation: "an allowlisted owner manifest takes priority; changed source/blob metadata, missing files, oversized files, symlinks, and submodules terminate without reusing a stale lab profile"
+  - id: participant-one-input-compatibility-terminal
+    issue: 62
+    command: "pytest tests/integration/test_api.py::test_manifestless_participant_terminates_with_ordered_compatibility_report -q"
+    expectation: "one input emits source_descriptor, metadata-only source_snapshot, target_profile, pack_selection, and compatibility_report in one raw SSE/JSONL run, then terminates with zero experiments and no fabricated finding"

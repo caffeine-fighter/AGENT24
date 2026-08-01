@@ -55,6 +55,15 @@ private credential을 취급하는 것보다 재현성과 정직한 unsupported 
 | LangGraph, CrewAI, Agents SDK 등 | Framework execution unsupported | Manifest는 framework-neutral metadata이며 compatibility를 주장하지 않는다 |
 | `agent24.manifest.v1` | Supported metadata contract | Strict validation 뒤 profile evidence로만 사용한다 |
 
+### Deferred participant compatibility path
+
+The bounded static-profile intake described in
+[`participant-repository-intake.md`](participant-repository-intake.md) is a P1
+compatibility capability, not an amendment to the ratified D1 P0 contract. A
+static profile may report compatibility with zero experiments and zero findings;
+it cannot replace the owner manifest, enter the D4 accepted payment slice, or be
+presented as submitted-target diagnosis without a later D1/D4 amendment.
+
 ## Ref, provenance, and manifest
 
 Effective ref는 URL 안 또는 별도 ref 값으로 제공한다. 두 값이 모두 있으면 동일해야

@@ -1,7 +1,6 @@
 import {
   createCakeCrashFixture,
   createInitialState,
-  formatRunInput,
   reduceRunState,
   validateTargetInput,
 } from "./core.mjs";
@@ -10,23 +9,25 @@ const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const won = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
 const OUTCOME_STATUS_LABELS = Object.freeze({
-  accepted: "요청 접수",
-  budget_exhausted: "실험 한도 도달",
+  accepted: "접수 완료",
+  ambiguous: "추가 근거 필요",
+  budget_exhausted: "실험 종료",
+  compatible_candidate: "호환 후보",
   complete: "완료",
-  failed: "실패",
-  fallback: "데모로 전환",
-  fallback_complete: "데모 완료",
-  fixture_only: "예시만 실행",
-  measured: "문제 확인",
-  no_failure_observed: "문제 미발견",
-  not_analyzed: "확인 안 함",
-  not_run: "실행 안 함",
-  pending: "대기 중",
-  pinned: "소스 확인",
-  profiling: "정보 확인 중",
-  ready: "실행 대기",
+  failed: "진행하지 못함",
+  fallback: "예시로 계속",
+  fallback_complete: "예시 확인 완료",
+  fixture_only: "예시만 확인",
+  measured: "문제 발견",
+  no_failure_observed: "발견된 문제 없음",
+  not_analyzed: "분석하지 않음",
+  not_run: "진행하지 않음",
+  pending: "확인 전",
+  pinned: "버전 확인 완료",
+  profiling: "동작 확인 중",
+  ready: "시작 전",
   running: "실행 중",
-  unsupported: "지원하지 않음",
+  unsupported: "아직 지원하지 않음",
 });
 const ASSESSMENT_LABELS = Object.freeze({
   retry_behavior: "재시도 방식",
@@ -109,8 +110,8 @@ function renderAssets() {
   beforeCard.querySelector(".orders").classList.toggle("damaged", state.beforeVerdict === "fail");
   const afterCard = $('[data-world="after"]');
   afterCard.querySelectorAll(".asset-card").forEach((card) => card.classList.toggle("safe", state.afterVerdict === "pass"));
-  renderVerdict("#beforeVerdict", state.beforeVerdict, { neutral: "대기 중", fail: "문제 재현", pass: "통과" });
-  renderVerdict("#afterVerdict", state.afterVerdict, { neutral: "검증 전", fail: "실패", pass: "통과" });
+  renderVerdict("#beforeVerdict", state.beforeVerdict, { neutral: "확인 전", fail: "문제 재현", pass: "문제 없음" });
+  renderVerdict("#afterVerdict", state.afterVerdict, { neutral: "확인 전", fail: "다시 실패", pass: "안전장치 통과" });
 
   setText("#impactLabel", state.impact.label);
   setText("#impactHeadline", state.impact.headline);
@@ -124,7 +125,7 @@ function renderAssets() {
 function renderAutopsy() {
   const timeline = $("#autopsyTimeline");
   if (!state.autopsy.length) {
-    timeline.innerHTML = '<li class="placeholder">실행을 시작하면 처음 잘못된 도구 호출까지 거슬러 올라갑니다.</li>';
+    timeline.innerHTML = '<li class="placeholder">실험을 시작하면 문제가 처음 생긴 도구 호출부터 보여드려요.</li>';
     setText("#evidenceCount", "근거 0개");
     return;
   }
@@ -135,7 +136,7 @@ function renderAutopsy() {
 }
 
 function renderPatch() {
-  setText("#patchStatus", state.patch ? "적용 후 다시 검증" : "제안 대기");
+  setText("#patchStatus", state.patch ? "적용 완료 · 다시 확인 중" : "적용 전");
   setText("#patchPreview", state.patch || "payment.charge:\n  policy: waiting_for_autopsy");
 }
 
@@ -152,8 +153,8 @@ function renderChecks() {
     if (value !== true) allPass = false;
   });
   const label = state.status === "complete"
-    ? allPass ? "검증 완료" : hasValue ? "검증 종료" : "검증 데이터 없음"
-    : hasValue ? "검증 중" : "대기 중";
+    ? !hasValue ? "확인할 항목이 없어요" : allPass ? "모두 통과" : "확인 완료"
+    : hasValue ? "확인 중" : "확인 전";
   setText("#verificationStatus", label);
 }
 
@@ -169,8 +170,10 @@ function renderOutcomes() {
   const scopeNotice = $("#scopeNotice");
   scopeNotice.dataset.scope = state.analysisScope;
   scopeNotice.textContent = state.analysisScope === "fixture_fallback"
-    ? "내장 예시로 전환했습니다. 제출한 저장소를 분석한 결과가 아닙니다. 가상 환경의 원본 기록만 보여드리며, 이 결과로 안전을 보장할 수 없습니다."
-    : "가상 환경에서만 실행합니다. 외부 저장소의 코드는 실행하지 않습니다. 확인된 저장소 정보와 허용된 설정 파일을 바탕으로 행동을 재현하며, 문제를 찾지 못했더라도 안전하다고 단정할 수 없습니다.";
+    ? "내장 예시를 보여드리고 있어요. 제출한 저장소를 분석한 결과는 아닙니다. 가상 환경의 원본 기록만 보여드리며, 이 결과만으로는 안전을 보장할 수 없어요."
+    : state.analysisScope === "compatibility_only"
+      ? "고정된 공개 저장소 정보로 호환성만 확인했어요. 저장소 코드나 합성 공격은 실행하지 않았으며, 취약점이나 안전성을 판정한 결과가 아니에요."
+      : "실제 서비스에는 연결하지 않아요. 저장소 정보와 허용된 설정만 읽어 가상 환경에서 행동을 재현해요. 문제가 보이지 않아도 안전이 보장되는 것은 아니에요.";
 }
 
 function compactJson(value) {
@@ -182,77 +185,130 @@ function renderLabReport() {
   const report = state.reportView;
   const behavior = state.behaviorProfileView;
   const experiment = state.experimentPlanView;
+  const targetProfile = state.targetProfileView;
+  const selection = state.packSelectionView;
+  const compatibilitySelection = state.compatibilitySelectionView;
+  const compatibility = state.compatibilityReportView;
+  const snapshot = state.sourceSnapshotView;
   const source = state.sourceDescriptorView;
-  panel.hidden = !report && !behavior && !experiment;
-  if (!report && !behavior && !experiment) return;
+  panel.hidden = !report && !behavior && !experiment && !targetProfile && !selection && !compatibilitySelection && !compatibility;
+  if (panel.hidden) return;
 
-  const profile = behavior || report?.profile || {
-    agentName: "에이전트 정보 없음",
+  const profile = behavior || targetProfile || report?.profile || {
+    agentName: "에이전트를 아직 확인하지 못했어요",
     capabilities: [],
     tools: [],
     sideEffectTools: [],
+    declaredCapabilities: [],
     permissions: {},
   };
-  const capabilityText = profile.capabilities.length
+  const capabilityText = profile.capabilities?.length
     ? profile.capabilities
-        .map((capability) => `${capability.tool} [${capability.categories.map((category) => CATEGORY_LABELS[category] || category).join(", ") || "분류 없음"}]`)
+        .map((capability) => `${capability.tool} [${capability.categories.map((category) => CATEGORY_LABELS[category] || category).join(", ") || "분류되지 않음"}]`)
         .join(" · ")
-    : profile.tools?.join(" · ") || profile.sideEffectTools?.join(" · ") || "확인된 기능 없음";
-  const permissions = Object.keys(profile.permissions).length
+    : profile.tools?.join(" · ")
+      || profile.sideEffectTools?.join(" · ")
+      || profile.declaredCapabilities?.join(" · ")
+      || "확인된 기능이 없어요";
+  const permissions = Object.keys(profile.permissions || {}).length
     ? Object.entries(profile.permissions)
-        .map(([key, value]) => key === "max_spend_krw" ? `최대 결제 금액 ${won.format(value)}` : `${key}: ${value}`)
+        .map(([key, value]) => key === "max_spend_krw" && typeof value === "number"
+          ? `최대 결제 금액 ${won.format(value)}`
+          : `${key}: ${value}`)
         .join(" · ")
-    : "설정된 권한 없음";
+    : "설정된 권한이 없어요";
   const termination = report?.experiment.termination;
-  const sourceStatus = source
-    ? RESOLVER_LABELS[source.resolver] || source.resolver
-    : behavior?.baselineObserved
-      ? "기본 동작 확인"
-      : "기본 동작 미확인";
   const observedItems = (report?.observed.items || [])
     .map((item) => `${INVARIANT_LABELS[item.invariant] || item.invariant}: 실제 ${compactJson(item.actual)} / 기준 ${item.expected} (${item.evidence})`)
     .join("\n");
+  const sourceStatus = source
+    ? RESOLVER_LABELS[source.resolver] || source.resolver
+    : behavior?.baselineObserved
+      ? "기본 동작 확인 완료"
+      : "기본 동작을 확인하지 못했어요";
 
   setText("#reportAgent", profile.agentName);
   setText(
     "#reportSourceRef",
-    behavior
+    targetProfile
+      ? `${source?.sourceRef || targetProfile.sourceRef} · ${targetProfile.profileLabel}`
+      : behavior
       ? `${source?.sourceRef || behavior.sourceRef} · ${sourceStatus}`
-      : source?.sourceRef || "보고서의 에이전트 정보",
+      : source?.sourceRef || "보고서에 기록된 에이전트",
   );
   setText("#reportCapabilities", capabilityText);
+  setText(
+    "#reportSourceSnapshot",
+    snapshot
+      ? `${snapshot.mode.toUpperCase()} · ${snapshot.files.length} file(s) · ${snapshot.totalBytes} bytes · ${snapshot.executionScope}`
+      : "확인한 저장소 범위를 기다리고 있어요",
+  );
   setText(
     "#reportBudget",
     report
       ? `실행 ${report.experiment.runs}회 · 비용 ${report.experiment.costUnits}`
-      : `${MISSION_FAMILY_LABELS[behavior.missionFamily] || behavior.missionFamily} · 정보 확인 완료`,
+      : compatibility
+      ? `실험 ${compatibility.experimentsRun}회 · 호환성만 확인`
+      : selection?.budget
+      ? `최대 실험 ${selection.budget.maxExperiments ?? "?"}회 · 최대 도구 호출 ${selection.budget.maxToolCalls ?? "?"}회`
+      : `${MISSION_FAMILY_LABELS[behavior?.missionFamily] || behavior?.missionFamily || targetProfile?.status || "정보"} · 확인 완료`,
   );
   setText("#reportPermissions", permissions);
   setText(
     "#reportTermination",
     termination?.reason === "coverage_complete"
-      ? "검증 완료"
-      : experiment
-        ? "실험 계획 준비"
-        : behavior
-          ? "에이전트 정보 확인"
-          : "종료 상태 정보 없음",
+      ? "확인 완료"
+      : compatibility
+        ? OUTCOME_STATUS_LABELS[compatibility.status] || compatibility.status
+        : selection?.stopReason
+          ? OUTCOME_STATUS_LABELS[selection.stopReason] || selection.stopReason
+          : experiment
+            ? "실험 계획을 세웠어요"
+            : behavior
+              ? "에이전트를 확인했어요"
+              : "실험을 아직 마치지 않았어요",
   );
 
   const experimentCard = $("#selectedExperimentCard");
-  experimentCard.hidden = !experiment;
+  experimentCard.hidden = !experiment && !selection && !compatibilitySelection;
   if (experiment) {
     const fault = experiment.faults[0];
     setText(
       "#reportExperiment",
-      fault ? `${fault.kind === "commit_then_timeout" ? "결제 완료 뒤 응답 끊김" : fault.kind} → ${fault.targetTool}` : "실행할 수 있는 오류 유형 없음",
+      fault ? `${fault.kind === "commit_then_timeout" ? "결제 직후 응답이 끊기는 상황" : fault.kind} → ${fault.targetTool}` : "재현할 수 있는 실패 유형이 없어요",
     );
     setText(
       "#reportExperimentMeta",
       `${experiment.scenarioId} · 시드 ${experiment.seed ?? "?"} · 최대 ${experiment.maxTurns ?? "?"}회 · ${experiment.singleVariable ? "오류 1개만 변경" : "오류 여러 개 변경"}`,
     );
-    setText("#reportExperimentReason", `선택 근거 · ${experiment.toolChoiceReason}`);
-    setText("#reportExperimentEvidence", `확인할 기록 · ${experiment.expectedEvidence}`);
+    setText("#reportExperimentReason", `선택한 이유 · ${experiment.toolChoiceReason}`);
+    setText("#reportExperimentEvidence", `확인할 내용 · ${experiment.expectedEvidence}`);
+  } else if (selection) {
+    setText(
+      "#reportExperiment",
+      selection.packId
+        ? `${(selection.domainKind || "unknown").toUpperCase()} PACK ${selection.packId}`
+        : selection.ambiguous ? "PACK SELECTION AMBIGUOUS" : "NO PACK SELECTED",
+    );
+    setText(
+      "#reportExperimentMeta",
+      `${selection.executable ? "EXECUTABLE" : "TERMINAL"} · ${selection.fallback}`,
+    );
+    setText("#reportExperimentReason", `선택한 이유 · ${selection.why}`);
+    setText("#reportExperimentEvidence", `확인할 내용 · ${selection.expect}`);
+  } else if (compatibilitySelection) {
+    setText(
+      "#reportExperiment",
+      compatibilitySelection.selectedDomain
+        ? `${compatibilitySelection.selectedDomain.toUpperCase()} PACK ${compatibilitySelection.packId || "CANDIDATE"}`
+        : "NO PACK SELECTED",
+    );
+    setText(
+      "#reportExperimentMeta",
+      `${compatibilitySelection.status.toUpperCase()} · ${compatibilitySelection.maxExperiments} experiments · ${compatibilitySelection.fallback}`,
+    );
+    setText("#reportExperimentReason", `선택한 이유 · ${compatibilitySelection.why}`);
+    setText("#reportExperimentEvidence", `확인할 내용 · ${compatibilitySelection.expect}`);
   }
 
   const assessmentGrid = $("#behaviorAssessments");
@@ -270,7 +326,7 @@ function renderLabReport() {
       verdict.textContent = ASSESSMENT_VALUE_LABELS[assessment.value] || assessment.value;
       detail.textContent = assessment.evidence.length
         ? assessment.evidence.join("\n")
-        : assessment.unknownReason || "확인할 근거 없음";
+        : assessment.unknownReason || "판단할 근거가 없어요";
       header.append(name, verdict);
       card.append(header, detail);
       fragment.appendChild(card);
@@ -280,8 +336,23 @@ function renderLabReport() {
 
   const claimGrid = $("#claimGrid");
   const residualRisk = $("#reportResidualRisk");
-  claimGrid.hidden = !report;
-  residualRisk.hidden = !report;
+  claimGrid.hidden = !report && !compatibility;
+  residualRisk.hidden = !report && !compatibility;
+  if (compatibility && !report) {
+    setText(
+      "#reportObserved",
+      `${compatibility.message}\n발견 ${compatibility.findings.length}건 · 실험 ${compatibility.experimentsRun}회`,
+    );
+    setText(
+      "#reportHypothesis",
+      compatibility.compatibilityClaims.join("\n")
+        || "도메인을 판단할 근거가 부족해 취약점 가설을 만들지 않았어요.",
+    );
+    setText("#reportProposed", "호환성만 확인하는 단계에서는 패치를 제안하지 않아요.");
+    setText("#reportVerified", "저장소 코드와 합성 공격을 실행하지 않았어요.");
+    setText("#reportResidualRisk", `판정 범위 · ${compatibility.claimBoundary}`);
+    return;
+  }
   if (!report) return;
   setText(
     "#reportObserved",
@@ -291,30 +362,30 @@ function renderLabReport() {
     "#reportHypothesis",
     report.hypothesis
       ? `${DIAGNOSIS_LABELS[report.hypothesis.category] || report.hypothesis.category} · ${report.hypothesis.statement}`
-      : "근거가 부족해 원인을 확정하지 않았습니다.",
+      : "근거가 부족해 원인을 단정하지 않았어요.",
   );
   setText(
     "#reportProposed",
-    report.proposedPatch ? compactJson(report.proposedPatch) : "검증할 보호책이 아직 제안되지 않았습니다.",
+    report.proposedPatch ? compactJson(report.proposedPatch) : "적용할 안전장치를 아직 찾지 못했어요.",
   );
   setText(
     "#reportVerified",
     report.verification
-      ? `${report.verification.accepted ? "검증 통과" : "검증 실패"} · 확인 항목 ${report.verification.passedGates}/${report.verification.totalGates}개 통과`
-      : "보호책을 적용한 재실행 결과가 없습니다.",
+      ? `${report.verification.accepted ? "모두 통과" : "다시 확인 필요"} · ${report.verification.totalGates}개 중 ${report.verification.passedGates}개 통과`
+      : "안전장치를 적용한 뒤 다시 확인한 결과가 없어요.",
   );
   const limits = [...report.residualRisk, ...report.unsupportedScope];
   setText(
     "#reportResidualRisk",
-    limits.length ? `아직 확인하지 못한 위험 · ${limits.join(" · ")}` : "현재 보고된 잔여 위험 없음",
+    limits.length ? `아직 확인하지 못한 위험 · ${limits.join(" · ")}` : "지금까지 확인된 추가 위험은 없어요",
   );
 }
 
 function renderStream() {
   const stream = $("#rawStream");
   if (!state.events.length) {
-    stream.innerHTML = '<div class="stream-empty">실험을 시작하면 도구 호출 기록이 여기에 표시됩니다.</div>';
-    setText("#eventCount", "이벤트 0개");
+    stream.innerHTML = '<div class="stream-empty">실험을 시작하면 실시간 기록이 여기에 쌓여요.</div>';
+    setText("#eventCount", "기록 0개");
     return;
   }
 
@@ -330,7 +401,7 @@ function renderStream() {
   });
   stream.replaceChildren(fragment);
   stream.scrollTop = stream.scrollHeight;
-  setText("#eventCount", `이벤트 ${state.events.length}개`);
+  setText("#eventCount", `기록 ${state.events.length}개`);
 }
 
 function render() {
@@ -343,22 +414,22 @@ function render() {
   renderOutcomes();
   renderLabReport();
   renderStream();
-  setText("#targetRepo", state.target.repositoryUrl || "입력 대기");
-  setText("#targetRef", state.target.requestedRef || "입력 대기");
+  setText("#targetRepo", state.target.repositoryUrl || "입력 전");
+  setText("#targetRef", state.target.requestedRef || "입력 전");
   setText(
     "#targetSha",
     state.target.resolvedSha || (state.source === "fixture" && state.status !== "idle"
-      ? "내장 예시 · 저장소 확인 안 함"
-      : "실행 대기"),
+      ? "내장 예시 · 저장소는 확인하지 않았어요"
+      : "확인 전"),
   );
   const notice = $("#runNotice");
   notice.hidden = !state.terminalNotice;
   notice.dataset.kind = state.terminalNotice?.kind || "";
   notice.textContent = state.terminalNotice?.message || "";
   setText("#runId", state.runId ? `실행 ID ${state.runId}` : "실행 ID —");
-  const liveMode = state.mode === "offline_demo" ? "OpenAI 설명 없이 실행" : "실시간 API 실행";
-  setText("#modeBadge", state.status === "idle" ? "데모 준비 완료" : state.source === "live" ? liveMode : "내장 예시 실행");
-  setText("#connectionStatus", state.status === "idle" ? "가상 환경 준비 완료" : state.source === "live" ? "이벤트 연결됨" : "가상 환경만 사용");
+  const liveMode = state.mode === "offline_demo" ? "준비된 설명으로 진행 중" : "실시간 분석 중";
+  setText("#modeBadge", state.status === "idle" ? "시작할 준비가 됐어요" : state.source === "live" ? liveMode : "내장 예시 확인 중");
+  setText("#connectionStatus", state.status === "idle" ? "실험을 시작해 주세요" : state.source === "live" ? "실시간 기록을 받고 있어요" : "가상 환경에서 진행 중");
   $("#runButton").disabled = state.status === "running";
   $("#replayButton").disabled = state.status !== "complete";
 }
@@ -366,12 +437,16 @@ function render() {
 function dispatch(event) {
   state = reduceRunState(state, event);
   render();
-  if (state.source === "live" && ["complete", "failed"].includes(state.status)) {
+  const terminalEvent = event.type === "run_completed"
+    || event.type === "run.completed"
+    || ((event.type === "run_failed" || event.type === "run.failed")
+      && (event.data?.status ?? event.payload?.status) !== "offline_demo");
+  if (state.source === "live" && terminalEvent) {
     eventSource?.close();
     eventSource = null;
     clearInterval(clockTimer);
-    const terminalMode = state.mode === "offline_demo" ? "OpenAI 설명 없이 실행" : "실시간 API";
-    setText("#connectionStatus", state.status === "complete" ? `${terminalMode} · 완료` : `${terminalMode} · 실패`);
+    const terminalMode = state.mode === "offline_demo" ? "준비된 설명" : "실시간 분석";
+    setText("#connectionStatus", state.status === "complete" ? `${terminalMode} · 완료` : `${terminalMode} · 진행하지 못함`);
   }
 }
 
@@ -421,7 +496,6 @@ async function startLiveRun(target) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        input: formatRunInput(target),
         target: {
           repository_url: target.repositoryUrl,
           requested_ref: target.requestedRef || null,
@@ -432,7 +506,7 @@ async function startLiveRun(target) {
     });
     if (response.status === 422) {
       clearTimeout(timeout);
-      showInputError("입력 내용을 확인해 주세요. 저장소 주소, 브랜치 또는 커밋, 맡길 일을 모두 입력해야 합니다.");
+      showInputError("입력하지 않은 항목이 있어요. 저장소 주소, 브랜치나 커밋, 에이전트에게 시킬 일을 모두 입력해 주세요.");
       return "rejected";
     }
     if (!response.ok) throw new Error(`Run API returned ${response.status}`);
@@ -458,7 +532,7 @@ async function startLiveRun(target) {
     eventSource.onerror = () => {
       eventSource?.close();
       if (!receivedLiveEvent) playFixture(target);
-      else setText("#connectionStatus", "연결 종료 · 받은 이벤트는 보존됨");
+      else setText("#connectionStatus", "연결이 끊겼어요 · 받은 기록은 그대로 남겼어요");
     };
     return "started";
   } catch {
@@ -521,10 +595,10 @@ $("#copyStreamButton").addEventListener("click", async () => {
   const raw = state.events.map((event) => JSON.stringify(event.raw)).join("\n");
   try {
     await navigator.clipboard.writeText(raw);
-    setText("#copyStreamButton", "복사됨");
+    setText("#copyStreamButton", "복사했어요");
     setTimeout(() => setText("#copyStreamButton", "복사"), 1200);
   } catch {
-    setText("#copyStreamButton", "복사 실패");
+    setText("#copyStreamButton", "다시 시도");
   }
 });
 

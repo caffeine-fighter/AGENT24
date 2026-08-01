@@ -44,6 +44,8 @@ python -m http.server 5173 --directory web
 - 알 수 없는 이벤트 타입은 UI 상태를 바꾸지 않지만 Raw Stream에는 남습니다.
 - `unsupported`와 `budget_exhausted`는 과장된 안전 판정 없이 종료 사유를 표시합니다.
 - `source_descriptor`의 immutable SHA는 live event일 때만 분석 대상 provenance에 반영합니다.
+- `target_profile`에서 `OWNER MANIFEST`와 `LAB-INFERRED STATIC PROFILE`을 구분하고 pinned evidence locator를 표시합니다.
+- `pack_selection`과 `compatibility_report`는 domain candidate와 claim boundary를 보여주며 static-only 결과를 finding으로 승격하지 않습니다.
 - `behavior_profile`의 retry/idempotency/reconciliation/untrusted-input/loop-budget 판정을 근거와 함께 표시합니다.
 - `experiment_plan`의 선택 fault, 대상 tool, 선택 이유, 기대 evidence, seed/turn budget을 별도 카드로 표시합니다.
 - `lab_report`가 도착하면 동결된 `LabReport`의 관찰·가설·제안·검증을 별도 칸에 표시합니다.
